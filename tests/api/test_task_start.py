@@ -20,12 +20,10 @@ def _iso(tmp_path, monkeypatch):
     monkeypatch.setattr(ag, "_register_agent_orb", lambda *a, **k: None)
     monkeypatch.setattr(ag, "_task_worker", lambda *a, **k: None)
     monkeypatch.setattr(global_stop, "active", lambda: False)
-    task_start._FROM_DEVICE.clear()
     with ag.TASKS_LOCK:
         saved = dict(ag.TASKS)
         ag.TASKS.clear()
     yield
-    task_start._FROM_DEVICE.clear()
     with ag.TASKS_LOCK:
         ag.TASKS.clear()
         ag.TASKS.update(saved)
@@ -236,3 +234,35 @@ def test_a_rerun_with_a_body_that_is_not_an_object_is_still_a_plain_rerun(client
     old = _finished()
     r = client.post("/api/tasks/%s/rerun" % old, json=body)
     assert r.status_code == 200 and len(spawned) == 1
+
+
+def test_every_job_records_where_it_was_started_from_and_the_receipted_origin_is_untouched(client, spawned):
+    mine = _start(client, origin="pc").get_json()["task_id"]
+    phone = _start(client).get_json()["task_id"]
+    with ag.TASKS_LOCK:
+        before = {t: ag.TASKS[t].get("origin") for t in (mine, phone)}
+        ag.TASKS[phone]["status"] = "complete"
+    assert ag.TASKS[mine]["started_from"] == "pc" and ag.TASKS[phone]["started_from"] == PHONE
+    assert {t: ag.TASKS[t].get("origin") for t in (mine, phone)} == before, "the receipted provenance was overwritten"
+    rows = {t["task_id"]: t for t in client.get("/api/tasks").get_json()["tasks"]}
+    assert rows[phone]["started_from"] == PHONE and rows[mine]["started_from"] == "pc"
+    assert client.get("/api/tasks/%s" % phone).get_json()["started_from"] == PHONE
+
+
+def test_the_cap_is_read_from_the_records_so_a_finished_job_frees_its_place(client, spawned):
+    ids = [_start(client).get_json()["task_id"] for _ in range(task_start.DEVICE_JOB_CAP)]
+    assert _start(client).status_code == 409
+    with ag.TASKS_LOCK:
+        ag.TASKS[ids[0]]["status"] = "complete"
+    assert _start(client).status_code == 201
+
+
+def test_only_records_started_from_a_device_count_against_the_cap(client, spawned):
+    """The PC's own jobs, scheduled and internal tasks never use a device's place, whatever their provenance says."""
+    for _ in range(task_start.DEVICE_JOB_CAP + 2):
+        _start(client, origin="pc")
+    with ag.TASKS_LOCK:
+        for i, origin in enumerate(("schedule", "workflow", "internal", "conversation")):
+            ag.TASKS["t_other_%d" % i] = {"task_id": "t_other_%d" % i, "status": "running", "origin": origin}
+    assert task_start._running_from_devices() == 0
+    assert _start(client).status_code == 201
