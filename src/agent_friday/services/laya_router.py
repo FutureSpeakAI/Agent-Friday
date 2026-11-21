@@ -545,19 +545,21 @@ _SAYS_WEB_WEAK = re.compile(
     r"\b(?:search|look|find|check)(?: out)?(?: it| that| this| for it)? online\b|\bonline for\b"
     r"|^(?:please |can you |could you )?google\s+(?!drive|docs|calendar|photos|account)", re.I)
 _PERSONAL_WORD = re.compile(r"\b(?:my|me|mine|our|we|i)\b", re.I)
-#: A question about the world the owner can have answered by the web without naming anyone. The WHOLE query must be
-#: one fixed topic, optional small words, and at most two plain words for the place or day: no possessive, no
-#: "and", no wh-word (so "weather at Dana's house" or "weather where Dana lives" are not public). Held by
+#: A question about the world that needs no place and so names nobody: the WHOLE query is one fixed topic and an
+#: optional day word. Anything with a place or a name beside the topic ("weather in Paris", "weather Dana") is
+#: asked back, because a rule cannot tell a city from a person. Held by
 #: test_a_topic_word_beside_a_person_is_not_a_public_question.
 _PUBLIC_TOPIC = re.compile(
-    r"(?:what(?:'s| is| time is| time)? )?(?:the )?"
-    r"(?:weather|forecast|sunset|sunrise|exchange rate|currency|capital|population|opening hours)"
+    r"(?:what(?:'s| is| time is| time)? )?(?:the )?(?:weather|forecast|sunset|sunrise|exchange rate)"
     r"(?: time)?(?: is)?"
-    r"(?: (?:of|in|for|at|to|from|today|tomorrow|tonight|now|right now|this (?:morning|afternoon|evening|week|weekend)))*"
-    r"(?: (?!(?:and|or|who|where|when|what|how|my|me|our|we|i)\b)[a-z.]+){0,2}", re.I)
+    r"(?: (?:today|tomorrow|tonight|now|right now|this (?:morning|afternoon|evening|week|weekend)))*", re.I)
+#: The owner keeps a lookup OFF the web ("don't use the web", "without the internet", "not online").
+_NOT_THE_WEB = re.compile(r"(?:\b(?:not|never|without|no)\b|n't\b)[^.,;]{0,25}\b(?:the web|the internet|web search|online)\b", re.I)
 
 
 def _owner_says_web(text: str) -> bool:
+    if _NOT_THE_WEB.search(text):
+        return False
     if _SAYS_WEB_ALWAYS.search(text):
         return True
     return bool(_SAYS_WEB_WEAK.search(text)) and not _PERSONAL_WORD.search(text)

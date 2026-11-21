@@ -52,6 +52,17 @@ PERSONAL_PHRASINGS = STORE_LOOKUPS + [
     "look up the definition of Dana",
     "look up the forecast for Stephen's wedding",
     "look up recipe for grandma's cake",
+    "look up Dana, don't use the web",
+    "look up Dana without the web",
+    "look up Dana but not on the internet",
+    "look up the weather for Dana",
+    "look up weather Dana Whitfield",
+    "look up forecast Dana",
+    "look up sunset Dana",
+    "look up the weather for Stephen",
+    "look up the weather at home",
+    "look up the capital of Dana",
+    "look up the opening hours of Stephen",
 ]
 
 
@@ -104,9 +115,15 @@ def test_a_bare_lookup_with_no_place_named_is_asked_back(text):
     assert "web" in q and "notes" in q, q
 
 
-@pytest.mark.parametrize("text", ["look up what time sunset is today", "look up the capital of France",
-                                  "look up the weather in Paris"])
-def test_a_plain_question_about_the_world_still_runs_the_web_search(text):
+@pytest.mark.parametrize("text", ["look up the capital of France", "look up the weather in Paris"])
+def test_a_topic_with_a_place_is_asked_back_because_a_rule_cannot_tell_a_city_from_a_person(text):
+    r = lr.rule_route(text)
+    assert r is not None and r.decision == "ask", r
+
+
+@pytest.mark.parametrize("text", ["look up what time sunset is today", "look up the weather today",
+                                  "look up tomorrow's forecast"[:0] + "look up the forecast tomorrow"])
+def test_a_plain_question_about_the_world_that_needs_no_place_runs_the_web_search(text):
     r = lr.rule_route(text)
     assert r is not None and r.decision == "tool" and r.tool == "search_web", r
     assert r.label == "searching the web", "the spoken acknowledgement must say it is the web"
