@@ -526,10 +526,9 @@ def request_reconfirm(dev: dict) -> Optional[str]:
     with _LOCK:
         if now - _RECONFIRM_ASKED.get(dev["id"], 0.0) < RECONFIRM_ASK_EVERY_S:
             return None
-        _RECONFIRM_ASKED[dev["id"]] = now
     try:
         from agent_friday.services import approvals
-        name = str(dev.get("name") or "device")
+        name = plain_name(dev.get("name"))
         card = approvals.create_approval(
             kind=RECONFIRM_CARD_KIND, subject_type="device_reconfirm", subject_id=str(dev["id"]),
             title='Keep "%s" paired?' % name,
@@ -539,10 +538,22 @@ def request_reconfirm(dev: dict) -> Optional[str]:
                          % (name, RECONFIRM_DAYS)),
             action_description="Keep a paired device for %d more days" % RECONFIRM_DAYS,
             payload={"device_id": str(dev["id"]), "origin": "tv_gateway"},
-            requested_by="tv_gateway", force_gate=True)
+            requested_by="tv_gateway", force_gate=True)        # idempotent per device while one is pending
+        with _LOCK:
+            _RECONFIRM_ASKED[dev["id"]] = now          # only once a card exists, so a failure is tried again
         return card.get("approval_id")
     except Exception:
         return None
+
+
+def plain_name(name) -> str:
+    """A device's name for the owner's screen: printable characters only, no quotes or angle brackets, one line.
+    The name was chosen by the device, and rows stored before names were cleaned may hold anything."""
+    kept = "".join(c if c.isprintable() and c not in _NAME_DROPPED else " " for c in str(name or ""))
+    return " ".join(kept.split())[:60] or "device"
+
+
+_NAME_DROPPED = frozenset(['"', "<", ">", "`", chr(92)])
 
 
 def reconfirm(device_id: str, approval_id: str = "") -> bool:

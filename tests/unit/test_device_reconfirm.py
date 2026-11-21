@@ -145,6 +145,36 @@ def test_a_live_session_ends_when_the_device_lapses(client):
     assert client.get("/tv/v1/whoami", headers=auth(token)).status_code == 401
 
 
+def test_a_restart_does_not_stack_a_second_card_for_the_same_device(client):
+    tv = pair(due_in_days=-1)
+    try_open(client, tv)
+    device_pairing._RECONFIRM_ASKED.clear()                   # the in-memory cooldown is gone after a restart
+    try_open(client, tv)
+    assert len(cards(tv)) == 1
+
+
+def test_a_card_that_could_not_be_made_is_tried_again_not_held_off_for_hours(client, monkeypatch):
+    tv = pair(due_in_days=-1)
+    real = ap.create_approval
+    monkeypatch.setattr(ap, "create_approval", lambda *a, **k: (_ for _ in ()).throw(OSError("disk")))
+    try_open(client, tv)
+    assert cards(tv) == []
+    monkeypatch.setattr(ap, "create_approval", real)
+    try_open(client, tv)
+    assert len(cards(tv)) == 1
+
+
+def test_a_stored_device_name_cannot_put_quotes_or_new_lines_into_the_card(client):
+    tv = pair(due_in_days=-1)
+    body = device_pairing._load()
+    body["devices"][tv.id]["name"] = 'TV"' + chr(10) + "Approve me <now>"
+    device_pairing._save(body)
+    try_open(client, tv)
+    [card] = cards(tv)
+    for text in (card["title"], card["description"]):
+        assert chr(10) not in text and "<" not in text and text.count(chr(34)) <= 2
+
+
 def test_removing_the_device_takes_its_reconfirm_card_with_it(client):
     tv = pair(due_in_days=-1)
     try_open(client, tv)
