@@ -9,6 +9,7 @@ import pytest
 
 from agent_friday import notifications_engine as ne
 from agent_friday.services import notice_registry, notification_policy as pol
+from agent_friday.services import scheduler as scheduler_module
 
 SERVICES = Path(__file__).resolve().parents[2] / "src" / "agent_friday" / "services"
 
@@ -103,8 +104,7 @@ def test_an_ordinary_scheduled_job_that_ran_is_a_needs_you_card(monkeypatch):
     assert _only_card()["tier"] == pol.NEEDS_YOU
 
 
-@pytest.mark.parametrize("schedule_id", ["sch_front_page_evening", "sch_daily_creation", "sch_afternoon_briefing",
-                                         "sch_weekly_digest"])
+@pytest.mark.parametrize("schedule_id", sorted(scheduler_module.OWN_DELIVERY_NOTICE))
 def test_a_routine_whose_delivery_has_its_own_notice_keeps_a_quiet_ran_card(monkeypatch, schedule_id):
     _scheduler(monkeypatch)._notify_run({"id": schedule_id, "name": "Routine"}, "complete", "ok")
     assert _only_card()["tier"] == pol.FYI
@@ -113,3 +113,24 @@ def test_a_routine_whose_delivery_has_its_own_notice_keeps_a_quiet_ran_card(monk
 def test_the_heartbeat_is_not_a_routine_with_its_own_notice(monkeypatch):
     from agent_friday.services import scheduler
     assert "sch_heartbeat" not in scheduler.OWN_DELIVERY_NOTICE
+
+
+# -- a dismissed ran-card is news again at the next run; a quiet one stays dismissed ----------
+
+def test_a_dismissed_ran_card_that_interrupts_comes_back_at_the_next_run(monkeypatch):
+    scheduler = _scheduler(monkeypatch)
+    rec = {"id": "sch_nightly_sync", "name": "Nightly sync"}
+    scheduler._notify_run(rec, "complete", "ok")
+    ne.dismiss_all()
+    assert ne.list_notifications(limit=50) == []
+    scheduler._notify_run(rec, "complete", "ok")
+    assert _only_card()["tier"] == pol.NEEDS_YOU
+
+
+def test_a_dismissed_quiet_ran_card_stays_dismissed(monkeypatch):
+    scheduler = _scheduler(monkeypatch)
+    rec = {"id": "sch_front_page_evening", "name": "Front Page"}
+    scheduler._notify_run(rec, "complete", "ok")
+    ne.dismiss_all()
+    scheduler._notify_run(rec, "complete", "ok")
+    assert ne.list_notifications(limit=50) == []
