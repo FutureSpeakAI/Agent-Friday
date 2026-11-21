@@ -28,7 +28,12 @@ NEXT = itertools.count()
 @pytest.fixture(autouse=True)
 def _grant_stores(tmp_path, monkeypatch):
     monkeypatch.setattr(approvals, "FRIDAY_DIR", tmp_path)
-    monkeypatch.setattr(approvals, "_HOOKS", {k: list(v) for k, v in approvals._HOOKS.items()})
+    # Only the pairing hooks stay (Enrolled's right card needs them). Others may have been registered by an earlier test
+    # in this process: the offer's own hook (approval_executor.register calls standing_grants.register, and registering
+    # it twice makes every accepted offer a grant twice) and the executor's, which would really run the earning cards.
+    from agent_friday.tv_gateway import pairing
+    keep = (pairing.RIGHT_KIND, pairing.KIND)
+    monkeypatch.setattr(approvals, "_HOOKS", {k: list(v) for k, v in approvals._HOOKS.items() if k in keep})
     monkeypatch.setattr(an, "_DIR", tmp_path)
     monkeypatch.setattr(an, "COUNTS_FILE", tmp_path / "counts.json")
     monkeypatch.setattr(an, "LABELS_FILE", tmp_path / "labels.jsonl")
