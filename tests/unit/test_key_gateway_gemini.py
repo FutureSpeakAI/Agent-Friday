@@ -78,7 +78,8 @@ def test_a_real_sdk_call_reaches_the_upstream_with_the_real_key(upstream):
     except Exception:
         pass                                     # the fake upstream's body is not a generateContent answer; the request is the point
     path, _ = upstream.seen[-1]
-    assert path.startswith("/v1beta/models/gemini-2.5-flash:generateContent")
+    assert path.split("?")[0] in ("/v1beta/models/gemini-2.5-flash:generateContent",      # the SDK version decides which
+                                  "/v1/models/gemini-2.5-flash:generateContent")
     assert upstream.header("x-goog-api-key") == REAL
 
 
