@@ -36,10 +36,12 @@ from typing import Optional, Tuple
 SESSION_PREFIX = "fdev_"
 SESSION_TTL_S = 12 * 3600
 CHALLENGE_TTL_S = 60
-RECONFIRM_DAYS = 30
+RECONFIRM_DAYS = 30                  # a personal device (phone, tablet, watch): kept by the owner this often
+RECONFIRM_DAYS_TV = 90               # a household TV: it cannot hold anything the owner's phone cannot
 RECONFIRM_WARN_DAYS = 7              # the owner is asked this long before a device's date
 RECONFIRM_GRACE_DAYS = 7             # rows made before enforcement shipped get this long, once
 RECONFIRM_CARD_KIND = "device_reconfirm"
+RECONFIRM_KIND_WORDS = {"tv": "TV", "phone": "phone", "tablet": "tablet", "watch": "watch"}
 RECONFIRM_ASK_EVERY_S = 6 * 3600     # a card the owner left or declined is raised again after this
 # Named rights. A device holds a set of them; "chat_read" always, the others only by a
 # press on this PC, one card per right, nothing pre-selected (tv_gateway/pairing).
@@ -126,6 +128,11 @@ def _sign(body: dict) -> str:
     return hmac.new(_key(), b"friday-devices-v1|" + raw, hashlib.sha256).hexdigest()
 
 
+def reconfirm_days(kind) -> int:
+    """How long a press keeps a device of this kind paired."""
+    return RECONFIRM_DAYS_TV if str(kind or "").lower() == "tv" else RECONFIRM_DAYS
+
+
 def _empty() -> dict:
     return {"gateway": {"enabled": False, "port": 0}, "devices": {}, "reconfirm_grace_done": True}
 
@@ -156,7 +163,7 @@ def _grace_old_rows(body: dict) -> None:
         for dev in body["devices"].values():
             due = dev.get("reconfirm_by")
             if due is None:
-                due = float(dev.get("paired_at") or now) + RECONFIRM_DAYS * 86400
+                due = float(dev.get("paired_at") or now) + reconfirm_days(dev.get("kind")) * 86400
             dev["reconfirm_by"] = max(float(due), floor)
         body["reconfirm_grace_done"] = True
         try:
@@ -227,7 +234,7 @@ def add_device(spki_der: bytes, *, name: str, rights=BASE_RIGHT, kind: str = "tv
         "rights": rights,
         "paired_at": now,
         "last_seen": None,
-        "reconfirm_by": now + RECONFIRM_DAYS * 86400,
+        "reconfirm_by": now + reconfirm_days(kind) * 86400,
     }
     with _LOCK:
         body = _load()
@@ -533,17 +540,23 @@ def request_reconfirm(dev: dict) -> Optional[str]:
         if waiting:                                    # one card at a time per device, whatever a restart forgot
             return waiting[0].get("approval_id")
         name = plain_name(dev.get("name"))
+        what = RECONFIRM_KIND_WORDS.get(str(dev.get("kind") or "").lower(), "device")
+        days = reconfirm_days(dev.get("kind"))
+        due = float(dev.get("reconfirm_by") or now)
+        when = time.strftime("%A %d %B", time.localtime(due))
         # create_approval returns the newest card ever made for a subject, decided or not, so the subject names
         # the ask window too: a later due date, or a re-ask after a decline, gets a fresh card.
         card = approvals.create_approval(
             kind=RECONFIRM_CARD_KIND, subject_type="device_reconfirm",
             subject_id="%s@%d" % (dev["id"], int(now // RECONFIRM_ASK_EVERY_S)),
-            title='Keep "%s" paired?' % name,
-            description=("Press Approve to keep \"%s\" paired with Friday for %d more days. It keeps every right it "
-                         "has now. If you do not recognise it, or no longer use it, press Decline or remove it "
-                         "under Paired devices: when its time is up it can no longer connect."
-                         % (name, RECONFIRM_DAYS)),
-            action_description="Keep a paired device for %d more days" % RECONFIRM_DAYS,
+            title='Keep "%s" (a %s) paired?' % (name, what),
+            description=("Press Approve to keep \"%s\", a %s, paired with Friday for %d more days. %s It keeps every "
+                         "right it has now. If you do not recognise it, or no longer use it, press Decline or "
+                         "remove it under Paired devices."
+                         % (name, what, days,
+                            ("It stops connecting on %s unless you keep it." % when) if due > now else
+                            ("It stopped connecting on %s." % when))),
+            action_description="Keep a paired %s for %d more days" % (what, days),
             payload={"device_id": str(dev["id"]), "origin": "tv_gateway"},
             requested_by="tv_gateway", force_gate=True)
         with _LOCK:
@@ -570,7 +583,7 @@ def reconfirm(device_id: str, approval_id: str = "") -> bool:
         dev = body["devices"].get(str(device_id))
         if dev is None:
             return False
-        dev["reconfirm_by"] = time.time() + RECONFIRM_DAYS * 86400
+        dev["reconfirm_by"] = time.time() + reconfirm_days(dev.get("kind")) * 86400
         _save(body)
         _RECONFIRM_ASKED.pop(str(device_id), None)
     _receipt("device_reconfirmed", dev, approval_id=approval_id)
