@@ -319,3 +319,27 @@ def test_the_manifest_is_produced_by_calling_federations_canonical_function(monk
     built = build(seeded(), signer=make_signer())
     assert len(seen) == 1 and seen[0]["entries"] == 6
     assert built.files["manifest.json"].startswith(b"SPIED:")
+
+
+def test_a_grant_row_with_no_time_at_all_is_kept_and_the_summary_counts_it():
+    built = build(seeded(), start=100, end=200, grants=[{"grant_id": "g0"}])
+    assert len(built.files["grants.jsonl"].decode().strip().splitlines()) == 1
+    assert "Rows with no recorded time (kept): 1" in built.files["SUMMARY.md"].decode()
+
+
+def test_a_grant_is_placed_by_any_of_its_dates_not_only_by_when_it_was_made():
+    # made long before the range, first used inside it: it belongs in the pack (a created_at-only rule would drop it)
+    inside = {"grant_id": "g1", "created_at": 1.0, "first_used_at": 150.0}
+    outside = {"grant_id": "g2", "created_at": 1.0, "expires_at": 2.0}
+    built = build(seeded(), start=100, end=200, grants=[inside, outside])
+    ids = [json.loads(line)["grant_id"] for line in built.files["grants.jsonl"].decode().strip().splitlines()]
+    assert ids == ["g1"]
+
+
+def test_a_grant_row_carries_only_its_listed_fields():
+    row = {"grant_id": "g3", "tools": ["send_email"], "created_at": 20.0, "scope": "job-secret-name", "note": "free text",
+           "pattern": "owner text", "sig": "abc"}
+    built = build(seeded(), grants=[row])
+    out = json.loads(built.files["grants.jsonl"].decode().strip())
+    assert set(out) <= set(pack.GRANT_FIELDS) and out["tools"] == ["send_email"]
+    assert not {"scope", "note", "pattern", "sig"} & set(out), "no free text and no signature is copied"
