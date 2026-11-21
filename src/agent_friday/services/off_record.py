@@ -18,6 +18,7 @@ with what a receipt needs: the tool, its class, the decision and the time.
 """
 from __future__ import annotations
 
+import contextvars
 import threading
 import time
 
@@ -61,6 +62,25 @@ def _settings() -> dict:
     return s if isinstance(s, dict) else _Unreadable()
 
 
+#: True while one turn is held off the record in this context (a turn that carries outside text from the owner's
+#: phone, services/phone_outside_text). One mechanism for every store: ``active()``, ``skip()`` and
+#: ``excludes_learning()`` all answer True while it is set, whatever the settings say.
+_TURN_HELD = contextvars.ContextVar("friday_off_record_turn", default=False)
+
+
+def hold_turn():
+    """Keep the turn running in this context off the record; returns the token for ``release_turn``."""
+    return _TURN_HELD.set(True)
+
+
+def release_turn(token) -> None:
+    _TURN_HELD.reset(token)
+
+
+def turn_held() -> bool:
+    return _TURN_HELD.get()
+
+
 def stops_storage(settings: dict | None) -> bool:
     s = settings or {}
     return bool(s.get("off_record")) and bool(s.get("off_record_stops_storage", True))
@@ -68,6 +88,8 @@ def stops_storage(settings: dict | None) -> bool:
 
 def active(settings: dict | None = None) -> bool:
     """True while nothing about the conversation may be written to disk."""
+    if _TURN_HELD.get():
+        return True
     return stops_storage(_settings() if settings is None else settings)
 
 
@@ -93,6 +115,8 @@ def excludes_learning(settings: dict | None = None) -> bool:
     be read): the last good settings this process read or wrote for that file
     decide when there are any, otherwise the turn counts as off the record,
     because the factory defaults it would otherwise get say off_record False."""
+    if _TURN_HELD.get():
+        return True
     try:
         s = _settings() if settings is None else (settings or {})
         if isinstance(s, _Unreadable):

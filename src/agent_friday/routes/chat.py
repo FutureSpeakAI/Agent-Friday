@@ -20,6 +20,7 @@ import queue as _queue
 import contextvars as _contextvars
 from agent_friday.services.reasoning_trace import current as _rt_current
 from agent_friday.services import cloud_intent as _cloud_intent
+from agent_friday.services import off_record as _off_record_mod
 from agent_friday.services import phone_outside_text as _phone_outside_text
 from agent_friday.services import local_offer as _local_offer
 from agent_friday.services import outage_fallback as _outage_fallback
@@ -791,10 +792,11 @@ def _persist_turn(cid, user_msg, friday_msg, meta=None):
     _settings = _load_settings() or {}
     # Which provider received this exchange, so a later call knows what it
     # may recall directly (services/conversation_provenance).
-    _pmeta = _prov.chat_turn_meta(bool(_settings.get('off_record')) or _OUTSIDE_TURN.get())
+    _held = _off_record_mod.turn_held()
+    _pmeta = _prov.chat_turn_meta(bool(_settings.get('off_record')) or _held)
     # Off the record the conversation store keeps these in memory only
     # (services/off_record), and the mirror rows are marked never to be written.
-    _unsaved = _prov.stops_storage(_settings) or _OUTSIDE_TURN.get()
+    _unsaved = _prov.stops_storage(_settings) or _held
     # A fenced ```friday-artifact block in the reply (services/artifacts) is
     # stored as an artifact and replaced with a pointer BEFORE the reply is
     # written anywhere, so the transcript never carries a second copy.
@@ -1177,16 +1179,19 @@ def _stop_everything_gate(fn):
 
 
 def _outside_turn_scope(fn):
-    """A turn that carries outside text from the owner's phone (``outside_context``) is kept off the record
-    while it runs on this thread: its rows are marked, and the mirror rows are never written
-    (services/phone_outside_text)."""
+    """A turn that carries outside text from the owner's phone (``outside_context``) is held off the record while
+    it runs (services/off_record.hold_turn): every store that asks off_record declines its write, nothing is
+    learned, and the conversation rows stay in memory only (services/phone_outside_text)."""
     @wraps(fn)
     def _inner(*args, **kwargs):
-        token = _OUTSIDE_TURN.set(bool(_phone_outside_text.from_chat_body(request.get_json(silent=True))))
+        from agent_friday.services import off_record as _off
+        if not _phone_outside_text.from_chat_body(request.get_json(silent=True)):
+            return fn(*args, **kwargs)
+        token = _off.hold_turn()
         try:
             return fn(*args, **kwargs)
         finally:
-            _OUTSIDE_TURN.reset(token)
+            _off.release_turn(token)
     return _inner
 
 
@@ -1371,9 +1376,6 @@ def _attach_trace(rv, tid):
 
 _PRESET_TRACE_ID = _contextvars.ContextVar("friday_preset_trace_id", default=None)
 _PILOT_OFF_RECORD = _contextvars.ContextVar("friday_pilot_off_record", default=False)
-#: True while a turn that carries outside text from the owner's phone runs on this thread
-#: (services/phone_outside_text): the turn is kept off the record.
-_OUTSIDE_TURN = _contextvars.ContextVar("friday_outside_turn", default=False)
 
 
 def _start_pilot(message, settings):
@@ -1429,10 +1431,15 @@ def chat_stream():
 
     # The owner's message is stored before the turn starts, and the `started`
     # frame says so: a client that saw it knows the server has the message.
+    _accept_data = request.get_json(silent=True) or {}
+    _accept_hold = (_off_record_mod.hold_turn() if _phone_outside_text.from_chat_body(_accept_data) else None)
     try:
-        _accepted = _accept_user_message(request.get_json(silent=True) or {})
+        _accepted = _accept_user_message(_accept_data)
     except Exception:
         _accepted = None
+    finally:
+        if _accept_hold is not None:
+            _off_record_mod.release_turn(_accept_hold)
 
     _tid = "tr_" + uuid.uuid4().hex[:16]
     q.put(("trace", _tid))
@@ -1626,13 +1633,13 @@ def _end_grant_turn(sess_ctx, session_id, conversation_id):
 
 
 @chat_bp.route('/api/chat', methods=['POST'])
+@_outside_turn_scope
 @_stop_everything_gate
 @_cloud_fallback_choice
 @_withhold_pasted_keys
 @_traced_turn
 @_privacy_hold_turn
 @_cloud_intent.per_turn
-@_outside_turn_scope
 def chat():
     """Text chat — powered by Anthropic Claude.
 
@@ -1673,7 +1680,7 @@ def chat():
         # epistemic scoring, skill capture, recall indexing): a toggle mid-turn
         # cannot let half a turn be learned (NS-15.8-2).
         _outside = _phone_outside_text.from_chat_body(data)     # outside text for this turn only, or []
-        _turn_off_record = _turn_learning_off() or bool(_outside)
+        _turn_off_record = _turn_learning_off()                     # true for a held turn too (services/off_record)
         # v5: feed the LOCAL user model from each user turn (best-effort — never
         # blocks or fails the chat turn). Personalizes future system prompts.
         # Off the record it learns nothing (NS-15.8-2; user_model checks too).
