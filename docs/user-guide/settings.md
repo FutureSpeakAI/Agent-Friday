@@ -50,6 +50,7 @@ service's card.
   unavailable**: **Run it once when the model is back (recommended)** or **Wait
   for its next scheduled time**. Each job can choose its own on its card in
   Workflows. See [Scheduled jobs](scheduled-jobs.md).
+- **What may interrupt you.** Which finished scheduled routines (a job that ran, a Front Page edition, the Daily Creation, the briefing, the weekly editions) may interrupt you. One tick box each.
 - **Muted notifications.** The kinds of notice you have muted.
 
 ## Voice

@@ -275,6 +275,20 @@
  },
  {
   "section": "General",
+  "panel": "General · What may interrupt you",
+  "label": "One tick box per rule",
+  "kind": "checkbox (per rule)",
+  "keys": [
+   "notification_interrupt_rules"
+  ],
+  "route": "POST /api/notifications/interrupt-rules",
+  "reader_file": "src/agent_friday/services/notification_policy.py",
+  "reader_needle": "INTERRUPT_SETTING = \"notification_interrupt_rules\"",
+  "status": "ok",
+  "note": "Which finished scheduled routines may interrupt (a job that ran, a Front Page edition, the Daily Creation, the briefing, the weekly editions). The briefing and weekly editions start off. Failures, approvals, status and routing notices and news keep their own rules."
+ },
+ {
+  "section": "General",
   "panel": "General · Your profile",
   "label": "Setup-question answer fields (one per question)",
   "kind": "text inputs",
