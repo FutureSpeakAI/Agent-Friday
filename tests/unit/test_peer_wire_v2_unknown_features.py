@@ -8,7 +8,8 @@ signature, the key or any content is read; nothing is accepted "as far as it und
      with "schema", not accepted and not recorded;
   3. receive() records nothing for them (the store stays empty);
   4. the check can fail: with a schema that allows additional properties, the unknown field is no longer refused.
-Not covered here (named in the map row): signed grants limiting peers, mailboxes and purposes, and salted commitments.
+Not covered here (named in the map row): signed grants limiting peers, mailboxes and purposes, public-facing transport
+outside the invited v2 profile, and salted commitments.
 """
 import copy
 import json
