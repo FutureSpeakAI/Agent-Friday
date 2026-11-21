@@ -549,7 +549,9 @@ _WEB_DIRECTIVE = re.compile(
     r"|find (?:out )?(?:online|on the web)(?: for)?)\s+\S", re.I)
 _NEGATION = re.compile(
     r"\b(?:not|never|no|nt|dont|don|didnt|wont|cant|without|avoid\w*|skip\w*|off|instead|rather|except|"
-    r"ignor\w+|forget|leave|minus|exclud\w+|nothing|stop|stay|other than|w/o)\b|n't|w/o|with\s+out", re.I)
+    r"ignor\w+|forget|leave|minus|exclud\w+|nothing|stop|stay|other than|w/o|"
+    r"private|privately|local|locally|offline|forbidd?en?|cancel\w*|never\s*mind|on[- ]device|secret|confidential)\b"
+    r"|n't|w/o|with\s+out", re.I)
 _PERSONAL_WORD = re.compile(r"\b(?:my|mine|our|we|i)\b", re.I)
 _STORE_WORD = re.compile(
     r"\b(?:knowledge[\s-]*(?:graph|base)|vault|contacts?|address book|memory|memories|notes|wiki|drive|docs)\b", re.I)
