@@ -475,6 +475,19 @@ def list_approvals_route():
                                   _approvals.list_approvals(status=status, subject_type=subject_type, kind=kind)]})
 
 
+@goals_bp.route("/api/liquid/approval-slot", methods=["GET"])
+@login_required
+def approval_slot_route():
+    """Ids of the pending cards for one subject, and nothing else (NS-41.3-1). The shell draws
+    each card itself. Errors are fixed codes; the caller's text is never echoed."""
+    from agent_friday.services import approval_slot as _slot
+    try:
+        ids = _slot.pending_ids(request.args.get("subject"), request.args.get("kind"))
+    except _slot.BadSlot as bad:
+        return jsonify({"ok": False, "error": bad.code}), 400
+    return jsonify({"ok": True, "ids": ids})
+
+
 @goals_bp.route("/api/approvals/<approval_id>", methods=["GET"])
 @login_required
 def get_approval_route(approval_id):
