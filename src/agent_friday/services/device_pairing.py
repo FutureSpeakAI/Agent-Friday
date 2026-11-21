@@ -158,12 +158,66 @@ def gateway_config() -> dict:
 def set_gateway(enabled: bool, port: int = 0) -> dict:
     with _LOCK:
         body = _load()
+        was_on = bool(body["gateway"].get("enabled"))
         body["gateway"] = {"enabled": bool(enabled), "port": int(port or body["gateway"].get("port") or 0)}
         _save(body)
         if not enabled:
             _SESSIONS.clear()
             _persist_sessions()
-        return dict(body["gateway"])
+        out = dict(body["gateway"])
+    if not enabled:
+        close_pairing_window(by="gateway_off")
+    elif not was_on:
+        open_pairing_window(GATEWAY_ON_WINDOW_S, by="gateway_on")     # turning it on is the owner's act at the PC
+    return out
+
+
+# ── the pairing window ──────────────────────────────────────────────────────
+# pair/start is refused unless the owner opened pairing at the PC. Held in memory only, so a restart closes it.
+
+PAIRING_WINDOW_MIN_S = 30
+PAIRING_WINDOW_MAX_S = 900
+GATEWAY_ON_WINDOW_S = 600
+_WINDOW_UNTIL = 0.0
+
+
+def pairing_window() -> dict:
+    """Whether pairing is open and for how many more seconds."""
+    with _LOCK:
+        left = _WINDOW_UNTIL - time.time()
+    return {"open": left > 0, "remaining_s": int(round(left)) if left > 0 else 0}
+
+
+def _window_receipt(kind: str, by: str, **extra) -> None:
+    try:
+        from agent_friday.services import action_ledger
+        action_ledger.append(kind, {"principal": by, "surface": "pairing_window", **extra})
+    except Exception:
+        pass
+
+
+def open_pairing_window(seconds: float = 300, by: str = "owner:desk") -> dict:
+    """Open pairing for ``seconds`` (clamped to 30 s .. 15 min). Callers prove the owner is at the PC."""
+    global _WINDOW_UNTIL
+    try:
+        secs = float(seconds)
+    except (TypeError, ValueError):
+        secs = 300.0
+    secs = max(PAIRING_WINDOW_MIN_S, min(PAIRING_WINDOW_MAX_S, secs))
+    with _LOCK:
+        _WINDOW_UNTIL = time.time() + secs
+    _window_receipt("pairing_window_opened", by, seconds=int(secs))
+    return pairing_window()
+
+
+def close_pairing_window(by: str = "owner:desk") -> dict:
+    global _WINDOW_UNTIL
+    with _LOCK:
+        was_open = _WINDOW_UNTIL > time.time()
+        _WINDOW_UNTIL = 0.0
+    if was_open:
+        _window_receipt("pairing_window_closed", by)
+    return pairing_window()
 
 
 # ── devices ─────────────────────────────────────────────────────────────────
@@ -543,8 +597,9 @@ def _touch(device_id: str) -> None:
 
 
 def _reset_for_tests() -> None:
-    global _RESTORED
+    global _RESTORED, _WINDOW_UNTIL
     with _LOCK:
+        _WINDOW_UNTIL = 0.0
         _SESSIONS.clear()
         _CHALLENGES.clear()
         _RESTORED = False
