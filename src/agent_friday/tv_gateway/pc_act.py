@@ -144,6 +144,8 @@ def register(app: Flask) -> None:
 
     from agent_friday.tv_gateway import pc_wiki      # wiki edits ride this same owner-act door
     pc_wiki.register(app)
+    from agent_friday.tv_gateway import pc_userws    # and the saved workspaces
+    pc_userws.register(app)
 
     @app.get("/tv/v1/jobs/<jid>/events")
     def pc_job_events(jid):
