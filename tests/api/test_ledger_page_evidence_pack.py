@@ -38,3 +38,33 @@ def test_a_press_built_from_the_pages_own_fields_gets_a_zip(client):
 
 def test_the_page_names_the_download_from_the_answer_and_says_what_failed():
     assert "Content-Disposition" in PAGE and "nothing was exported" in PAGE
+
+
+def _saved_note(header):
+    import json as _json
+    import shutil
+    import subprocess
+    node = shutil.which("node")
+    if node is None:
+        import pytest
+        pytest.skip("node is not installed")
+    start = PAGE.index("const savedNote = ")
+    end = PAGE.index("const pressPack", start)
+    code = PAGE[start:end] + "console.log(JSON.stringify(savedNote({ headers: { get: k => k === 'X-Friday-Export-Recorded' ? process.argv[1] : null } }, 'p.zip')));"
+    done = subprocess.run([node, "-e", code, header], capture_output=True, text=True, timeout=60)
+    assert done.returncode == 0, done.stderr
+    return _json.loads(done.stdout)
+
+
+def test_the_note_after_a_save_says_when_the_export_was_not_written_to_the_record():
+    # The route answers 200 with X-Friday-Export-Recorded: no when the ledger could not take the export line. The page
+    # must say that in words; the same page run with each header value gives the two different notes.
+    assert _saved_note("yes") == "Saved p.zip to your downloads. It never left this PC."
+    no = _saved_note("no")
+    assert "could not be written to the record" in no and "It never left this PC" not in no
+    assert "Saved p.zip" in no, "the file was saved either way, and the note says so"
+
+
+def test_the_save_path_uses_that_note_and_nothing_else_says_saved():
+    assert PAGE.count("savedNote(r, fileName(r))") == 1
+    assert "'Saved ' + fileName(r)" not in PAGE

@@ -113,6 +113,7 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Iterable, Iterator, Optional
+from agent_friday.services import ledger_text
 from agent_friday.user_errors import UserFacingRuntimeError
 
 VERSION = 1
@@ -290,8 +291,17 @@ def _normalise(rec: Any) -> Any:
     return json.loads(json.dumps(rec, default=str))
 
 
+class _Shown(dict):
+    """An entry as this PC's readers get it: `rec` holds the text, and `raw_rec` (an attribute, never a key, so no line read
+    from disk can carry one) is the rec the line was hashed with. Held by test_action_ledger_free_text."""
+    raw_rec: Any = None
+
+
 def body_hash(entry: dict) -> str:
     body = {k: v for k, v in entry.items() if k not in ("hash", "sig")}
+    raw = getattr(entry, "raw_rec", None)
+    if raw is not None:
+        body["rec"] = raw                      # a shown entry hashes as the line it came from
     return hashlib.sha256(canon(body)).hexdigest()
 
 
@@ -315,6 +325,67 @@ def entry_ok(e: dict, key: Optional[bytes]) -> bool:
                 and _hmac.compare_digest(_sign(key, h), str(e.get("sig"))))
     except Exception:
         return False
+
+
+# ── Free text: a keyed hash in the entry, the text in a local sidecar ───────
+# (services/ledger_text.py names the fields; tests/unit/test_action_ledger_free_text.py holds the rules)
+
+TEXTS_NAME = "texts.jsonl"
+
+
+def _text_digest(key: bytes, text: str) -> str:
+    return _hmac.new(key, b"asimov-ledger-text/v1\x00" + text.encode("utf-8", "surrogatepass"),
+                     hashlib.sha256).hexdigest()
+
+
+def _remember_texts(d: Path, texts: dict) -> None:
+    """Write the sidecar lines for `texts` before the entries that name them (a crash can leave a text without an entry,
+    never the reverse). Raises OSError when it cannot be written; the caller then writes the receipt anyway and the
+    entry shows its hash (test_a_sidecar_that_cannot_be_written_does_not_lose_the_receipt)."""
+    if not texts:
+        return
+    with open(d / TEXTS_NAME, "ab") as f:
+        for digest, text in texts.items():
+            f.write(json.dumps({"h": digest, "t": text}, separators=(",", ":"), ensure_ascii=True).encode("ascii") + b"\n")
+        f.flush()
+    _TEXTS.pop(str(d), None)
+
+
+_TEXTS: dict = {}
+
+
+def _text_of(digest: str):
+    """The text a hidden value stands for, from this PC's sidecar, or None (a ledger restored without its sidecar
+    shows the hash, never an error)."""
+    try:
+        d = ledger_dir()
+        path = d / TEXTS_NAME
+        st = path.stat()
+        cached = _TEXTS.get(str(d))
+        if cached is None or cached[0] != (st.st_size, st.st_mtime_ns):
+            table = {}
+            with open(path, "rb") as f:
+                for line in f:
+                    row = _safe_json(line)
+                    if isinstance(row, dict) and isinstance(row.get("h"), str) and isinstance(row.get("t"), str):
+                        table[row["h"]] = row["t"]
+            cached = ((st.st_size, st.st_mtime_ns), table)
+            _TEXTS[str(d)] = cached
+        return cached[1].get(digest)
+    except OSError:
+        return None
+
+
+def _shown(e: dict) -> dict:
+    """The entry with its hidden free text turned back into text for this PC's own readers, keeping the line's own rec
+    on `raw_rec` so entry_ok and body_hash still hold. An entry with nothing hidden is returned as it is."""
+    rec = e.get("rec")
+    if not isinstance(rec, (dict, list)) or '"ft1:' not in json.dumps(rec, default=str):
+        return e
+    shown = _Shown(e)
+    shown["rec"] = ledger_text.show(rec, _text_of)
+    shown.raw_rec = rec
+    return shown
 
 
 # ── The anchor outside the data folder ──────────────────────────────────────
@@ -774,8 +845,21 @@ def _append_locked(key: bytes, items: list, durable: bool, pv: Optional[str] = N
     pre_stats = _stats() if _STATE.get("verified") else None
     out = None
     written = 0
+    # free text is written as a keyed hash; the text goes to the local sidecar first (services/ledger_text.py)
+    hidden_items, sidecar = [], {}
+    for k, r in pending + list(items):
+        if k in ledger_text.KEPT_AS_WRITTEN_KINDS:
+            hidden, texts = _normalise(r), {}
+        else:
+            hidden, texts = ledger_text.hide(_normalise(r), lambda t: _text_digest(key, t))
+        hidden_items.append((k, hidden))
+        sidecar.update(texts)
+    try:
+        _remember_texts(d, sidecar)
+    except OSError as e:                       # the receipt matters more than the words: it shows as the hash
+        _log.warning("ledger text sidecar not written: %s", e)
     with open(live, "ab") as f:
-        for n, (k, r) in enumerate(pending + list(items)):
+        for n, (k, r) in enumerate(hidden_items):
             ts, t = _now()
             seq += 1
             entry = {"v": VERSION, "seq": seq, "ts": ts, "t": t, "kind": k,
@@ -899,7 +983,23 @@ def append(kind: str, rec: dict, *, durable: bool = False) -> dict:
     with _TLOCK:
         _check_dir()
         _ensure_migrated()
-        return _guarded_append(key, [(kind, rec)], durable, pv)
+        out = _guarded_append(key, [(kind, rec)], durable, pv)
+    return _as_written_by_caller(out, rec)
+
+
+def _as_written_by_caller(out: Optional[dict], rec: dict) -> Optional[dict]:
+    """The entry append() hands back carries the caller's own rec (its words), not the hidden form on disk: a caller that
+    signed its record (action_gate's hmac) must get back what it signed. The entry still hashes as the line written
+    (`raw_rec`). Held by test_append_hands_back_the_entry_as_the_caller_wrote_it."""
+    if not isinstance(out, dict):
+        return out
+    mine = _normalise(rec)
+    if out.get("rec") == mine:
+        return out
+    shown = _Shown(out)
+    shown["rec"] = mine
+    shown.raw_rec = out.get("rec")
+    return shown
 
 
 def try_append(kind: str, rec: dict, **kw) -> Optional[dict]:
@@ -917,7 +1017,26 @@ def entries(kinds: Optional[Iterable[str]] = None, *, newest_first: bool = True,
             where: Optional[Callable[[dict], bool]] = None,
             verified: bool = False, strict: bool = False,
             archive: Optional[bool] = None, gate: Optional[bool] = None,
-            stop: Optional[Callable[[], bool]] = None) -> list[dict]:
+            stop: Optional[Callable[[], bool]] = None,
+            resolve_text: bool = True) -> list[dict]:
+    """Entries, optionally filtered by kind and a predicate. By default each entry's hidden free text is turned back
+    into text from this PC's sidecar (the line's own rec is kept on the entry's `raw_rec` attribute, so entry_ok still holds, and `where`
+    sees the text). `resolve_text=False` gives the lines exactly as written, hashes and all: what an export reads, so
+    nothing that leaves the machine holds the text. Held by tests/unit/test_action_ledger_free_text.py."""
+    if not resolve_text:
+        return _entries_raw(kinds, newest_first=newest_first, limit=limit, where=where, verified=verified,
+                            strict=strict, archive=archive, gate=gate, stop=stop)
+    shown_where = (lambda e: where(_shown(e))) if where is not None else None
+    return [_shown(e) for e in _entries_raw(kinds, newest_first=newest_first, limit=limit, where=shown_where,
+                                            verified=verified, strict=strict, archive=archive, gate=gate, stop=stop)]
+
+
+def _entries_raw(kinds: Optional[Iterable[str]] = None, *, newest_first: bool = True,
+                 limit: Optional[int] = None,
+                 where: Optional[Callable[[dict], bool]] = None,
+                 verified: bool = False, strict: bool = False,
+                 archive: Optional[bool] = None, gate: Optional[bool] = None,
+                 stop: Optional[Callable[[], bool]] = None) -> list[dict]:
     """Entries (whole lines), optionally filtered by kind and a predicate.
 
     `verified`: only lines whose hash and signature hold under this device's
