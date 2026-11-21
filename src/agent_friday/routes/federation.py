@@ -311,6 +311,29 @@ def _v2_store():
     return _V2_STORE
 
 
+_ACCEPTED = None
+
+
+def _accepted_issuers():
+    """The owner's signed list of accepted issuers, opened on first use (default: none)."""
+    global _ACCEPTED
+    if _ACCEPTED is None:
+        from agent_friday.core import FRIDAY_DIR
+        from agent_friday.governance.proof_of_integrity import get_integrity_engine
+        from agent_friday.services import accepted_issuers
+        engine = get_integrity_engine()
+        _ACCEPTED = accepted_issuers.AcceptedIssuers(
+            FRIDAY_DIR / "federation" / "accepted_issuers.json",
+            lambda data: engine.sign_payload(data) or "", engine.get_public_key_hex() or "00" * 32)
+    return _ACCEPTED
+
+
+def _issuer_registry():
+    from agent_friday.core import FRIDAY_DIR
+    from agent_friday.services import issuer_registry
+    return issuer_registry.IssuerRegistry(FRIDAY_DIR / "federation")
+
+
 def _v2_trusted_keys() -> set:
     """Signing keys this owner has explicitly allowed: known peers whose preference is 'allow'
     and whose id is a 64-hex Ed25519 key. A peer that was merely discovered (pref 'ask') or
@@ -341,6 +364,10 @@ def federation_v2_events():
         return jsonify({"ok": False, "error": "size"}), 413
     if not transport.check_rate_limit("v2:" + str(request.remote_addr or "?")):
         return jsonify({"ok": False, "error": "rate_limited"}), 429
+    from agent_friday.services import accepted_issuers as _issuers
+    named = _issuers.named_issuer(raw)
+    if named is not None and not _accepted_issuers().is_accepted_id(named):
+        return jsonify({"ok": False, "error": "issuer_not_accepted"}), 422
     try:
         disposition, event_id = wire.receive(raw, _v2_trusted_keys(), _v2_store())
     except wire.WireError as e:
@@ -348,6 +375,44 @@ def federation_v2_events():
     status = {"enqueued": 202, "replay": 200, "equivocation": 409}[disposition]
     return jsonify({"ok": disposition != "equivocation", "event_id": event_id,
                     "disposition": disposition}), status
+
+
+@federation_bp.route("/api/federation/accepted-issuers", methods=["GET"])
+@login_required
+def federation_accepted_issuers():
+    """The issuers this node accepts (none by default): ids and units, nothing else."""
+    return jsonify({"ok": True, "issuers": [{"issuer_id": r.issuer_id, "unit_code": r.unit_code}
+                                            for r in _accepted_issuers().refs()]})
+
+
+@federation_bp.route("/api/federation/accepted-issuers", methods=["POST"])
+@login_required
+def federation_accept_issuer():
+    """Accept one issuer whose charter this node holds. A press on this PC's own screen, nothing else."""
+    import time
+    from agent_friday.services import accepted_issuers as _issuers
+    from agent_friday.services import screen_click
+    refusal = screen_click.press_refusal(request)
+    if refusal is not None:
+        return refusal
+    body = request.get_json(silent=True) or {}
+    try:
+        ref = _issuer_registry().ref(body.get("issuer_id"))
+    except ValueError:
+        return jsonify({"ok": False, "error": "bad_issuer"}), 400
+    if ref is None:
+        return jsonify({"ok": False, "error": "unknown_issuer"}), 404
+    outcome = _accepted_issuers().accept(ref, _issuers.Press.from_request(request), int(time.time()))
+    status = {"accepted": 201, "already": 200, "cannot-sign": 503}.get(outcome.value, 409)
+    return jsonify({"ok": status < 300, "outcome": outcome.value}), status
+
+
+@federation_bp.route("/api/federation/accepted-issuers/<issuer_id>", methods=["DELETE"])
+@login_required
+def federation_withdraw_issuer(issuer_id):
+    """Stop accepting an issuer. No press: this only takes trust away."""
+    removed = _accepted_issuers().withdraw(issuer_id)
+    return jsonify({"ok": removed, "withdrawn": removed}), (200 if removed else 404)
 
 
 # ── Federation: Well-known endpoint (for discovery by peers) ─────────────────
