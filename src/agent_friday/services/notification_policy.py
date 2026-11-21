@@ -198,8 +198,10 @@ MEMORY_TITLE = "Save something into Friday's memory"
 MEMORY_GROUP = "memory_proposals"
 
 #: Emitter key prefixes that name the job a card is about.
+#: A success has its own key: it can be a needs-you card now (the owner's interrupt rule), and
+#: dismissing it must never hide that job's next failure.
 _JOB_PREFIXES = (("sched-fail:", "sched:"), ("sched-wait:", "sched:"),
-                 ("sched-ok:", "sched:"), ("run:", "run:"), ("approval:", "approval:"))
+                 ("sched-ok:", "sched-ok:"), ("run:", "run:"), ("approval:", "approval:"))
 
 
 def rank(tier: str, priority: str = "") -> int:

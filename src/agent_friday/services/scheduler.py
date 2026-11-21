@@ -777,6 +777,11 @@ LOCAL_ONLY_BY_DEFAULT = {
 #: The News routines. A run that cannot reach the local seat waits and catches
 #: up the same day (SeatWaiting) instead of being skipped: the owner reads them
 #: on a schedule, so a silent gap is a missing edition, not a quiet heartbeat.
+#: Routines whose delivery has its own notice (the Front Page, the Daily Creation, the briefing, the weekly
+#: editions). Their run-finished card stays a quiet one, so one event never interrupts twice.
+OWN_DELIVERY_NOTICE = LOCAL_ONLY_BY_DEFAULT - {"sch_heartbeat"}
+
+
 NEWS_ROUTINES = {
     "sch_news_morning",
     "sch_front_page_evening",
@@ -1794,6 +1799,7 @@ def _notify_run(rec, status, summary):
         _ne.push(title=f"\u2713 {name} ran",
                  body=(summary or "")[:300] or "Completed.", priority="low",
                  source="scheduler", kind="scheduled_task", emitter="E07",
+                 tier="fyi" if sid in OWN_DELIVERY_NOTICE else None,
                  dedupe_key=f"sched-ok:{sid}", meta={"schedule_id": sid})
     except Exception as e:
         print(f"  [scheduler] notify failed: {e}")
