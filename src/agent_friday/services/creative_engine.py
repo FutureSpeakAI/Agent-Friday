@@ -21,7 +21,7 @@ Design rules (consistent with the rest of the codebase):
   • The google-genai SDK and the Gemini client are imported LAZILY inside the
     call sites, so importing this module never requires the SDK or a key — it
     stays import-safe under FRIDAY_TESTING and offline.
-  • The API key is read from core.GEMINI_API_KEY (loaded from env / credential store).
+  • The client goes through the key gateway (services/gemini_client): it holds only a stand-in key.
     No keys in source.
   • Every generation surfaces a holographic process orb (register → progress →
     complete → fade) exactly like the self-improvement / daily-creation loops.
@@ -488,7 +488,8 @@ def _notify(filename: str) -> None:
 
 def is_available() -> bool:
     """True if a Gemini API key is configured (creative generation is possible)."""
-    return bool(getattr(core, "GEMINI_API_KEY", ""))
+    from agent_friday.services import gemini_client
+    return gemini_client.available()
 
 
 def _client():
@@ -499,8 +500,8 @@ def _client():
             "(set via Settings → Connections or as an environment variable).")
     from agent_friday.services import cloud_intent as _cloud_intent
     _cloud_intent.require("google-gemini", "creative generation (Gemini)", "")
-    from google import genai  # lazy — import-safe without the SDK
-    return genai.Client(api_key=core.GEMINI_API_KEY)  # pragma: allowlist secret
+    from agent_friday.services import gemini_client       # the gateway's client: it holds only the stand-in key
+    return gemini_client.client()
 
 
 def _unavailable(kind: str) -> Dict[str, Any]:

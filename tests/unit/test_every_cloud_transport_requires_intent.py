@@ -123,6 +123,8 @@ _FACTORY_HOMES = {
 EXEMPT = {
     ("tv_gateway/owner_turn.py", "_call_desktop"):
         "runs the owner's own chat turn in process (POST /api/chat/stream on this PC's app), not a model transport: the turn reaches model_router, whose Claude and OpenAI legs call cloud_intent.require (_call_claude, _call_openai) and whose _call_ollama is @admitted, so intent and admission are checked where the model is called",
+    ("services/gemini_client.py", "client"):
+        "client factory for the media modules: builds an object pointed at the key gateway and sends nothing; each caller (creative_engine._client, media_tools._gemini_client, the music generator) calls cloud_intent.require before it, held by test_every_client_factory_requires_intent and this scan",
     ("core/__init__.py", "get_genai_client"):
         "client getter: builds an object and sends nothing; every send is a method call this test also guards",
     ("core/__init__.py", "get_anthropic_client"):

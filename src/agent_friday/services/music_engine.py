@@ -266,7 +266,14 @@ def _compose_music_prompt(prompt: str, scene_dna: Optional[dict],
 
 def is_available() -> bool:
     """True if a Gemini API key is configured (cloud music is *possible*)."""
-    return bool(getattr(core, "GEMINI_API_KEY", ""))
+    from agent_friday.services import gemini_client
+    return gemini_client.available()
+
+
+def _gemini_client():
+    """The gateway's Gemini client: it holds only the stand-in key (services/gemini_client)."""
+    from agent_friday.services import gemini_client
+    return gemini_client.client()
 
 
 def cloud_music_available() -> tuple:
@@ -393,9 +400,8 @@ def generate_music(prompt: str, *,
     try:
         from agent_friday.services import cloud_intent as _cloud_intent
         _cloud_intent.require("google-gemini", "music generation (Lyria)", api_model)
-        from google import genai
         from google.genai import types
-        client = genai.Client(api_key=core.GEMINI_API_KEY)  # pragma: allowlist secret
+        client = _gemini_client()
         _orb_update(orb, progress=0.2, label="Submitting to Lyria…")
 
         files = _generate_music_cloud(

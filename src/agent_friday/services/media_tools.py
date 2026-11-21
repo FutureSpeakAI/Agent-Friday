@@ -174,13 +174,12 @@ from agent_friday.services.cloud_intent import owner_request as _owner_request
 
 
 def _gemini_client():
-    from agent_friday import core
-    if not getattr(core, "GEMINI_API_KEY", None):
+    from agent_friday.services import gemini_client
+    if not gemini_client.available():
         return None
     from agent_friday.services import cloud_intent as _cloud_intent
     _cloud_intent.require("google-gemini", "media inspection (Gemini)", "gemini-2.5-flash")
-    from google import genai
-    return genai.Client(api_key=core.GEMINI_API_KEY)
+    return gemini_client.client()
 
 
 def _ffprobe_duration(path):
