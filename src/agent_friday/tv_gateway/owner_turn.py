@@ -91,12 +91,15 @@ STATUS_EVERY_S = 4.0
 MAX_TURN_S = 30 * 60.0
 
 
-def _call_desktop(text: str, conversation_id: Optional[str]):
-    """The owner's chat turn on this PC's own app, in process, with this PC's own session token."""
+def _call_desktop(text: str, conversation_id: Optional[str], outside: Optional[list] = None):
+    """The owner's chat turn on this PC's own app, in process, with this PC's own session token. ``outside`` is
+    text from an app on the phone: it rides beside the owner's message, never in it (services/phone_outside_text)."""
     from agent_friday import core
     body = {"message": text}
     if conversation_id:
         body["conversation_id"] = conversation_id
+    if outside:
+        body["outside_context"] = outside
     return core.app.test_client().post(
         "/api/chat/stream", json=body, buffered=False,
         headers={"X-Friday-Token": core._current_api_token()})
@@ -126,7 +129,7 @@ class _DesktopTurn:
     turn's whole context lives and dies there, and the gateway only reads dicts.
     """
 
-    def __init__(self, text: str, conversation_id: Optional[str]):
+    def __init__(self, text: str, conversation_id: Optional[str], outside: Optional[list] = None):
         self.status_code = None
         self.q: "queue.Queue" = queue.Queue()
         ready = threading.Event()
@@ -135,7 +138,7 @@ class _DesktopTurn:
         def work():
             try:
                 with _activity(act):
-                    r = _call_desktop(text, conversation_id)
+                    r = _call_desktop(text, conversation_id, *([outside] if outside else []))
                     self.status_code = r.status_code
                     ready.set()
                     if r.status_code == 200:
@@ -169,9 +172,9 @@ class _DesktopTurn:
             yield f
 
 
-def _post(text: str, conversation_id: Optional[str]):
+def _post(text: str, conversation_id: Optional[str], outside: Optional[list] = None):
     """Start the owner's chat turn on this PC's own app, in process, and return it (status_code + frames)."""
-    return _DesktopTurn(text, conversation_id)
+    return _DesktopTurn(text, conversation_id, outside)
 
 
 _THINK = re.compile(r"<think>.*?</think>", re.S | re.I)
@@ -427,6 +430,11 @@ def run(dev: dict, body: dict) -> Iterator[str]:
     cid = cid.strip() if isinstance(cid, str) and cid.strip() else None
     if cid and not valid_cid(cid):
         raise turn.TurnRefused(400, "that chat id is not valid", "bad_request")
+    from agent_friday.services import phone_outside_text
+    try:
+        outside = phone_outside_text.parse(body.get("untrusted"))       # screen text: data, never the owner's words
+    except phone_outside_text.Refused as e:
+        raise turn.TurnRefused(400, e.message, e.code)
     new_chat = not cid                      # a chat THIS call creates rides on a later refusal so a retry reuses it
     requested = requested_model(body)
     asked = requested
@@ -454,7 +462,8 @@ def run(dev: dict, body: dict) -> Iterator[str]:
         cid, default = fast_voice_default(cid, dev)
     from agent_friday.tv_gateway import tailnet
     turn.device_pairing._receipt("device_turn", dev, watching="owner", provider="owner-agent",
-                                 model=requested, tools_offered=0, via=tailnet.via())
+                                 model=requested, tools_offered=0, via=tailnet.via(),
+                                 **({"untrusted_items": len(outside)} if outside else {}))
     kind = str((dev or {}).get("kind") or "").strip().lower()
     word = {"tablet": "Tablet", "phone": "Phone", "watch": "Watch"}.get(kind, "Remote")
     shown = requested or (default or {}).get("model") or ""
@@ -463,7 +472,7 @@ def run(dev: dict, body: dict) -> Iterator[str]:
     # cannot change what this answer is compared with.
     expected = "" if requested else ((default or {}).get("model") or bound_model(cid))
     try:
-        response = _post(text, cid)
+        response = _post(text, cid, *([outside] if outside else []))
     except Exception as e:
         _log.info("owner turn not started: %s", type(e).__name__)
         raise turn.TurnRefused(503, "this computer can't answer that right now", **_made(new_chat and bool(cid), cid))

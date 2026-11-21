@@ -189,6 +189,7 @@ def note_user_message(key: str, text: str):
 CARRIED_LABELS = {
     "ledger": "the task's working notes (written from what it read earlier)",
     "summary": "a summary of earlier work (written from what was read then)",
+    "phone_outside_text": "text from an app on the owner's phone (written by someone else, not by the owner)",
 }
 
 

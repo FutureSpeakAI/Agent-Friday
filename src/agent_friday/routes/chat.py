@@ -20,6 +20,7 @@ import queue as _queue
 import contextvars as _contextvars
 from agent_friday.services.reasoning_trace import current as _rt_current
 from agent_friday.services import cloud_intent as _cloud_intent
+from agent_friday.services import phone_outside_text as _phone_outside_text
 from agent_friday.services import local_offer as _local_offer
 from agent_friday.services import outage_fallback as _outage_fallback
 import difflib as _difflib
@@ -719,7 +720,8 @@ def _accept_user_message(data):
         else:
             mid = mid or str(uuid.uuid4())
             _settings = _load_settings() or {}
-            _pmeta = _prov.chat_turn_meta(bool(_settings.get('off_record')))
+            _outside_turn = bool(_phone_outside_text.from_chat_body(data))
+            _pmeta = _prov.chat_turn_meta(bool(_settings.get('off_record')) or _outside_turn)
             _conv.append(cid, {"id": mid, "role": "user", "text": message,
                                "pinned": False,
                                "meta": dict(_pmeta, kind="turn", status="received")})
@@ -727,7 +729,7 @@ def _accept_user_message(data):
                        'role': 'user', 'text': message, 'pinned': False,
                        'sources': [], 'workspace': data.get('workspace', '') or '',
                        'conversation_id': cid, 'status': 'received'}
-            if _prov.stops_storage(_settings):
+            if _prov.stops_storage(_settings) or _outside_turn:
                 _mirror['off_record'] = True
             CHAT_HISTORY.append(_mirror)
             try:
@@ -789,10 +791,10 @@ def _persist_turn(cid, user_msg, friday_msg, meta=None):
     _settings = _load_settings() or {}
     # Which provider received this exchange, so a later call knows what it
     # may recall directly (services/conversation_provenance).
-    _pmeta = _prov.chat_turn_meta(bool(_settings.get('off_record')))
+    _pmeta = _prov.chat_turn_meta(bool(_settings.get('off_record')) or _OUTSIDE_TURN.get())
     # Off the record the conversation store keeps these in memory only
     # (services/off_record), and the mirror rows are marked never to be written.
-    _unsaved = _prov.stops_storage(_settings)
+    _unsaved = _prov.stops_storage(_settings) or _OUTSIDE_TURN.get()
     # A fenced ```friday-artifact block in the reply (services/artifacts) is
     # stored as an artifact and replaced with a pointer BEFORE the reply is
     # written anywhere, so the transcript never carries a second copy.
@@ -1174,6 +1176,20 @@ def _stop_everything_gate(fn):
     return _inner
 
 
+def _outside_turn_scope(fn):
+    """A turn that carries outside text from the owner's phone (``outside_context``) is kept off the record
+    while it runs on this thread: its rows are marked, and the mirror rows are never written
+    (services/phone_outside_text)."""
+    @wraps(fn)
+    def _inner(*args, **kwargs):
+        token = _OUTSIDE_TURN.set(bool(_phone_outside_text.from_chat_body(request.get_json(silent=True))))
+        try:
+            return fn(*args, **kwargs)
+        finally:
+            _OUTSIDE_TURN.reset(token)
+    return _inner
+
+
 def _guest_turn(sess_ctx) -> bool:
     """A codebase turn on a guest's key never moves to the owner's key (salon spec 4.7)."""
     try:
@@ -1355,6 +1371,9 @@ def _attach_trace(rv, tid):
 
 _PRESET_TRACE_ID = _contextvars.ContextVar("friday_preset_trace_id", default=None)
 _PILOT_OFF_RECORD = _contextvars.ContextVar("friday_pilot_off_record", default=False)
+#: True while a turn that carries outside text from the owner's phone runs on this thread
+#: (services/phone_outside_text): the turn is kept off the record.
+_OUTSIDE_TURN = _contextvars.ContextVar("friday_outside_turn", default=False)
 
 
 def _start_pilot(message, settings):
@@ -1613,6 +1632,7 @@ def _end_grant_turn(sess_ctx, session_id, conversation_id):
 @_traced_turn
 @_privacy_hold_turn
 @_cloud_intent.per_turn
+@_outside_turn_scope
 def chat():
     """Text chat — powered by Anthropic Claude.
 
@@ -1652,7 +1672,8 @@ def chat():
         # learning step of the turn (the user model, the household capture,
         # epistemic scoring, skill capture, recall indexing): a toggle mid-turn
         # cannot let half a turn be learned (NS-15.8-2).
-        _turn_off_record = _turn_learning_off()
+        _outside = _phone_outside_text.from_chat_body(data)     # outside text for this turn only, or []
+        _turn_off_record = _turn_learning_off() or bool(_outside)
         # v5: feed the LOCAL user model from each user turn (best-effort — never
         # blocks or fails the chat turn). Personalizes future system prompts.
         # Off the record it learns nothing (NS-15.8-2; user_model checks too).
@@ -2635,6 +2656,10 @@ def chat():
             if not _slice_head.is_local(provider):
                 tail = tail + _slice_head.render_released(
                     _conversation_id, _tplan_turn_id())
+            if _outside:
+                # Text from an app on the owner's phone: wrapped as data, in the turn's context beside the
+                # owner's words and never in them (services/phone_outside_text).
+                tail = tail + chr(10) + chr(10) + _phone_outside_text.block(_outside)
             lookup = {}
             # Scrub guarded cloud turns. Scrubbing every message
             # (not just the new one) means a cached LOCAL reply retrieved by the
@@ -2710,7 +2735,18 @@ def chat():
         # Wire this turn into the ask-first action flow: stamps the session id so
         # the confirmation gate is live, and grants a pending action when this
         # message is the user's "yes" to a question Friday asked last turn.
+        if _outside:
+            # Not the owner's command, even from the owner's own device: its tool calls need a card, no
+            # pre-approved send applies, and an argument taken from the text is flagged (services/taint).
+            _sess_ctx["untrusted_turn"] = True
+            _sess_ctx["outside_in_prompt"] = _phone_outside_text.WHY
         _sess_ctx = prepare_confirmation_ctx(session_id, message, _sess_ctx)
+        if _outside:
+            _sess_ctx["untrusted_turn"] = True              # kept whatever prepare_confirmation_ctx did to the dict
+            _sess_ctx["outside_in_prompt"] = _phone_outside_text.WHY
+            from agent_friday.services import taint as _taint_mod
+            _taint_mod.note_carried(_taint_mod.ledger_key(_sess_ctx), "phone_outside_text",
+                                    _phone_outside_text.plain(_outside), outside=True)
         if _RECALL_MARKER in (_mem_part or ""):
             # Recalled past conversations are text Friday did not write in
             # this turn and cannot vouch for: no pre-approved send this turn

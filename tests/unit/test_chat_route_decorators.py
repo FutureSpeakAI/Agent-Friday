@@ -58,6 +58,7 @@ def test_the_chat_handler_keeps_all_its_wrappers():
     # chat acts before anything reads the turn, and nothing runs while stopped. Then
     # _cloud_fallback_choice (A6): the owner's one-turn choice of the other cloud provider
     # must hold for everything the turn does.
+    # _outside_turn_scope (services/phone_outside_text) is innermost: it marks the thread while the turn runs.
     assert names == ["route", "_stop_everything_gate", "_cloud_fallback_choice", "_withhold_pasted_keys",
                      "_traced_turn",
-                     "_privacy_hold_turn", "per_turn"], names
+                     "_privacy_hold_turn", "per_turn", "_outside_turn_scope"], names
