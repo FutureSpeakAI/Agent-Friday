@@ -1232,8 +1232,7 @@ def decide_with_outcome(approval_id: str, decision: str, *, decided_by: str = "o
             return dict(rec), False
         if decision == "approve" and (decided_by == TASKS_TICK_LABEL or source == "google_tasks_tick"):
             return dict(rec), False
-        screen_only = SCREEN_ONLY_KINDS.get(rec.get("kind"))
-        if decision == "approve" and screen_only is not None and decided_by not in screen_only                 and not (decided_by.startswith(DEVICE_LABEL) and device_signed_ok(rec.get("kind"), source, proof, expect_fp)):
+        if decision == "approve" and not _screen_only_accepts(rec.get("kind"), decided_by, source, proof, expect_fp):
             return dict(rec), False
         if decision == "approve" and source == "voice" and voice_off_this_desk():
             # A spoken yes counts only from a voice call on Friday's own page on this PC
@@ -1311,6 +1310,16 @@ def device_signed_ok(kind, source, proof, expect_fp) -> bool:
     """True when this card kind accepts a device's approval and the decision carries the verified signed path: source
     ``device_signed`` AND the signed action fingerprint AND the proof. A label alone is not enough."""
     return bool(kind in DEVICE_SIGNED_KINDS and source == "device_signed" and proof and expect_fp)
+
+
+def _screen_only_accepts(kind, decided_by, source, proof, expect_fp) -> bool:
+    """A screen-only kind is approved by a press on this PC's own screen (its decided_by), or, for the kinds in
+    DEVICE_SIGNED_KINDS, by a device's signed approval (a ``device:`` label AND the whole signed path). Any other kind
+    is not screen-only: nothing here."""
+    screen_only = SCREEN_ONLY_KINDS.get(kind)
+    if screen_only is None or decided_by in screen_only:
+        return True
+    return decided_by.startswith(DEVICE_LABEL) and device_signed_ok(kind, source, proof, expect_fp)
 
 #: The label a decision seen in Google Tasks carries (services/tasks_inbox.TICK_LABEL). It may
 #: decline; it never approves any card, of any kind (owner decision D1/D11, 2026-10-23: in
