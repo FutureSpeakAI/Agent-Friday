@@ -529,22 +529,30 @@ _NO = re.compile(r"^(?:friday,?\s+)?(?:no|nope|don'?t|do not|decline|deny|cancel
 _OWN_STORE = (r"(?:my\s+(?:knowledge (?:graph|base)|memory|memories|vault|contacts?|address book|notes|wiki)"
               r"|the\s+(?:knowledge (?:graph|base)|wiki))")
 _OWN_STORE_AFTER = re.compile(
-    r"\b(?:look up|look for|search|find|check|pull up)\s+(?P<q>.+?)\s+(?:in|from|on|using|within)\s+"
+    r"\b(?:look up|look for|search|find|check|pull up|google)\s+(?P<q>.+?)\s+(?:in|from|on|using|within)\s+"
     + _OWN_STORE + r"\b", re.I)
 _OWN_STORE_FIRST = re.compile(
-    r"\b(?:look up|look in|search|check|find|pull up)\s+(?:in\s+)?" + _OWN_STORE
+    r"\b(?:look up|look in|search|check|find|pull up|google)\s+(?:in\s+)?" + _OWN_STORE
     + r"\s+(?:for|about|on)\s+(?P<q>.+)", re.I)
 #: A lookup that also names what another tool searches (email, files, news, the calendar) is that tool's, as before.
 _OTHER_TOOL_NOUN = re.compile(
     r"\b(?:e-?mails?|inbox|messages?|files?|folders?|pdfs?|documents?|docs?|news|headlines|calendar)\b", re.I)
-#: The owner directs a search to the web: "the web", "the internet", "web search" always; "search/look/find
-#: online" and a leading "google X" only when the words say nothing of the owner (my online banking, my Google
-#: Drive are the owner's own things, not a request for the web). Held by the web and personal-phrasing tests.
-_SAYS_WEB_ALWAYS = re.compile(r"\b(?:the web|the internet|web search)\b", re.I)
-_SAYS_WEB_WEAK = re.compile(
-    r"\b(?:search|look|find|check)(?: out)?(?: it| that| this| for it)? online\b|\bonline for\b"
-    r"|^(?:please |can you |could you )?google\s+(?!drive|docs|calendar|photos|account)", re.I)
-_PERSONAL_WORD = re.compile(r"\b(?:my|me|mine|our|we|i)\b", re.I)
+#: The owner directs a search to the web. An ALLOWLIST, not a list of things to avoid: the text must START with one of
+#: these web-directing phrases and carry a query after it; and it must hold no negation (any form), no personal word
+#: and no store word anywhere. Everything else that merely mentions the web or the internet ("the internet bill",
+#: "the web designer I hired", "dont use the web") is not a directive and is asked back. Held by the web,
+#: negation and personal-phrasing tests in tests/unit/test_voice_personal_lookups_stay_local.py.
+_WEB_DIRECTIVE = re.compile(
+    r"^(?:(?:please|can you|could you|hey friday,?|friday,?)\s+)*"
+    r"(?:search (?:the web|the internet|online)(?: for)?|web search(?: for)?|google"
+    r"|look (?:it |that |this )?up (?:on the web|on the internet|online)(?: for)?|look online for"
+    r"|find (?:out )?(?:online|on the web)(?: for)?)\s+\S", re.I)
+_NEGATION = re.compile(
+    r"\b(?:not|never|no|nt|dont|don|didnt|wont|cant|without|avoid\w*|skip\w*|off|instead|rather|except|"
+    r"ignor\w+|forget|leave|minus|exclud\w+|nothing|stop|stay|other than|w/o)\b|n't|w/o|with\s+out", re.I)
+_PERSONAL_WORD = re.compile(r"\b(?:my|mine|our|we|i)\b", re.I)
+_STORE_WORD = re.compile(
+    r"\b(?:knowledge[\s-]*(?:graph|base)|vault|contacts?|address book|memory|memories|notes|wiki|drive|docs)\b", re.I)
 #: A question about the world that needs no place and so names nobody: the WHOLE query is one fixed topic and an
 #: optional day word. Anything with a place or a name beside the topic ("weather in Paris", "weather Dana") is
 #: asked back, because a rule cannot tell a city from a person. Held by
@@ -553,22 +561,20 @@ _PUBLIC_TOPIC = re.compile(
     r"(?:what(?:'s| is| time is| time)? )?(?:the )?(?:weather|forecast|sunset|sunrise|exchange rate)"
     r"(?: time)?(?: is)?"
     r"(?: (?:today|tomorrow|tonight|now|right now|this (?:morning|afternoon|evening|week|weekend)))*", re.I)
-#: The owner keeps a lookup OFF the web ("don't use the web", "without the internet", "not online").
-_NOT_THE_WEB = re.compile(r"(?:\b(?:not|never|without|no)\b|n't\b)[^.,;]{0,25}\b(?:the web|the internet|web search|online)\b", re.I)
 
 
 def _owner_says_web(text: str) -> bool:
-    if _NOT_THE_WEB.search(text):
-        return False
-    if _SAYS_WEB_ALWAYS.search(text):
-        return True
-    return bool(_SAYS_WEB_WEAK.search(text)) and not _PERSONAL_WORD.search(text)
+    """The owner plainly directs this lookup to the web (see _WEB_DIRECTIVE)."""
+    t = " ".join(str(text or "").split())
+    t = re.sub(r"\b(?:for|near) me\b", "", t, flags=re.I)
+    return bool(_WEB_DIRECTIVE.search(t)) and not (
+        _NEGATION.search(t) or _PERSONAL_WORD.search(t) or _STORE_WORD.search(t))
 
 
 def _public_question(text: str, m) -> bool:
     """Whether a bare "look up ..." asks about the world and nothing of the owner's."""
     q = _query(text, m).get("query", "")
-    return bool(_PUBLIC_TOPIC.fullmatch(q)) and not _PERSONAL_WORD.search(q)
+    return bool(_PUBLIC_TOPIC.fullmatch(q)) and not _PERSONAL_WORD.search(text) and not _NEGATION.search(text)
 
 
 def _own_store_query(text: str) -> str:
