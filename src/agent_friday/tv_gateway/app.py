@@ -34,7 +34,7 @@ MAX_OPEN_BODY_BYTES = 16 * 1024          # a body on a path anyone may reach (pa
 MAX_JSON_BODY_BYTES = 2 * 1024 * 1024    # a JSON body from a paired device
 RAW_BODY_PATHS = frozenset({"/tv/v1/stt", "/tv/v1/channels"})   # audio and channel uploads check their own size
 MAX_JSON_DEPTH = 32
-MAX_PER_SOURCE = 8                       # connections held at once by one address
+MAX_PER_SOURCE = 16                      # connections held at once by one address
 MAX_CONNECTIONS = 96                     # connections held at once, all addresses
 IDLE_TIMEOUT_S = 20                      # a connection that sends nothing for this long is closed
 _BODY_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
@@ -423,6 +423,7 @@ def make_bounded_server(host: str, port: int, app, ssl_context=None):
     """The gateway's listener: services/pooled_server (a fixed worker pool, the TLS handshake and every read in
     a worker under a timeout, a full queue answered 503) with a cap per source address and in all, and an idle
     time of IDLE_TIMEOUT_S. A connection over a cap is answered 503 at once and closed."""
+    import socket
     from agent_friday.services import pooled_server as ps
 
     class _GatewayServer(ps.PooledWSGIServer):
@@ -443,6 +444,9 @@ def make_bounded_server(host: str, port: int, app, ssl_context=None):
                 try:
                     request.settimeout(0.2)
                     request.sendall(ps._BUSY_503)
+                    request.shutdown(socket.SHUT_WR)        # read what the client sent, or its reset eats the 503
+                    request.settimeout(0.05)
+                    request.recv(65536)
                 except OSError:
                     pass
                 try:

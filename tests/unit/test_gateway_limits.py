@@ -8,7 +8,7 @@ limit at all. Only the unauthenticated paths had a 30-a-minute limit.
 
 Now: a request body over 16 KB on an open path, or 2 MB on any other JSON path, is refused 413 before any
 handler reads it (the TV's audio and channel uploads keep their own, larger, checks); JSON nested deeper than 32
-is read as "no JSON"; the server serves at most 8 connections per address and 64 in all and closes one idle for
+is read as "no JSON"; the server serves at most 16 connections per address and 96 in all and closes one idle for
 20 seconds; the handshake no longer blocks the accept loop; a paired device gets 600 requests a minute and then
 429 with Retry-After.
 """
