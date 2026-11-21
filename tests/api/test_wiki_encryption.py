@@ -103,3 +103,21 @@ def test_the_page_editor_save_says_it_did_not_save_when_the_locked_section_has_n
     body = r.get_json()
     assert body["status"] == "error" and "plain text" in body["message"] and "Not saved" in body["message"]
     assert not (WIKI_DIR / "health" / "nokey-editor.md").exists()
+
+
+def test_a_correction_names_the_locked_page_it_could_not_change(health_encrypted, client, monkeypatch):
+    # follow-up from the #1051 critic: a correction skipped a page of a locked section (no key) and still answered a bare
+    # "ok", so the owner was not told one page kept the old claim
+    old = "QZX-old-claim-7731"
+    locked = WIKI_DIR / "health" / "locked-skip.md"
+    other = WIKI_DIR / "family" / "plain-ok.md"
+    locked.write_text("the " + old + " is here", encoding="utf-8")   # a plain page not yet migrated
+    other.write_text("also " + old, encoding="utf-8")
+    monkeypatch.setattr(agent_mod, "_get_vault_key", lambda: None)
+    r = client.post("/api/wiki/correct", json={"old_text": old, "new_text": "QZX-new-claim"})
+    body = r.get_json()
+    assert r.status_code == 200 and body["status"] == "ok"
+    assert [m["path"] for m in body["modified"]] == ["family/plain-ok.md"]
+    assert body["skipped"] == [{"scope": "wiki", "path": "health/locked-skip.md", "reason": "locked"}]
+    assert "1 page" in body["message"] and "not changed" in body["message"]
+    assert locked.read_text(encoding="utf-8") == "the " + old + " is here", "the locked page was left as it was"
