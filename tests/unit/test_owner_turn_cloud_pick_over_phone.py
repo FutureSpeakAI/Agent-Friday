@@ -83,7 +83,8 @@ def desk(monkeypatch):
          "provider": "arbiter-local" if ":" in m else "anthropic",
          "provider_name": "Local" if ":" in m else "Anthropic"} for m in sorted(d.listed)])
     monkeypatch.setattr(owner_turn, "_post", d.post)
-    reset = getattr(owner_turn, "_reset_for_tests", lambda: None)   # absent on the code before the memo: red by assertion, not by setup
+    # absent on the code before the memo: red by assertion, not by setup
+    reset = getattr(owner_turn, "_reset_for_tests", lambda: None)
     reset()
     yield d
     reset()
@@ -134,8 +135,8 @@ def test_a_bind_the_pc_fails_on_is_a_503_try_again_with_its_own_code_not_the_409
     desk.fail_patch = 500
     r = ask(gw, phone(), model=OPUS, conversation_id="conv-old")
     body = r.get_json()
-    assert r.status_code == 503 and body["code"] == "seat_bind_failed", body
-    assert "try again" in body["error"] and "would not use that model" not in body["error"]
+    assert r.status_code == 503 and body["code"] == "chat_unavailable", body     # the code the phone already speaks
+    assert "could not change that chat" in body["error"] and "would not use that model" not in body["error"]
     assert desk.turns == []
 
 
@@ -161,7 +162,8 @@ def test_a_refusal_remembered_for_one_phone_and_chat_is_not_spent_for_another(gw
     desk.convs["conv-two"] = {"id": "conv-two", "seat": None}
     assert ask(gw, dev, model="claude-sonnet-5-5", conversation_id="conv-two").status_code == 409   # another chat
     assert ask(gw, other, model="claude-sonnet-5-5", conversation_id="conv-old").status_code == 409  # another phone
-    assert ask(gw, dev, model="claude-sonnet-5-5", conversation_id="conv-old").status_code == 200    # the same: answered
+    same = ask(gw, dev, model="claude-sonnet-5-5", conversation_id="conv-old")
+    assert same.status_code == 200                                         # the same: answered
 
 
 def test_a_pick_the_pc_then_binds_forgets_the_earlier_refusal(gw, desk):
@@ -193,8 +195,9 @@ def test_a_conversation_id_this_pc_would_never_mint_never_touches_a_path(gw, des
     real = desk.api
     monkeypatch.setattr(owner_turn, "_api", lambda m, p, b=None: (seen.append(p), real(m, p, b))[1])
     r = ask(gw, phone(), model="bonsai2:27b", conversation_id="../../etc/passwd")
-    assert r.status_code == 200 and all("etc" not in p and ".." not in p for p in seen)
-    assert owner_turn.clean_cid("conv-39be9e7c") == "conv-39be9e7c" and owner_turn.clean_cid("a/b") is None
+    assert r.status_code == 400 and r.get_json()["code"] == "bad_request"           # refused before any path is built
+    assert all("etc" not in p and ".." not in p for p in seen)
+    assert owner_turn.valid_cid("conv-39be9e7c") and not owner_turn.valid_cid("a/b")
 
 
 def test_a_turn_that_comes_back_empty_still_carries_the_binds_notice(gw, desk):

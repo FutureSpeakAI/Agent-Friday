@@ -1270,3 +1270,16 @@ def _remote_alias_set_per_test():
     before = _g._reset_aliases_for_tests((frozenset(), True, 0.0))
     yield
     _g._reset_aliases_for_tests(before)
+
+
+@pytest.fixture(autouse=True)
+def _proxy_bypass_variables_restored_per_test(monkeypatch):
+    """The key gateway writes NO_PROXY and no_proxy into the process environment (it keeps 127.0.0.1 direct).
+    Linux treats the two spellings as different variables, and a delete of an absent one registers nothing to
+    restore, so one test's write used to leak into the next test's egress check. Registering both spellings
+    before every test makes pytest put each back, whatever the test or the gateway does."""
+    import os
+    for name in ("NO_PROXY", "no_proxy"):
+        monkeypatch.setenv(name, os.environ.get(name, ""))
+        if not os.environ[name]:
+            monkeypatch.delenv(name)

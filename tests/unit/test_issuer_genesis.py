@@ -63,6 +63,56 @@ def test_a_command_for_another_issuer_is_refused(journal):
     assert journal.balances() == {"treasury": GENESIS}
 
 
+# The public surface, each name with the reason it cannot create units. A new public method fails the test below until it
+# is added here with its own proof (the test after it), so the surface cannot grow silently (the b55 gate caught the
+# unlisted methods #889 and #897 added).
+SURFACE = {
+    "execute": "refuses any posting that does not sum to zero (test_any_posting_that_mints_or_burns_is_refused)",
+    "balances": "reads only",
+    "execute_receipt": "execute with its receipt; same refusal (test_execute_receipt_refuses_a_mint_and_changes_nothing)",
+    "head": "reads only",
+    "balances_at": "reads only: balances as of one sequence (test_every_public_method_that_exists_leaves_the_supply_and_balances_alone)",
+    "receipt_at": "reads only: the stored receipt of one sequence (same test)",
+    "recover": "recomputes and halts on a mismatch; never posts",
+    "outbox_pending": "reads only",
+    "outbox_delivered": "marks a notification delivered; touches no balance",
+}
+
+
 def test_the_journal_offers_no_way_to_create_units():
     public = {n for n in dir(IssuerJournal) if not n.startswith("_")}
-    assert public <= {"execute", "balances"}
+    assert public <= set(SURFACE), f"a new public method needs a line in SURFACE and a proof: {sorted(public - set(SURFACE))}"
+
+
+def _snapshot(journal):
+    return dict(journal.balances()), journal.head() if hasattr(journal, "head") else None
+
+
+def test_every_public_method_that_exists_leaves_the_supply_and_balances_alone(journal):
+    journal.execute(_cmd("a", {"treasury": -300, "alice": 300}))
+    before = _snapshot(journal)
+    if hasattr(journal, "recover"):
+        assert journal.recover() is None
+    if hasattr(journal, "outbox_pending"):
+        for item in journal.outbox_pending():
+            journal.outbox_delivered(item["effect"])
+        assert journal.outbox_pending() == []
+    if hasattr(journal, "head"):
+        journal.head()
+    if hasattr(journal, "balances_at"):
+        assert sum(journal.balances_at(journal.head()).values()) == GENESIS
+        journal.balances_at(0)
+    if hasattr(journal, "receipt_at"):
+        assert journal.receipt_at(1) is not None
+        journal.receipt_at(999)
+    assert _snapshot(journal) == before
+    assert sum(journal.balances().values()) == GENESIS
+
+
+@pytest.mark.skipif(not hasattr(IssuerJournal, "execute_receipt"), reason="no receipt method in this tree")
+@pytest.mark.parametrize("postings", [{"treasury": 1}, {"alice": 1}, {"treasury": -1}, {"alice": GENESIS},
+                                      {"treasury": 5, "alice": 5}])
+def test_execute_receipt_refuses_a_mint_and_changes_nothing(journal, postings):
+    outcome, receipt = journal.execute_receipt(_cmd("m", postings))
+    assert outcome == "unbalanced" and receipt is None
+    assert journal.balances() == {"treasury": GENESIS}

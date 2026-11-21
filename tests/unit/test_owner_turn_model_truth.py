@@ -58,6 +58,7 @@ class Desk:
         self.pending = 0            # how many seat changes answer "still checking" before one settles
         self.answer = {"model": "bonsai2:27b", "seat": "local", "provider": "arbiter-local"}
         self.extra = {}
+        self.api_status = 200           # what the desktop's API answers with (a test sets 401/500 to break it)
 
     def api(self, method, path, body=None):
         self.api_calls.append((method, path, body))
@@ -69,11 +70,16 @@ class Desk:
             def get_json(self, silent=True):
                 return self.d
         r = R()
+        r.status_code = desk.api_status
+        if desk.api_status != 200:
+            r.d = {}
+            return r
         if method == "POST" and path == "/api/conversations":
             desk.convs["conv-new"] = {"id": "conv-new", "seat": body.get("seat")}
             r.d = {"conversation": dict(desk.convs["conv-new"])}
         elif method == "GET":
-            r.d = {"conversation": dict(desk.convs[path.rsplit("/", 1)[1]])}
+            got = desk.convs.get(path.rsplit("/", 1)[1])
+            r.d = {"conversation": dict(got)} if got else {}
         else:
             cid = path.rsplit("/", 1)[1]
             if desk.superseded:
@@ -141,7 +147,10 @@ def block(r):
 def test_a_picked_model_starts_a_chat_bound_to_it_and_the_turn_runs_in_that_chat(client, desk):
     r = ask(client, phone(), model="claude-haiku-5-5")
     assert r.status_code == 200
-    assert desk.api_calls == [("POST", "/api/conversations", {"title": "Phone chat", "seat": {"model": "claude-haiku-5-5"}})]
+    # created without a seat, then bound through the desktop's checked PATCH (the create route does not check)
+    assert desk.api_calls == [("POST", "/api/conversations", {"title": "Phone chat"}),
+                              ("PATCH", "/api/conversations/conv-new", {"seat": {"model": "claude-haiku-5-5"}})]
+    assert desk.convs["conv-new"]["seat"] == {"model": "claude-haiku-5-5"}
     assert desk.turns[0]["conversation_id"] == "conv-new" and block(r)["conversation_id"] == "conv-new"
 
 

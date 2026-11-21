@@ -21,6 +21,12 @@ def isolated(tmp_path, monkeypatch):
     from agent_friday.services import task_journal as tj
     monkeypatch.setattr(tj, "BASE_DIR_OVERRIDE", tmp_path / "tasks")
     tj.reset_for_tests()
+    th = getattr(agent, "_RECEIPT_SWEEP", {}).get("thread")
+    if th is not None:
+        th.join(timeout=10)
+    with agent._SETTLE_GUARD:          # an earlier test in this worker may have left a settler marked active
+        agent._SETTLE_DIRTY.clear()
+        agent._SETTLER["active"] = False
     with agent.TASKS_LOCK:
         saved = dict(agent.TASKS)
         agent.TASKS.clear()
@@ -141,6 +147,15 @@ def test_the_supervisor_pass_settles_an_ending_written_in_place(isolated):
     assert [r["status"] for r in _rows_for("t-in-5")] == ["cancelled"]
 
 
+@pytest.fixture
+def _leaked_settler():
+    """What an earlier test in the same worker can leave behind: the receipt settler marked active. While it is
+    marked, a status change only queues its task for 'the settler', and nobody settles it (F6, F12, F15)."""
+    with agent._SETTLE_GUARD:
+        agent._SETTLER["active"] = True
+    yield
+
+
 def test_one_sweep_settles_a_bounded_number(isolated, monkeypatch):
     monkeypatch.setattr(agent, "RECEIPT_SWEEP_MAX", 2, raising=False)
     for i in range(5):
@@ -149,3 +164,7 @@ def test_one_sweep_settles_a_bounded_number(isolated, monkeypatch):
     assert _sweep() == 2
     assert _sweep() == 2
     assert _sweep() == 1
+
+
+def test_sweeps_are_not_absorbed_by_a_settler_left_active_by_an_earlier_test(_leaked_settler, isolated, monkeypatch):
+    test_one_sweep_settles_a_bounded_number(isolated, monkeypatch)

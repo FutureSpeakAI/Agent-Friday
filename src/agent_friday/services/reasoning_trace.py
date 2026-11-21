@@ -54,6 +54,8 @@ from collections import deque
 from pathlib import Path
 from typing import Any, Dict, Iterable, Iterator, List, Optional
 
+from agent_friday.services import ttft_stats as _ttft_stats
+
 _log = logging.getLogger(__name__)
 
 # ── source labels ────────────────────────────────────────────────────────────
@@ -353,6 +355,7 @@ def model_call(model: str = None, *, seat: str = None, provider: str = None,
     `prefill_tokens` / `cache_tokens` are llama-server's `prompt_n` /
     `cache_n` (what the seat read against what it already held); `ttft_ms`
     is the wait to the first token; `duration_ms` the whole call."""
+    _ttft_stats.record(model, ttft_ms, prefill_tokens, cache_tokens)   # never raises; outside the trace's try
     try:
         with _LOCK:
             tr = _resolve(trace_id)
