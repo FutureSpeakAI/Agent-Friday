@@ -137,6 +137,7 @@ def device_may_not_decide(rec: dict, device_id: str) -> Optional[str]:
         return "A device cannot give rights to a device. Approve this one on your PC."
     label = device_label(device_id)
     screen_only = approvals.SCREEN_ONLY_KINDS.get(rec.get("kind"))
-    if screen_only is not None and label not in screen_only:
+    if (screen_only is not None and label not in screen_only
+            and rec.get("kind") not in approvals.DEVICE_SIGNED_KINDS):
         return "This card is approved only with a press on your PC's screen."
     return approvals.refusal_for(str(rec.get("approval_id")), "approve", label) or None
