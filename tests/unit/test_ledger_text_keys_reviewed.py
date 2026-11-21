@@ -34,8 +34,9 @@ def _literal_keys(source: str) -> set:
                 and isinstance(node.args[1], ast.Dict)
                 and any(w in ast.unparse(node.func.value) for w in ("ledger", "_al", "al", "L"))):
             found |= {k.value for k in node.args[1].keys if isinstance(k, ast.Constant) and isinstance(k.value, str)}
-        # the ledger's own internal writes: _append_locked(key, [("kind", {...}), ...], durable)
-        if (isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "_append_locked"
+        # the ledger's own internal writes: _append_locked / _guarded_append(key, [("kind", {...}), ...], durable)
+        if (isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+                and node.func.id in ("_append_locked", "_guarded_append")
                 and len(node.args) >= 2 and isinstance(node.args[1], ast.List)):
             for item in node.args[1].elts:
                 if (isinstance(item, ast.Tuple) and len(item.elts) == 2 and isinstance(item.elts[1], ast.Dict)):
@@ -62,6 +63,12 @@ def test_the_guard_also_reads_the_ledgers_own_internal_writes():
     # critic on #1051: legacy_reappeared is written through _append_locked, which the append-only scan never saw
     src = '_append_locked(key, [("legacy_reappeared", {"store": kind, "from": _rel(p), "kept_as": kept})], True)'
     assert _literal_keys(src) == {"store", "from", "kept_as"}
+
+
+def test_the_guard_also_reads_guarded_append_with_a_literal_list():
+    # critic on #1064: integrity_ack is written through _guarded_append, which the extractor did not match
+    src = '_guarded_append(key, [("integrity_ack", {"problems": items, "by": by, "note": note})], True)'
+    assert _literal_keys(src) == {"problems", "by", "note"}
 
 
 def test_the_guard_names_an_unclassified_key():
