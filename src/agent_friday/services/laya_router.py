@@ -577,10 +577,14 @@ def _public_question(text: str, m) -> bool:
     return bool(_PUBLIC_TOPIC.fullmatch(q)) and not _PERSONAL_WORD.search(text) and not _NEGATION.search(text)
 
 
+def _store_route(q: str, text: str) -> Route:
+    label, _, required = TOOLS["search_wiki"]
+    return _with_args("search_wiki", {"query": q}, 0.95, "rule", label, required,
+                      reason="a lookup in the owner's own store stays local", text=text)
+
+
 def _own_store_query(text: str) -> str:
     """The subject of a lookup the owner pointed at their own store, else "". Pure."""
-    if _OTHER_TOOL_NOUN.search(text or ""):
-        return ""
     for pat in (_OWN_STORE_AFTER, _OWN_STORE_FIRST):
         m = pat.search(text or "")
         if m:
@@ -849,21 +853,25 @@ def _tier0_rest(text: str) -> Optional[Route]:
             return Route("no_tool", confidence=0.95, layer="rule", reason="small talk")
         return Route("no_tool", confidence=0.9, layer="rule",
                      reason="a statement, not a request")
-    q = _own_store_query(text)
-    if q:
-        label, _, required = TOOLS["search_wiki"]
-        return _with_args("search_wiki", {"query": q}, 0.95, "rule", label, required,
-                          reason="a lookup in the owner's own store stays local", text=text)
     for tool, pat in _RULES:
         m = pat.search(text)
         if m:
             label, template, required = TOOLS[tool]
-            if tool == "search_web" and not _owner_says_web(text) and not _public_question(text, m):
-                return Route("ask", tool=tool, confidence=0.95, layer="rule", label=label,
-                             question=_ASK_WHERE,
-                             reason="a lookup that names no place is asked, never sent to the web")
+            if tool == "search_web":
+                # Only the web rule is ever overridden by a named store; every other rule (email, calendar,
+                # past conversations, files, news) keeps its own lookup, as before.
+                q = _own_store_query(text)
+                if q:
+                    return _store_route(q, text)
+                if not _owner_says_web(text) and not _public_question(text, m):
+                    return Route("ask", tool=tool, confidence=0.95, layer="rule", label=label,
+                                 question=_ASK_WHERE,
+                                 reason="a lookup that names no place is asked, never sent to the web")
             return _with_args(tool, template(text, m), 0.95, "rule", label, required,
                               reason="pattern", text=text)
+    q = _own_store_query(text)
+    if q and not _OTHER_TOOL_NOUN.search(text):
+        return _store_route(q, text)
     if _SMALL_TALK.match(text):
         return Route("no_tool", confidence=0.95, layer="rule", reason="small talk")
     return None

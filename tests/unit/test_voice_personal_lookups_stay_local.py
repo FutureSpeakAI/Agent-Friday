@@ -165,6 +165,22 @@ def test_the_web_or_internet_as_a_noun_in_the_owners_own_things_is_not_a_directi
     assert r is None or r.tool != "search_web" or r.decision != "tool", r
 
 
+@pytest.mark.parametrize("text,tool", [
+    ("search my memory for what we talked about last week", "search_past_conversations"),
+    ("look up what we talked about last week in my memory", "search_past_conversations"),
+    ("search my notes for what we talked about yesterday", "search_past_conversations"),
+    ("search for tomorrow's meetings in my notes", "query_calendar"),
+    ("search my schedule in my contacts", "query_calendar"),
+    ("check my email for messages from my contacts", None),
+])
+def test_only_the_web_rule_is_overridden_by_a_store_every_other_rule_keeps_its_tool(text, tool):
+    r = lr.rule_route(text)
+    if tool is None:
+        assert r is None or r.tool not in ("search_wiki", "search_web"), r
+    else:
+        assert r is not None and r.tool == tool, r
+
+
 def test_the_notes_rule_is_unchanged():
     r = lr.rule_route("Find my notes about octopuses.")
     assert r.tool == "search_wiki" and r.args["query"] == "octopuses"
