@@ -27,6 +27,12 @@ def _literal_keys(source: str) -> set:
                 and isinstance(node.args[1], ast.Dict)
                 and any(w in ast.unparse(node.func.value) for w in ("ledger", "_al", "al", "L"))):
             found |= {k.value for k in node.args[1].keys if isinstance(k, ast.Constant) and isinstance(k.value, str)}
+        # the ledger's own internal writes: _append_locked(key, [("kind", {...}), ...], durable)
+        if (isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "_append_locked"
+                and len(node.args) >= 2 and isinstance(node.args[1], ast.List)):
+            for item in node.args[1].elts:
+                if (isinstance(item, ast.Tuple) and len(item.elts) == 2 and isinstance(item.elts[1], ast.Dict)):
+                    found |= {k.value for k in item.elts[1].keys if isinstance(k, ast.Constant) and isinstance(k.value, str)}
     return found
 
 
@@ -43,6 +49,12 @@ def _all_keys() -> set:
 def test_every_key_a_literal_ledger_append_writes_is_classified():
     unclassified = sorted(_all_keys() - ledger_text.FREE_TEXT_KEYS - STRUCTURE)
     assert unclassified == [], f"classify these ledger record keys (hide in ledger_text.FREE_TEXT_KEYS, or add to STRUCTURE): {unclassified}"
+
+
+def test_the_guard_also_reads_the_ledgers_own_internal_writes():
+    # critic on #1051: legacy_reappeared is written through _append_locked, which the append-only scan never saw
+    src = '_append_locked(key, [("legacy_reappeared", {"store": kind, "from": _rel(p), "kept_as": kept})], True)'
+    assert _literal_keys(src) == {"store", "from", "kept_as"}
 
 
 def test_the_guard_names_an_unclassified_key():
