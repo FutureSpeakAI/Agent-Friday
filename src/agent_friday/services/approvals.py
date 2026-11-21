@@ -528,17 +528,27 @@ _CLAIM_KINDS = _SPENT_KINDS + ("approval_claimed",)
 
 def _ledger_has(approval_id: str, kinds=_SPENT_KINDS) -> bool:
     """The ledger records this card under one of `kinds`. Raises when the ledger cannot be read
-    (a strict read, archive included; one retry on a momentary sharing violation)."""
+    (a strict read, archive included; a momentary sharing violation is retried like the store's own file)."""
     from agent_friday.services import action_ledger
     aid = str(approval_id)
-    for attempt in (0, 1):
+    for attempt in range(_BUSY_RETRIES):
         try:
             rows = action_ledger.entries(list(kinds), newest_first=False, strict=True, archive=True)
             break
-        except PermissionError:
-            if attempt:
+        except (PermissionError, action_ledger.LedgerError):
+            # A strict read reports a file Windows refused for a moment as a LedgerError (its integrity check
+            # fails first: "a break to review"), with no trace of the cause, so any LedgerError is tried again,
+            # a few times. A real break is still there after the last try, and the read raises: not claimed.
+            if attempt == _BUSY_RETRIES - 1:
                 raise
-            time.sleep(0.05)
+            if attempt == 0:
+                # verify() keeps even a failed check while no ledger file changes (up to FULL_RECHECK_S), so a
+                # refusal seen while it read would answer every retry. Check the files again, once.
+                try:
+                    action_ledger.verify(force=True)
+                except Exception:  # noqa: BLE001 - the strict read below judges
+                    pass
+            time.sleep(0.02 * (attempt + 1))
     return any(str((e.get("rec") or {}).get("approval") or "") == aid for e in rows)
 
 

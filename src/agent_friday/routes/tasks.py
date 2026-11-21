@@ -851,16 +851,39 @@ def rerun_task(task_id):
         return jsonify({"error": "this task runs on its own engine; start it again from where it came from"}), 409
     _opts = _descendant_options(t, retry=int(t.get('chain_retry') or 0))
     _opts.pop('task_id', None)
-    new_id = _spawn_task(t.get('name') or 'Task', prompt, description=t.get('description') or '',
-                         chain=t.get('chain'), chain_step=int(t.get('chain_step') or 0),
-                         model=t.get('model'), tools=t.get('tools'),
-                         on_complete=t.get('on_complete'), **_opts)
+    # A re-run asked for by a paired device (the gateway sends {origin: "device:<id>"}) counts against that device's
+    # cap like a job it started; from the PC itself there is no origin and no cap.
+    from agent_friday.services import task_start
+    _body = request.get_json(silent=True)
+    try:
+        with task_start.DeviceSlot(_body.get('origin') if isinstance(_body, dict) else None) as _slot:
+            new_id = _spawn_task(t.get('name') or 'Task', prompt, description=t.get('description') or '',
+                                 chain=t.get('chain'), chain_step=int(t.get('chain_step') or 0),
+                                 model=t.get('model'), tools=t.get('tools'),
+                                 on_complete=t.get('on_complete'), **_opts)
+            _slot.adopt(new_id)
+    except task_start.Refused as e:
+        return jsonify({"error": e.reason}), e.status
     _tj.decision("rerun", new_id, reason=f"re-run by the user from task {task_id}",
                  task_id=task_id, alternatives=["leave as is"])
     _tj.append(new_id, "decision", point="rerun_of", chosen=task_id,
                reason="spawned by the user from that task's recorded prompt")
     return jsonify({"ok": True, "task_id": new_id, "rerun_of": task_id})
 
+
+@tasks_bp.route('/api/tasks/start', methods=['POST'])
+@login_required
+def start_task():
+    """Start a background task from a prompt the owner wrote (PW-G12: from a paired phone or tablet).
+    The task is an ordinary one: it shows as an orb, gets receipts, every tool stays behind the action gate.
+    The body is {prompt, origin: "pc" | "device:<id>", conversation_id?}. User-only."""
+    from agent_friday.services import task_start
+    body = request.get_json(silent=True) or {}
+    try:
+        task_id = task_start.start(body.get('prompt'), body.get('origin'), body.get('conversation_id'))
+    except task_start.Refused as e:
+        return jsonify({"error": e.reason}), e.status
+    return jsonify({"ok": True, "task_id": task_id}), 201
 
 # Every finished outcome drifts for up to five minutes, or until cleared.
 ORB_VISIBLE_AFTER_DONE_S = 300
