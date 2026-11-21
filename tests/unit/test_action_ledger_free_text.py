@@ -164,3 +164,11 @@ def test_grant_recipients_are_hidden_and_a_lost_sidecar_never_unrevokes_a_grant(
         sidecar.unlink()
     L._TEXTS.clear()
     assert "g-1" in send_grants._revoked_in_log()
+
+
+def test_a_refused_skill_grant_does_not_put_its_addresses_on_the_ledger():
+    # critic on cdf91da9c: send_grants' "refused" row writes seen= and declared= (the same addresses) under other keys
+    from agent_friday.governance import send_grants
+    addr = "canary-4c7d@example.test"
+    send_grants._log("refused", by="owner", skill="weekly-report", seen=[addr], declared=[addr, "other@example.test"])
+    assert b"canary-4c7d" not in _live_bytes() and b"other@example" not in _live_bytes()
