@@ -1233,7 +1233,7 @@ def decide_with_outcome(approval_id: str, decision: str, *, decided_by: str = "o
         if decision == "approve" and (decided_by == TASKS_TICK_LABEL or source == "google_tasks_tick"):
             return dict(rec), False
         screen_only = SCREEN_ONLY_KINDS.get(rec.get("kind"))
-        if decision == "approve" and screen_only is not None and decided_by not in screen_only:
+        if decision == "approve" and screen_only is not None and decided_by not in screen_only                 and not (decided_by.startswith(DEVICE_LABEL) and device_signed_ok(rec.get("kind"), source, proof, expect_fp)):
             return dict(rec), False
         if decision == "approve" and source == "voice" and voice_off_this_desk():
             # A spoken yes counts only from a voice call on Friday's own page on this PC
@@ -1300,6 +1300,17 @@ def _note_novelty(card: Dict[str, Any]) -> None:
 
 #: The label a verified press on this PC's own screen carries (services/screen_click.SCREEN).
 SCREEN_LABEL = "owner:ui"
+
+#: Screen-only kinds the owner's phone may ALSO approve, with a signed approval (K5 PR D, brief 3.4: the standing-grant
+#: offer). A device holds the pc_approve right and an approval key; the gateway (tv_gateway/pc_approve_decide) is the
+#: only caller that passes source ``device_signed``, the signed fingerprint and the proof.
+DEVICE_SIGNED_KINDS = frozenset({"standing_grant_offer"})
+
+
+def device_signed_ok(kind, source, proof, expect_fp) -> bool:
+    """True when this card kind accepts a device's approval and the decision carries the verified signed path: source
+    ``device_signed`` AND the signed action fingerprint AND the proof. A label alone is not enough."""
+    return bool(kind in DEVICE_SIGNED_KINDS and source == "device_signed" and proof and expect_fp)
 
 #: The label a decision seen in Google Tasks carries (services/tasks_inbox.TICK_LABEL). It may
 #: decline; it never approves any card, of any kind (owner decision D1/D11, 2026-10-23: in
