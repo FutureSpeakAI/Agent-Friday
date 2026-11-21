@@ -488,7 +488,8 @@ def _notify(filename: str) -> None:
 
 def is_available() -> bool:
     """True if a Gemini API key is configured (creative generation is possible)."""
-    return bool(getattr(core, "GEMINI_API_KEY", ""))
+    from agent_friday.services import gemini_client
+    return gemini_client.available()
 
 
 def _client():
@@ -499,8 +500,8 @@ def _client():
             "(set via Settings → Connections or as an environment variable).")
     from agent_friday.services import cloud_intent as _cloud_intent
     _cloud_intent.require("google-gemini", "creative generation (Gemini)", "")
-    from google import genai  # lazy — import-safe without the SDK
-    return genai.Client(api_key=core.GEMINI_API_KEY)  # pragma: allowlist secret
+    from agent_friday.services import gemini_client       # the gateway's client: it holds only the stand-in key
+    return gemini_client.client()
 
 
 def _unavailable(kind: str) -> Dict[str, Any]:

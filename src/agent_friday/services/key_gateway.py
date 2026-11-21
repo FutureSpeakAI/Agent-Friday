@@ -63,6 +63,12 @@ PROVIDERS = {
         core_attrs=("ELEVENLABS_API_KEY",), key_prefix="sk_", migrate_plaintext=True,
         shape_message=("this looks like an ElevenLabs key *id*, not a key - real keys begin with 'sk_'. The short hex "
                        "string beside a key in the dashboard is its id and the API will reject it.")),
+    "gemini": Provider(
+        name="gemini", upstream="https://generativelanguage.googleapis.com", prefixes=("/v1beta/", "/v1/", "/upload/"),
+        methods=("GET", "POST", "DELETE"), key_header="x-goog-api-key", key_format="{key}",
+        env_names=("GEMINI_API_KEY", "GOOGLE_API_KEY"), store_names=("google-gemini", "gemini"),
+        settings_names=("gemini_api_key",), core_attrs=("GEMINI_API_KEY",),
+        timeout_s=600),   # Veo and Lyria generations wait on the provider; streaming answers stay open this long
 }
 
 _LOCK = threading.Lock()
