@@ -195,3 +195,20 @@ def test_locking_in_settings_settles_the_one_time_offer(client, keystore, monkey
     assert r.status_code == 200
     assert ko.state()["decided"] == "protected" and ko.state()["via"] == "settings"
     assert ko.push_card_if_pending() == "decided"
+
+
+def test_locking_a_keystore_that_already_has_the_passphrase_changes_nothing_and_never_unwraps_it(client, keystore, monkeypatch):
+    # follow-up from the #1051 critic: a second "lock with my passphrase" whose attempt failed used to move the store off the
+    # passphrase (restore_wrap gives the default wrap) while the message said it was left as it was; it now does nothing
+    r = client.post("/api/security/keystore/wrap", json={"wrap": "passphrase", "passphrase": PASS}, headers=_token())
+    assert r.status_code == 200 and _doc()["wrap"] == "passphrase"
+    before = ks.KEYSTORE_PATH.read_bytes()
+    calls = []
+
+    def must_not_be_called(*a, **k):
+        calls.append(a)
+        raise RuntimeError("the second wrap failed")
+    monkeypatch.setattr(ks, "set_wrap", must_not_be_called)
+    r = client.post("/api/security/keystore/wrap", json={"wrap": "passphrase", "passphrase": PASS}, headers=_token())
+    assert r.status_code == 200 and r.get_json()["wrap"] == "passphrase"
+    assert calls == [] and ks.KEYSTORE_PATH.read_bytes() == before
