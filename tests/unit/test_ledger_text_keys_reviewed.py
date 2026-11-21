@@ -3,7 +3,7 @@
 FREE_TEXT_KEYS is a deny list; a new writer that puts words under a new key would leak them into an export unless the key is
 added there. This test reads every `<ledger>.append("kind", {...})` call in src/ and fails on a key that is in neither set, so
 the author has to decide (hide it, or say here why it is structure). A key in STRUCTURE that holds text is a review error. It sees literal dicts handed to append/try_append and to the ledger's own
-_append_locked; a record built in a variable (decision `entry`, goal `receipt`) or passed as keyword arguments
+_append_locked / _guarded_append (literal lists); a record built in a variable (decision `entry`, goal `receipt`) or passed as keyword arguments
 (send_grants._log) is not seen, so those writers are reviewed by hand.
 It can fail: remove a key from STRUCTURE and it names it (test_the_guard_names_an_unclassified_key)."""
 import ast
@@ -22,6 +22,8 @@ STRUCTURE = frozenset({
     # `kept_as` the digest-named copy it was set aside as; none carries owner text
     "after_days", "file_sha256", "finished", "first_seq", "imported", "kept_as", "last_hash", "last_seq", "lines",
     "records", "segments", "store", "through", "unreadable",
+    # integrity_ack (_guarded_append): `problems` is [{key, seq, reason}], the ledger problems the owner accepted: names and numbers
+    "problems",
     "terminal", "tool", "verified", "list", "made_by", "goal_id", "kept", "label", "kind"})
 SRC = Path(__file__).resolve().parents[2] / "src"
 
