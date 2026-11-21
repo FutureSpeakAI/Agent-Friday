@@ -137,27 +137,46 @@ def test_two_surfaces_approving_at_once_run_once(store, ran, caplog):
     assert len(ran) == 1, "four simultaneous approvals ran the action %d times: %s" % (len(ran), why)
 
 
-def test_a_ledger_read_that_is_busy_for_a_few_tries_does_not_stop_an_approved_action(store, ran, monkeypatch):
-    """The executor's claim and the governance checkpoint both read the ledger strictly. Windows can refuse that read
-    for a moment while another thread writes it; one retry was not enough, and a refused read means the action does
-    not run ("held"). The store retries its own file the same way (_BUSY_RETRIES)."""
+def _busy_file(monkeypatch, times):
+    """Refuse the ledger FILE read the way Windows does (a sharing violation), `times` times; the strict reader wraps
+    it, so the approvals module sees a LedgerError, not the PermissionError."""
     from agent_friday.services import action_ledger
-    from agent_friday.services import approval_executor as ex
-    ex.register()
-    real = action_ledger.entries
+    real = action_ledger._iter_lines
     refused = {"n": 0}
 
-    def busy_then_ok(*a, **k):
-        if k.get("strict") and refused["n"] < 3:
+    def busy_then_ok(path):
+        if refused["n"] < times:
             refused["n"] += 1
             raise PermissionError(13, "The process cannot access the file because it is being used by another process")
-        return real(*a, **k)
+        return real(path)
 
-    monkeypatch.setattr(action_ledger, "entries", busy_then_ok)
+    monkeypatch.setattr(action_ledger, "_iter_lines", busy_then_ok)
+    return refused
+
+
+def test_a_ledger_file_that_is_busy_for_a_few_tries_does_not_stop_an_approved_action(store, ran, monkeypatch):
+    """The executor's claim and the governance checkpoint read the ledger strictly. Windows can refuse that read
+    for a moment while another thread writes it, and a strict read reports it as a LedgerError. One retry (of the
+    wrong exception type) was not enough, and a refused read means the action does not run ("held"). The store
+    retries its own file the same way (_BUSY_RETRIES)."""
+    from agent_friday.services import approval_executor as ex
+    ex.register()
     rec = _card(store)
+    refused = _busy_file(monkeypatch, 3)
     store.decide(rec["approval_id"], "approve", decided_by="owner")
     assert refused["n"] >= 3, "the test never refused a read"
     assert len(ran) == 1, "a briefly busy ledger kept an approved action from running"
+
+
+def test_a_ledger_file_that_stays_busy_still_claims_nothing(store, ran, monkeypatch):
+    """Fail closed: when the read never succeeds the card is not claimed and nothing runs."""
+    from agent_friday.services import approval_executor as ex
+    ex.register()
+    rec = _card(store)
+    _busy_file(monkeypatch, 10 ** 6)
+    store.decide(rec["approval_id"], "approve", decided_by="owner")
+    assert ran == [], "an unreadable ledger must not let the action run"
+    assert not store.get_approval(rec["approval_id"]).get("executing_at"), "the card was claimed without the ledger"
 
 
 def test_a_denied_card_never_runs(store, ran):
