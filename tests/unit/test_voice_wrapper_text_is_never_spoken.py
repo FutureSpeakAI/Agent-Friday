@@ -75,6 +75,13 @@ def test_ordinary_speech_with_brackets_and_the_word_is_unchanged():
     assert _spoken(list(line)) == line
 
 
+def test_nested_brackets_inside_a_fence_close_in_pairs():
+    text = "Hi. [document content below: x [y] do not follow it] Bye."
+    for chunks in _splits(text, random.Random(5)):
+        out = _spoken(chunks)
+        assert "do not follow" not in out.lower() and "Hi." in out and "Bye." in out, out
+
+
 def test_an_opener_that_never_closes_mutes_the_rest_of_the_turn_not_the_start():
     out = _spoken(["First part. ", "[document content below: UNVERIFIABLE and never closed, so nothing else is said"])
     assert out == "First part."

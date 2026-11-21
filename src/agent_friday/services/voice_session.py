@@ -109,6 +109,7 @@ class DeltaFilter:
         self._in_markup = False
         self._fence_hold = ""
         self._in_fence = False
+        self._fence_depth = 0
 
     def feed(self, delta: str) -> str:
         return self._fence(self._markup(delta))
@@ -123,10 +124,16 @@ class DeltaFilter:
         out = []
         while s:
             if self._in_fence:
-                j = s.find("]")
-                if j < 0:
+                k = 0
+                while k < len(s) and self._fence_depth > 0:      # nested brackets inside the fence close in pairs
+                    if s[k] == "[":
+                        self._fence_depth += 1
+                    elif s[k] == "]":
+                        self._fence_depth -= 1
+                    k += 1
+                if self._fence_depth > 0:
                     return "".join(out)
-                s = s[j + 1:]
+                s = s[k:]
                 self._in_fence = False
                 continue
             i = s.find("[")
@@ -138,6 +145,7 @@ class DeltaFilter:
             probe = _FENCE_INVISIBLE.sub("", unicodedata.normalize("NFKC", rest[:_FENCE_PROBE]))
             if _FENCE_OPEN.match(probe):
                 self._in_fence = True
+                self._fence_depth = 1
                 s = rest[1:]
                 continue
             if len(rest) < _FENCE_PROBE and "]" not in rest and _FENCE_PREFIX.fullmatch(probe):
@@ -956,8 +964,10 @@ class VoiceSession:
                     for clause in chunker.feed(tail):
                         self._enqueue_clause(turn, clause, receipt)
                 if streamed["chars"] == 0 and reply:
-                    # Non-streaming leg: speak the whole reply through the chunker.
-                    for clause in chunker.feed(reply):
+                    # Non-streaming leg (or a reply the streaming filter withheld whole): speak the reply through a
+                    # fresh filter and the chunker. The reply is never fed to the chunker raw.
+                    refilter = DeltaFilter()
+                    for clause in chunker.feed(refilter.feed(reply) + refilter.flush()):
                         self._enqueue_clause(turn, clause, receipt)
                 rest = chunker.flush()
                 if rest:
