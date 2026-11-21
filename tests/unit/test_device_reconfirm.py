@@ -1,4 +1,4 @@
-"""A paired device must be reconfirmed by the owner every 30 days (threat assessment 2026-11-21, fix 3).
+"""A paired device must be reconfirmed by the owner every 30 days (a household TV every 90) (threat assessment 2026-11-21, fix 3).
 
 Before: every paired row stored ``reconfirm_by`` (30 days after pairing) and nothing ever read it, so a phone paired
 once stayed paired for good, with every right it was given, until the owner thought to remove it.
@@ -38,10 +38,10 @@ def client():
     return gateway.create_app().test_client()
 
 
-def pair(due_in_days: float):
+def pair(due_in_days: float, kind: str = "phone"):
     """A paired device whose reconfirm date is ``due_in_days`` from now (negative: already past)."""
     tv = FakeTv()
-    device_pairing.add_device(tv.spki, name="Living room TV")
+    device_pairing.add_device(tv.spki, name="Living room TV", kind=kind)
     body = device_pairing._load()
     body["reconfirm_grace_done"] = True                 # the one-time week for old rows is not this test's business
     body["devices"][tv.id]["reconfirm_by"] = time.time() + due_in_days * DAY
@@ -248,10 +248,68 @@ def test_a_store_made_after_this_shipped_never_excuses_a_lapse(client):
 
 def test_a_row_with_no_date_gets_30_days_from_when_it_was_paired():
     tv = FakeTv()
-    device_pairing.add_device(tv.spki, name="Phone")
+    device_pairing.add_device(tv.spki, name="Phone", kind="phone")
     body = device_pairing._load()
     body["devices"][tv.id].pop("reconfirm_by")
     body.pop("reconfirm_grace_done", None)
     paired_at = body["devices"][tv.id]["paired_at"] = time.time() - 10 * DAY
     device_pairing._save(body)
     assert abs(device_pairing.get_device(tv.id)["reconfirm_by"] - (paired_at + 30 * DAY)) < 5
+
+
+# ── a household TV keeps for 90 days, a personal device for 30 (Stephen, 2026-11-21) ──────────────────────────
+
+def days_left(device_id):
+    return (device_pairing.get_device(device_id)["reconfirm_by"] - time.time()) / DAY
+
+
+@pytest.mark.parametrize("kind,days", [("tv", 90), ("phone", 30), ("tablet", 30), ("watch", 30)])
+def test_a_new_pairing_gets_its_kinds_period(kind, days):
+    tv = FakeTv()
+    device_pairing.add_device(tv.spki, name="A device", kind=kind)
+    assert days - 0.01 < days_left(tv.id) <= days
+
+
+@pytest.mark.parametrize("kind,days", [("tv", 90), ("phone", 30)])
+def test_the_owners_press_gives_that_kind_its_period(client, kind, days):
+    tv = pair(due_in_days=-1, kind=kind)
+    try_open(client, tv)
+    press(cards(tv)[0])
+    assert days - 0.01 < days_left(tv.id) <= days
+
+
+def test_a_tv_is_asked_in_its_last_week_not_before(client):
+    tv = pair(due_in_days=20, kind="tv")                  # 70 days into its 90: nothing yet
+    assert try_open(client, tv).status_code == 200 and cards(tv) == []
+    tv = pair(due_in_days=5, kind="tv")
+    assert try_open(client, tv).status_code == 200 and len(cards(tv)) == 1
+
+
+def test_an_old_tv_row_with_no_date_gets_90_days_from_when_it_was_paired():
+    tv = FakeTv()
+    device_pairing.add_device(tv.spki, name="Old TV", kind="tv")
+    body = device_pairing._load()
+    body["devices"][tv.id].pop("reconfirm_by")
+    body.pop("reconfirm_grace_done", None)
+    paired_at = body["devices"][tv.id]["paired_at"] = time.time() - 10 * DAY
+    device_pairing._save(body)
+    assert abs(device_pairing.get_device(tv.id)["reconfirm_by"] - (paired_at + 90 * DAY)) < 5
+
+
+@pytest.mark.parametrize("kind,word,days", [("tv", "TV", 90), ("phone", "phone", 30), ("watch", "watch", 30)])
+def test_the_card_says_which_device_it_is_how_long_it_buys_and_when_it_would_stop(client, kind, word, days):
+    tv = pair(due_in_days=3, kind=kind)
+    try_open(client, tv)
+    [card] = cards(tv)
+    stops = time.strftime("%A %d %B", time.localtime(device_pairing.get_device(tv.id)["reconfirm_by"]))
+    assert "Living room TV" in card["title"] and word in card["title"].replace("Living room TV", "")
+    assert "%d more days" % days in card["description"]
+    assert "stops connecting on " + stops in card["description"]
+
+
+def test_the_card_for_a_device_that_has_already_stopped_says_so(client):
+    tv = pair(due_in_days=-2)
+    try_open(client, tv)
+    [card] = cards(tv)
+    stopped = time.strftime("%A %d %B", time.localtime(device_pairing.get_device(tv.id)["reconfirm_by"]))
+    assert "stopped connecting on " + stopped in card["description"]
