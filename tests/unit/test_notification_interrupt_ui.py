@@ -2,12 +2,15 @@
 from __future__ import annotations
 
 import re
+import shutil
+import subprocess
 from pathlib import Path
 
 import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
 UIS = ("index.html", "ui_parts/app.html")
+NODE = shutil.which("node")
 
 
 def _flat(ui: str) -> str:
@@ -43,3 +46,12 @@ def test_both_copies_carry_the_same_panel():
         start = flat.index("functionSettingsNotificationInterrupts()")
         return flat[start:flat.index("functionSettingsTabBrowser()", start)]
     assert panel("index.html") == panel("ui_parts/app.html")
+
+
+@pytest.mark.skipif(not NODE, reason="node is not on PATH")
+def test_the_panel_passes_its_behaviour_test_under_node():
+    """tests/ui/notification_interrupt_rules.test.cjs renders the panel from both copies and clicks a rule;
+    it runs here so the suite runs it."""
+    done = subprocess.run([NODE, "--test", str(ROOT / "tests" / "ui" / "notification_interrupt_rules.test.cjs")],
+                          capture_output=True, text=True, encoding="utf-8", timeout=120, cwd=str(ROOT))
+    assert done.returncode == 0, done.stdout[-4000:] + done.stderr[-2000:]
