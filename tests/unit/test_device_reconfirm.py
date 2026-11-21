@@ -153,6 +153,16 @@ def test_a_restart_does_not_stack_a_second_card_for_the_same_device(client):
     assert len(cards(tv)) == 1
 
 
+def test_a_card_the_owner_has_not_answered_is_not_joined_by_a_second_after_a_restart_and_hours(client, monkeypatch):
+    tv = pair(due_in_days=-1)
+    try_open(client, tv)
+    later = time.time() + 7 * 3600                              # past the ask window, and the process restarted
+    monkeypatch.setattr(time, "time", lambda: later)
+    device_pairing._RECONFIRM_ASKED.clear()
+    try_open(client, tv)
+    assert len(cards(tv)) == 1
+
+
 def test_a_card_that_could_not_be_made_is_tried_again_not_held_off_for_hours(client, monkeypatch):
     tv = pair(due_in_days=-1)
     real = ap.create_approval
@@ -173,6 +183,33 @@ def test_a_stored_device_name_cannot_put_quotes_or_new_lines_into_the_card(clien
     [card] = cards(tv)
     for text in (card["title"], card["description"]):
         assert chr(10) not in text and "<" not in text and text.count(chr(34)) <= 2
+
+
+def test_a_device_can_be_kept_again_every_cycle_not_only_the_first_time(client, monkeypatch):
+    tv = pair(due_in_days=-1)
+    try_open(client, tv)
+    press(cards(tv)[0])
+    assert try_open(client, tv).status_code == 200
+    month_later = time.time() + 31 * DAY
+    monkeypatch.setattr(time, "time", lambda: month_later)            # the 30 days pass and it is due again
+    assert try_open(client, tv).status_code == 403
+    [second] = cards(tv)                                              # a NEW card, not the approved one again
+    press(second)
+    assert try_open(client, tv).status_code == 200
+    assert (device_pairing.get_device(tv.id)["reconfirm_by"] - month_later) / DAY > 29.9
+
+
+def test_after_a_decline_the_owner_is_asked_again_later(client, monkeypatch):
+    tv = pair(due_in_days=-1)
+    try_open(client, tv)
+    with pressed():
+        ap.decide_with_outcome(cards(tv)[0]["approval_id"], "deny", decided_by="owner:ui")
+    assert cards(tv) == []
+    assert try_open(client, tv).status_code == 403 and cards(tv) == []     # not again within the cooldown
+    later = time.time() + device_pairing.RECONFIRM_ASK_EVERY_S + 60
+    monkeypatch.setattr(time, "time", lambda: later)
+    assert try_open(client, tv).status_code == 403
+    assert len(cards(tv)) == 1                                        # a changed mind has a card to press
 
 
 def test_removing_the_device_takes_its_reconfirm_card_with_it(client):

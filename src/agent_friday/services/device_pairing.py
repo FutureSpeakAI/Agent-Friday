@@ -528,9 +528,16 @@ def request_reconfirm(dev: dict) -> Optional[str]:
             return None
     try:
         from agent_friday.services import approvals
+        waiting = [c for c in approvals.list_approvals(status="pending", kind=RECONFIRM_CARD_KIND)
+                   if (c.get("payload") or {}).get("device_id") == str(dev["id"])]
+        if waiting:                                    # one card at a time per device, whatever a restart forgot
+            return waiting[0].get("approval_id")
         name = plain_name(dev.get("name"))
+        # create_approval returns the newest card ever made for a subject, decided or not, so the subject names
+        # the ask window too: a later due date, or a re-ask after a decline, gets a fresh card.
         card = approvals.create_approval(
-            kind=RECONFIRM_CARD_KIND, subject_type="device_reconfirm", subject_id=str(dev["id"]),
+            kind=RECONFIRM_CARD_KIND, subject_type="device_reconfirm",
+            subject_id="%s@%d" % (dev["id"], int(now // RECONFIRM_ASK_EVERY_S)),
             title='Keep "%s" paired?' % name,
             description=("Press Approve to keep \"%s\" paired with Friday for %d more days. It keeps every right it "
                          "has now. If you do not recognise it, or no longer use it, press Decline or remove it "
@@ -538,7 +545,7 @@ def request_reconfirm(dev: dict) -> Optional[str]:
                          % (name, RECONFIRM_DAYS)),
             action_description="Keep a paired device for %d more days" % RECONFIRM_DAYS,
             payload={"device_id": str(dev["id"]), "origin": "tv_gateway"},
-            requested_by="tv_gateway", force_gate=True)        # idempotent per device while one is pending
+            requested_by="tv_gateway", force_gate=True)
         with _LOCK:
             _RECONFIRM_ASKED[dev["id"]] = now          # only once a card exists, so a failure is tried again
         return card.get("approval_id")
