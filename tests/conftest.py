@@ -432,6 +432,19 @@ def _homes_are_existing_installs(request, monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _no_real_dpapi_for_the_keystore(monkeypatch):
+    """The keystore wraps its root key with Windows DPAPI by default (services/keystore). A test must not seal a key with the
+    real account's DPAPI, and a Windows runner must not give a different default from a Linux one, so by default no DPAPI is
+    available to the keystore and a keystore made in a test is `wrap: "none"`. Tests of the DPAPI wrap
+    (tests/unit/test_keystore_dpapi_default.py) turn a fake one on."""
+    try:
+        from agent_friday.services import keystore
+    except Exception:
+        return
+    monkeypatch.setattr(keystore, "_dpapi_available", lambda: False, raising=False)  # absent before the DPAPI default
+
+
+@pytest.fixture(autouse=True)
 def _held_detail_cards_off(request, monkeypatch):
     """The gate raises a card for every private detail it holds back (services/cloud_release,
     owner ruling 2026-10-17). Hundreds of tests seal private text through a shared scratch home;
