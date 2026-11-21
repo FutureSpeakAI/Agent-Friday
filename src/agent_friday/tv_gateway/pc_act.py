@@ -163,6 +163,9 @@ def _start_job() -> Response:
 def register(app: Flask) -> None:
     app.post("/tv/v1/jobs")(_start_job)
 
+    from agent_friday.tv_gateway import pc_act_media
+    pc_act_media.register(app)
+
     @app.get("/tv/v1/jobs/<jid>/steps")
     def pc_job_steps(jid):
         denied = pc_read._guard("jobs")

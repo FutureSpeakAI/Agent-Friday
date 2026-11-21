@@ -156,5 +156,88 @@
   }
  ],
  "resolver_sources": ["wiki_page"],
- "workspace_tools": {"key": null, "pools": []}
+ "workspace_tools": {"key": null, "pools": []},
+ "device": {
+  "expose": true,
+  "sensitivity": "personal",
+  "sections": {
+   "pages": {
+    "view": "list",
+    "kind": "page",
+    "label": "Pages"
+   },
+   "people": {
+    "view": "list",
+    "kind": "person",
+    "label": "People"
+   },
+   "graph": {
+    "view": "graph3d",
+    "kind": "node",
+    "label": "Graph"
+   }
+  },
+  "kinds": {
+   "page": {
+    "roles": {
+     "title": "title",
+     "line": "summary",
+     "when": "updated",
+     "state": "type",
+     "thumb": null
+    },
+    "item_view": "reader",
+    "search": true,
+    "preview": false,
+    "stream": false,
+    "offline": "opened",
+    "row_verbs": [],
+    "item_verbs": [
+     "knowledge.create_edit",
+     "knowledge.move_rename_tag",
+     "knowledge.delete_page",
+     "knowledge.podcast"
+    ],
+    "new_verb": "knowledge.create_edit"
+   },
+   "person": {
+    "roles": {
+     "title": "name",
+     "line": "role",
+     "when": "updated",
+     "state": null,
+     "thumb": null
+    },
+    "item_view": "reader",
+    "search": true,
+    "preview": false,
+    "stream": false,
+    "offline": "opened",
+    "row_verbs": [],
+    "item_verbs": [
+     "knowledge.create_edit"
+    ],
+    "new_verb": null
+   },
+   "node": {
+    "roles": {
+     "title": "label",
+     "line": "type",
+     "when": null,
+     "state": "community",
+     "thumb": null
+    },
+    "item_view": "explorer",
+    "search": true,
+    "preview": false,
+    "stream": false,
+    "offline": "never",
+    "row_verbs": [],
+    "item_verbs": [
+     "knowledge.open_page"
+    ],
+    "new_verb": null
+   }
+  }
+ }
 }

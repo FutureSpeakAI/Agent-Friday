@@ -216,6 +216,8 @@ def create_app(tailnet: bool = False) -> Flask:
 
     from agent_friday.tv_gateway import voices as _voices
     _voices.register(app, _refuse)               # GET /tv/v1/voices, POST /tv/v1/voice/switch
+    from agent_friday.tv_gateway import conversation_state as _conversation_state
+    _conversation_state.register(app, _refuse)   # POST /tv/v1/model/switch, GET /tv/v1/conversations/<id>/state
 
     @app.get("/tv/v1/stt")
     def stt_ready():
@@ -303,9 +305,13 @@ def create_app(tailnet: bool = False) -> Flask:
     inherit.register(app)
     from agent_friday.tv_gateway import pc_read
     pc_read.register(app)                    # the owner phone/tablet read door (chats, workspaces, jobs, media)
+    from agent_friday.tv_gateway import pc_orbs
+    pc_orbs.register(app)                    # the same owners' door, live process orbs
     from agent_friday.tv_gateway import pc_act, pc_approve
     pc_approve.register(app)
     pc_act.register(app)
+    from agent_friday.tv_gateway import pc_grants
+    pc_grants.register(app)             # standing grants: list, revoke, stop an offer (K5 PR D)
     return app
 
 
