@@ -761,6 +761,29 @@ def governance_receipts():
     return jsonify(morning_receipt.build(since, until))
 
 
+@goals_bp.route("/api/governance/standing-grants", methods=["GET"])
+@login_required
+def list_standing_grants():
+    """Settings' standing grants (services/standing_grants): the owner's, on Friday's own page.
+    Revoke is DELETE /api/governance/grants/<id>, which needs no press."""
+    import agent_friday.core as _core
+    from agent_friday.services import standing_grants
+    if not _owner_principal() or not _core._api_token_valid(request.headers.get("X-Friday-Token")):
+        return jsonify({"error": "Standing grants are shown to the owner on Friday's own page."}), 403
+    return jsonify(standing_grants.listing())
+
+
+@goals_bp.route("/api/governance/standing-grants/stop-offering", methods=["POST"])
+@login_required
+def stop_offering_standing_grant():
+    import agent_friday.core as _core
+    from agent_friday.services import standing_offers
+    if not _owner_principal() or not _core._api_token_valid(request.headers.get("X-Friday-Token")):
+        return jsonify({"error": "Only the owner, on Friday's own page, can stop an offer."}), 403
+    pattern = str((request.get_json(silent=True) or {}).get("pattern") or "")
+    return jsonify({"stopped": standing_offers.stop_offering(pattern)})
+
+
 @goals_bp.route("/api/governance/grants/<grant_id>", methods=["DELETE"])
 @login_required
 def revoke_governance_grant(grant_id):

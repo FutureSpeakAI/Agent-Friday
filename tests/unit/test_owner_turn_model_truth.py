@@ -53,8 +53,11 @@ class Desk:
         self.convs = {"conv-old": {"id": "conv-old", "seat": None}}
         self.api_calls, self.turns = [], []
         self.refuse = None
+        self.superseded = False     # another window chose a seat meanwhile: the desktop writes nothing
+        self.pending = 0            # how many seat changes answer "still checking" before one settles
         self.answer = {"model": "bonsai2:27b", "seat": "local", "provider": "arbiter-local"}
         self.extra = {}
+        self.api_status = 200           # what the desktop's API answers with (a test sets 401/500 to break it)
 
     def api(self, method, path, body=None):
         self.api_calls.append((method, path, body))
@@ -64,14 +67,25 @@ class Desk:
             def get_json(self, silent=True):
                 return self.d
         r = R()
+        r.status_code = desk.api_status
+        if desk.api_status != 200:
+            r.d = {}
+            return r
         if method == "POST" and path == "/api/conversations":
             desk.convs["conv-new"] = {"id": "conv-new", "seat": body.get("seat")}
             r.d = {"conversation": dict(desk.convs["conv-new"])}
         elif method == "GET":
-            r.d = {"conversation": dict(desk.convs[path.rsplit("/", 1)[1]])}
+            got = desk.convs.get(path.rsplit("/", 1)[1])
+            r.d = {"conversation": dict(got)} if got else {}
         else:
             cid = path.rsplit("/", 1)[1]
-            if desk.refuse:
+            if desk.superseded:
+                r.d = {"conversation": dict(desk.convs[cid]), "superseded": True}
+            elif desk.pending > 0:
+                desk.pending -= 1
+                r.d = {"conversation": dict(desk.convs[cid]), "seat_pending": True, "seat_change_id": "tok-1",
+                       "note": "Friday is still checking which local model is serving."}
+            elif desk.refuse:
                 r.d = {"conversation": dict(desk.convs[cid]), "note": desk.refuse}
             else:
                 desk.convs[cid]["seat"] = body["seat"]
@@ -130,7 +144,10 @@ def block(r):
 def test_a_picked_model_starts_a_chat_bound_to_it_and_the_turn_runs_in_that_chat(client, desk):
     r = ask(client, phone(), model="claude-haiku-5-5")
     assert r.status_code == 200
-    assert desk.api_calls == [("POST", "/api/conversations", {"title": "Phone chat", "seat": {"model": "claude-haiku-5-5"}})]
+    # created without a seat, then bound through the desktop's checked PATCH (the create route does not check)
+    assert desk.api_calls == [("POST", "/api/conversations", {"title": "Phone chat"}),
+                              ("PATCH", "/api/conversations/conv-new", {"seat": {"model": "claude-haiku-5-5"}})]
+    assert desk.convs["conv-new"]["seat"] == {"model": "claude-haiku-5-5"}
     assert desk.turns[0]["conversation_id"] == "conv-new" and block(r)["conversation_id"] == "conv-new"
 
 
@@ -152,6 +169,48 @@ def test_a_seat_the_pc_refuses_is_a_409_with_its_reason_and_no_turn_runs(client,
     r = ask(client, phone(), model="bonsai2:27b", conversation_id="conv-old")
     assert r.status_code == 409 and "one local model at a time" in r.get_data(as_text=True)
     assert desk.turns == []
+
+
+def test_a_pc_still_checking_its_local_models_is_waited_for_not_refused(client, desk, monkeypatch):
+    monkeypatch.setattr(owner_turn, "SEAT_POLL_S", 0)
+    desk.pending = 3
+    r = ask(client, phone(), model="bonsai2:27b", conversation_id="conv-old")
+    assert r.status_code == 200 and len(desk.turns) == 1
+    patches = [c for c in desk.api_calls if c[0] == "PATCH"]
+    assert len(patches) == 4
+    assert patches[0][2] == {"seat": {"model": "bonsai2:27b"}}
+    assert all(c[2] == {"seat": {"model": "bonsai2:27b"}, "seat_change_id": "tok-1"} for c in patches[1:])
+
+
+def test_a_check_that_never_finishes_is_a_503_that_says_try_again_not_a_409_refusal(client, desk, monkeypatch):
+    monkeypatch.setattr(owner_turn, "SEAT_POLL_S", 0)
+    monkeypatch.setattr(owner_turn, "SEAT_WAIT_S", 0.05)
+    desk.pending = 10 ** 6
+    r = ask(client, phone(), model="bonsai2:27b", conversation_id="conv-old")
+    body = r.get_data(as_text=True)
+    assert r.status_code == 503 and "seat_pending" in body and "still checking" in body
+    assert desk.turns == []
+
+
+def test_a_seat_changed_on_the_pc_meanwhile_is_a_409_that_says_so(client, desk):
+    desk.superseded = True
+    r = ask(client, phone(), model="bonsai2:27b", conversation_id="conv-old")
+    body = r.get_data(as_text=True)
+    assert r.status_code == 409 and "seat_superseded" in body and "changed on this computer" in body
+    assert desk.turns == []
+
+
+def test_a_local_model_that_is_not_running_is_a_409_that_says_so_in_the_pcs_words(client, desk, monkeypatch):
+    """The phone shows this text: "Bonsai2 is not running on your PC", not a bare refusal."""
+    from agent_friday.tv_gateway import models
+    reason = models.why_unavailable({"label": "Bonsai2", "local": True}, {})
+    assert reason == "Bonsai2 is not running on your PC"      # the wording itself, not only its path to the 409
+    monkeypatch.setattr(owner_turn, "_slate", lambda dev: [{"id": "bonsai2:27b", "name": "Bonsai2", "available": False,
+                                                            "reason": reason}])
+    r = ask(client, phone(), model="bonsai2:27b", conversation_id="conv-old")
+    body = r.get_data(as_text=True)
+    assert r.status_code == 409 and "model_unavailable" in body and "Bonsai2 is not running on your PC" in body
+    assert desk.turns == [] and not [c for c in desk.api_calls if c[0] == "PATCH"]
 
 
 def test_no_model_binds_nothing_and_an_unknown_one_is_refused_loudly_not_quietly_answered(client, desk):

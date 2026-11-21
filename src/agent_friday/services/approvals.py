@@ -464,12 +464,22 @@ def _mac(tag: bytes, rec: Dict[str, Any], fields, key: Optional[bytes]) -> str:
     return _hm.new(key or _seal_key(), tag + blob, hashlib.sha256).hexdigest()
 
 
+#: The seal errors already reported, so a missing key is said once and not on every card read.
+_SEAL_WARNED: set = set()
+
+
 def _holds(rec: Dict[str, Any], field: str, tag: bytes, fields) -> bool:
     import hmac as _hm
     try:
         seal = (rec or {}).get(field)
         return bool(seal) and _hm.compare_digest(str(seal), _mac(tag, rec, fields, None))
-    except Exception:  # noqa: BLE001 - no key, no proof
+    except Exception as e:  # noqa: BLE001 - no key, no proof
+        # Still refused. But a seal that cannot be CHECKED (a key that would not read) must not look like a
+        # seal that does not MATCH: say which, once per distinct error (F2/F9).
+        said = (type(e).__name__, str(e)[:200])
+        if said not in _SEAL_WARNED and len(_SEAL_WARNED) < 20:
+            _SEAL_WARNED.add(said)
+            _log.warning("a card seal could not be checked (%s: %s); it is treated as not sealed", *said)
         return False
 
 
@@ -585,7 +595,8 @@ _DEVICE_OF_SOURCE = {"desktop_press": "this_pc", "typed": "this_pc", "voice": "t
                      "page_not_on_this_pc": "another_device", "page_without_desk_key": "another_device",
                      "text_message": "owner_phone", "sms": "owner_phone", "text": "owner_phone",
                      "google_tasks_tick": "google_tasks", "standing_grant": "pre_approved_in_settings",
-                     "auto_policy": "policy", "law1_block": "policy", "system": "friday"}
+                     "auto_policy": "policy", "law1_block": "policy", "system": "friday",
+                     "device_signed": "owner_device", "device": "owner_device"}
 
 
 def decided_device(source: Optional[str]) -> str:
@@ -1177,14 +1188,19 @@ def _everything_stopped() -> bool:
 
 
 def decide_with_outcome(approval_id: str, decision: str, *, decided_by: str = "owner",
-                        note: str = "", source: str = "") -> tuple:
+                        note: str = "", source: str = "", expect_fp: str = "",
+                        proof: Optional[Dict[str, Any]] = None) -> tuple:
     """`decide()`, also saying whether THIS call made the decision.
 
     Returns (record, won). `won` is True for exactly one caller per card: the
     check that the card is still pending and the write that decides it happen
     under one lock, so two pages (or a page and a voice command) deciding at
     once cannot both act; every other caller gets the card as it now stands
-    and won=False. (None, False) for an unknown id.
+    and won=False. (None, False) for an unknown id. ``expect_fp``, when given, is the action fingerprint the
+    decider saw and signed: an approve of a card that no longer has it is not made (under the same lock).
+    ``proof`` (a device's signature, nonce and signed time) is kept on the decision record as ``decided_proof`` so the
+    approval can be checked later. Guarded by test_the_signed_fingerprint_is_checked_under_the_decision_lock and
+    test_the_signature_is_kept_on_the_decision_record.
     """
     if decision not in ("approve", "deny"):
         raise ValueError("decision must be 'approve' or 'deny'")
@@ -1196,6 +1212,8 @@ def decide_with_outcome(approval_id: str, decision: str, *, decided_by: str = "o
     if decided_by == SCREEN_LABEL and not _press_granted(approval_id):
         decided_by = "owner"
     named = source if source in _CALLER_SOURCES else ""
+    if named in _DEVICE_SOURCES and not decided_by.startswith(DEVICE_LABEL):
+        named = ""                  # only a decision labelled as a device's may say it was one
     source, check = decision_source(decided_by, approval_id)
     if named and source != "desktop_press":
         # The caller knows the channel better than the label does (a typed "no" in chat is
@@ -1233,6 +1251,8 @@ def decide_with_outcome(approval_id: str, decision: str, *, decided_by: str = "o
             # Send on a card that lets private text leave the PC is its own button on screen (or the
             # owner's own words after a read-back), never another approvals route (cloud_release.decide).
             return dict(rec), False
+        if decision == "approve" and expect_fp and _action_fp(rec) != expect_fp:
+            return dict(rec), False
         if decision == "approve" and not card_seal_holds(rec):
             # changed since it was raised (or not raised by this module): never approved as is
             _log.error("approval %s is not the card that was raised; it is not approved", approval_id)
@@ -1247,11 +1267,13 @@ def decide_with_outcome(approval_id: str, decision: str, *, decided_by: str = "o
         if check is not None:
             rec["decided_check"] = check
         rec["decision_note"] = note
+        if proof:
+            rec["decided_proof"] = dict(proof)
         rec.pop("approval_seal", None)
         if decision == "approve" and not _seal_approval(rec):
             # the decision cannot be made a token (no governance key): it stays undecided
             for k in ("decided_at", "decided_by", "decided_source", "decided_policy_version",
-                      "decided_device", "decided_check", "decision_note"):
+                      "decided_device", "decided_check", "decision_note", "decided_proof"):
                 rec.pop(k, None)
             rec["status"] = "pending"
             return dict(rec), False
@@ -1289,7 +1311,13 @@ _TYPED_SURFACES = frozenset({"chat", "typed", "app", "palette", "reflex"})
 _MESSAGE_SURFACES = frozenset({"sms", "text", "telegram", "discord", "channel", "whatsapp", "phone", "email"})
 #: Sources a caller may name for its own decision (decide(source=...)). Never desktop_press:
 #: that one is only ever worked out from a verified press.
-_CALLER_SOURCES = frozenset({"typed", "voice", "text_message", "in_process", "system", "friday"})
+_CALLER_SOURCES = frozenset({"typed", "voice", "text_message", "in_process", "system", "friday",
+                             "device_signed", "device"})
+
+#: The decided_by prefix of an owner's phone or tablet (tv_gateway/pc_approve), and the sources only it may name.
+#: Guarded by test_a_device_source_needs_a_device_label.
+DEVICE_LABEL = "device:"
+_DEVICE_SOURCES = frozenset({"device_signed", "device"})
 
 
 def voice_on_this_desk() -> bool:
@@ -1370,6 +1398,8 @@ def decision_source(decided_by: str, approval_id=None) -> tuple:
         return "system", None
     if label.startswith("friday:"):
         return "friday", None
+    if label.startswith(DEVICE_LABEL):
+        return "device", None
     if "voice" in low:
         return "voice", None
     surface = low.split(":", 1)[1] if low.startswith("owner:") else ""

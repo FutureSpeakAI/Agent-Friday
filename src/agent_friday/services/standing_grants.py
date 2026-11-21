@@ -100,7 +100,7 @@ def maybe_offer(decided_card: Dict[str, Any]) -> Optional[Dict[str, Any]]:
             payload={"pattern": fingerprint, "snapshot": _snapshot(decided_card)})
         if card.get("status") != "pending":
             return None
-        standing_offers.record_offer_raised(fingerprint)
+        standing_offers.record_offer_raised(fingerprint, tool=pattern.tool)
         _ledger("standing_offer_shown", pattern=fingerprint, tool=pattern.tool)
         return card
     except Exception as exc:
@@ -130,10 +130,32 @@ def on_offer_decided(card: Dict[str, Any]) -> None:
     grant = action_gate.create_grant(
         tools=[pattern.tool], scope=scope_of(fingerprint), expires_in_seconds=GRANT_SECONDS,
         max_uses=GRANT_USES, created_by=str(card.get("decided_by") or ""),
-        note="standing grant (K5) from card %s" % card.get("approval_id"),
+        note=("standing grant from card %s; to: %s"
+              % (card.get("approval_id"), ", ".join(pattern.destination) or "no named recipient"))[:200],
         limits={"subject_kind": "pattern", "principal": pattern.principal})
     _ledger("standing_offer_accepted", pattern=fingerprint, grant=grant["grant_id"],
             by=str(card.get("decided_by") or ""))
+
+
+def listing() -> Dict[str, Any]:
+    """Settings' view: every live standing grant (what, to whom, who pressed and on which device,
+    when, uses so far, when it ends) and the offers declined or stopped. Words only, no card text."""
+    from agent_friday.governance import action_gate
+    from agent_friday.services import approvals
+    rows = []
+    for grant in action_gate.list_grants():
+        if not str(grant.get("scope", "")).startswith(PATTERN_SCOPE):
+            continue
+        note = str(grant.get("note") or "")
+        card_id = note.split(" from card ", 1)[-1].split(";", 1)[0].strip()
+        card = approvals.get_approval(card_id) or {}
+        rows.append({
+            "grant_id": grant["grant_id"], "tool": (grant.get("tools") or [""])[0],
+            "to": note.split("; to: ", 1)[-1] if "; to: " in note else "",
+            "pressed_by": grant.get("created_by") or "", "device": card.get("decided_device") or "",
+            "made_at": grant.get("created_at"), "ends_at": grant.get("expires_at"),
+            "uses_used": int(grant.get("used_count") or 0), "uses_max": grant.get("max_uses")})
+    return {"grants": rows, **standing_offers.declined_and_stopped()}
 
 
 def cover(tool_name: str, args: Any, ctx: Dict[str, Any], why: str, *, clean: bool = False) -> Optional[dict]:

@@ -61930,7 +61930,11 @@ function GovernanceGrantsPanel() {
   const [days, setDays] = useState(7);
   const [uses, setUses] = useState(10);
   const [msg, setMsg] = useState('');
-  const load = () => apiFetch('/api/governance/grants').then(r => r.json()).then(d => { setGrants(Array.isArray(d && d.grants) ? d.grants : []); setRecords(Array.isArray(d && d.records) ? d.records : []); }).catch(() => {});
+  const [standing, setStanding] = useState({ grants: [], declined: [], stopped: [] });
+  const load = () => {
+    apiFetch('/api/governance/grants').then(r => r.json()).then(d => { setGrants(Array.isArray(d && d.grants) ? d.grants : []); setRecords(Array.isArray(d && d.records) ? d.records : []); }).catch(() => {});
+    apiFetch('/api/governance/standing-grants').then(r => r.json()).then(d => setStanding({ grants: Array.isArray(d && d.grants) ? d.grants : [], declined: Array.isArray(d && d.declined) ? d.declined : [], stopped: Array.isArray(d && d.stopped) ? d.stopped : [] })).catch(() => {});
+  };
   useEffect(() => {
     load();
     apiFetch('/api/schedules').then(r => r.json()).then(d => setJobs(Array.isArray(d && d.schedules) ? d.schedules : [])).catch(() => {});
@@ -61962,12 +61966,26 @@ function GovernanceGrantsPanel() {
     /*#__PURE__*/React.createElement("div", { style: Object.assign({}, muted, { marginBottom: 10 }) },
       "A scheduled job can't send, post, change your calendar or run a command on its own: with nobody watching, each of those waits on an approval card. To let a job do one of them unattended, give it a grant here. A grant names the job, the actions, how long it lasts and how many times it can be used. Email is not covered here: it has its own Pre-approved sends section below, for named recipients only."),
     grants.length === 0 ? /*#__PURE__*/React.createElement("div", { style: Object.assign({}, muted, { marginBottom: 10 }) }, "No grants. Every outward action by a scheduled job waits for you.") :
-      grants.map(g => /*#__PURE__*/React.createElement("div", { key: g.grant_id, className: "card", style: { padding: 8, marginBottom: 6, display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 } },
+      grants.filter(g => String(g.scope).indexOf('pattern:') !== 0).map(g => /*#__PURE__*/React.createElement("div", { key: g.grant_id, className: "card", style: { padding: 8, marginBottom: 6, display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 } },
         /*#__PURE__*/React.createElement("div", { style: { fontSize: 12, color: '#ddd', lineHeight: 1.5 } },
           /*#__PURE__*/React.createElement("b", null, jobName(g.scope)), " may ", (g.tools || []).map(labelOf).join(', ').toLowerCase(),
           /*#__PURE__*/React.createElement("div", { style: { fontSize: 11, color: 'rgba(255,255,255,0.45)' } },
             "until " + new Date(g.expires_at * 1000).toLocaleString() + " \xB7 " + g.uses_left + " use(s) left")),
         /*#__PURE__*/React.createElement("button", { className: "settings-btn", style: { fontSize: 11, color: '#ff8080' }, onClick: () => revoke(g.grant_id) }, "Revoke"))),
+    /*#__PURE__*/React.createElement("div", { "data-testid": "standing-grants", style: { marginTop: 10 } },
+      /*#__PURE__*/React.createElement("div", { style: { fontSize: 12, color: '#ccc' } }, "Standing grants"),
+      /*#__PURE__*/React.createElement("div", { style: Object.assign({}, muted, { marginBottom: 6 }) }, "After you approve the same action five times, ", fridayName(), " may offer to stop asking for that one action. Only your press on that offer makes one. Each lasts at most 30 days or 50 uses, and you can take it back here at any time."),
+      standing.grants.length === 0 ? /*#__PURE__*/React.createElement("div", { style: Object.assign({}, muted, { marginBottom: 6 }) }, "None. Every approval still waits for you.") :
+        standing.grants.map(g => /*#__PURE__*/React.createElement("div", { key: g.grant_id, className: "card", "data-testid": "standing-grant", style: { padding: 8, marginBottom: 6, display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 } },
+          /*#__PURE__*/React.createElement("div", { style: { fontSize: 12, color: '#ddd', lineHeight: 1.5 } },
+            /*#__PURE__*/React.createElement("b", null, labelOf(g.tool)), g.to ? ' \xB7 ' + g.to : '',
+            /*#__PURE__*/React.createElement("div", { style: { fontSize: 11, color: 'rgba(255,255,255,0.45)' } }, 'Pressed by ' + (g.pressed_by === 'owner:ui' ? 'you on this PC' : g.pressed_by) + (g.device && g.pressed_by !== 'owner:ui' ? ' (' + String(g.device).replace(/_/g, ' ') + ')' : '') + ' on ' + new Date(g.made_at * 1000).toLocaleString()),
+            /*#__PURE__*/React.createElement("div", { style: { fontSize: 11, color: 'rgba(255,255,255,0.45)' } }, 'Used ' + g.uses_used + ' of ' + g.uses_max + ' \xB7 ends ' + new Date(g.ends_at * 1000).toLocaleString())),
+          /*#__PURE__*/React.createElement("button", { className: "settings-btn", style: { fontSize: 11, color: '#ff8080' }, "aria-label": 'Revoke the standing grant for ' + labelOf(g.tool), onClick: () => revoke(g.grant_id) }, "Revoke"))),
+      standing.declined.map(o => /*#__PURE__*/React.createElement("div", { key: o.pattern, "data-testid": "declined-offer", style: Object.assign({}, muted, { display: 'flex', justifyContent: 'space-between', gap: 8, marginBottom: 4 }) },
+        /*#__PURE__*/React.createElement("span", null, 'You declined an offer for ' + labelOf(o.tool) + '. It may be offered again after 30 days.'),
+        /*#__PURE__*/React.createElement("button", { className: "settings-btn", style: { fontSize: 11 }, onClick: () => apiFetch('/api/governance/standing-grants/stop-offering', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ pattern: o.pattern }) }).then(() => load()).catch(() => {}) }, "Don't offer again"))),
+      standing.stopped.map(o => /*#__PURE__*/React.createElement("div", { key: o.pattern, "data-testid": "stopped-offer", style: Object.assign({}, muted, { marginBottom: 4 }) }, 'Never offered again: ' + labelOf(o.tool)))),
     /*#__PURE__*/React.createElement("div", { style: { marginTop: 10, fontSize: 12, color: '#ccc' } }, "New grant"),
     /*#__PURE__*/React.createElement("select", { "aria-label": "Scheduled job", value: job, onChange: e => setJob(e.target.value), style: { marginTop: 6, width: '100%', fontSize: 12 } },
       /*#__PURE__*/React.createElement("option", { value: "" }, "Choose a scheduled job…"),
@@ -70258,6 +70276,43 @@ function ExperienceApprovals() {
     error && React.createElement('p', {role:'alert'}, error),
     items.map(a => React.createElement(ApprovalCardBody, {key:a.approval_id,a,busy,onDecide:decide})));
 }
+// The shell-owned approval slot (NS-41.3-1, SC D5.0 P5 and V12). A Liquid UI document names a
+// subject and nothing else: no id, text, style, children or label of its own. The slot asks the
+// server which pending cards belong to that subject (GET /api/liquid/approval-slot, ids only),
+// then draws THE SHELL'S OWN card body for each, from the same feed as the System list. A decision
+// is made with the card's own buttons (fridayDecideApproval). The frame
+// uses shell tokens only. Held by scripts/check_approval_slot.cjs (which cards, order, failure, V12, tokens, a changed subject) and tests/app/specs/approval_slot.spec.ts (the page).
+function ApprovalSlot({ subject, kind }) {
+  const items = useApprovalFeed();
+  const [got, setGot] = useState(null);
+  const [busy, setBusy] = useState('');
+  const asked = (subject || '') + '|' + (kind || '');
+  const ids = got && got.asked === asked ? got.ids : null;
+  const waiting = items.map(a => a.approval_id).join(',');
+  useEffect(() => {
+    let live = true;
+    const q = 'subject=' + encodeURIComponent(subject || '') + (kind ? '&kind=' + encodeURIComponent(kind) : '');
+    fetch('/api/liquid/approval-slot?' + q).then(r => r.json())
+      .then(d => { if (live) setGot({ asked, ids: d && d.ok && Array.isArray(d.ids) ? d.ids : 'unavailable' }); })
+      .catch(() => { if (live) setGot({ asked, ids: 'unavailable' }); });
+    return () => { live = false; };
+  }, [subject, kind, waiting]);
+  if (ids === null) return null;
+  const mine = Array.isArray(ids) ? ids.map(id => items.find(a => a.approval_id === id)).filter(Boolean) : [];
+  if (Array.isArray(ids) && ids.length && !mine.length) return null;
+  const decide = (id, decision) => {
+    if (busy) return;
+    setBusy(id);
+    fridayDecideApproval(id, decision).finally(() => setBusy(''));
+  };
+  return React.createElement('div', {
+    'data-testid': 'approval-slot', role: 'group', 'aria-label': 'Waiting for your decision',
+    style: { margin: '8px 0', padding: 8, border: '1px solid var(--fr-glass-edge)', borderRadius: 8, background: 'var(--fr-glass)', color: 'var(--fr-text)' }
+  }, mine.length ? mine.map(a => React.createElement(ApprovalCardBody, { key: a.approval_id, a, busy, onDecide: decide }))
+    : React.createElement('div', { 'data-testid': 'approval-slot-empty', role: 'status', style: { fontSize: 11, color: 'var(--fr-dim)' } },
+        ids === 'unavailable' ? 'Could not check what is waiting.' : 'Nothing is waiting here.'));
+}
+window.FridayApprovalSlot = ApprovalSlot;
 function App() {
   const [openWins, setOpenWins] = useState(new Set());
   const [focusWin, setFocusWin] = useState(null);
