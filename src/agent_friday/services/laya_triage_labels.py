@@ -346,6 +346,38 @@ def _head_says_yes(head: str, said: str) -> bool:
     return said == NOTIFY_RAISE if head == "notify" else said not in NEWS_NOT_WORTH
 
 
+def _empty_head_score() -> dict:
+    sides = {"right": 0, "missed": 0, "false_alarm": 0}
+    return {"answered": 0, "skipped": 0, "owner_yes": 0, "owner_no": 0,
+            "head": dict(sides), "incumbent": dict(sides), "head_only_right": 0, "incumbent_only_right": 0}
+
+
+def _verdict(head: str, said, owner_yes: bool) -> str:
+    says_yes = _head_says_yes(head, str(said))
+    if says_yes == owner_yes:
+        return "right"
+    return "missed" if owner_yes else "false_alarm"
+
+
+def _count_answer(head_score: dict, head: str, answer_row: dict) -> None:
+    if answer_row.get("answer") == SKIP:
+        head_score["skipped"] += 1
+        return
+    if answer_row.get("answer") not in (YES, NO):
+        return
+    owner_yes = answer_row["answer"] == YES
+    head_score["answered"] += 1
+    head_score["owner_yes" if owner_yes else "owner_no"] += 1
+    head_verdict = _verdict(head, answer_row.get("head_said"), owner_yes)
+    incumbent_verdict = _verdict(head, answer_row.get("incumbent_said"), owner_yes)
+    head_score["head"][head_verdict] += 1
+    head_score["incumbent"][incumbent_verdict] += 1
+    if head_verdict == "right" and incumbent_verdict != "right":
+        head_score["head_only_right"] += 1
+    if incumbent_verdict == "right" and head_verdict != "right":
+        head_score["incumbent_only_right"] += 1
+
+
 def score() -> dict:
     """Per head: the owner's yes / no answers against what the head and the incumbent said.
 
@@ -353,34 +385,11 @@ def score() -> dict:
     missed       the owner said yes, the side said no
     false_alarm  the owner said no, the side said yes
     """
-    out: Dict[str, dict] = {h: {"answered": 0, "skipped": 0, "owner_yes": 0, "owner_no": 0,
-                                "head": {"right": 0, "missed": 0, "false_alarm": 0},
-                                "incumbent": {"right": 0, "missed": 0, "false_alarm": 0},
-                                "head_only_right": 0, "incumbent_only_right": 0}
-                            for h in HEADS}
-    for r in _answered_subjects().values():
-        head = str(r.get("question") or "")[len(QUESTION_KEY_PREFIX):]
-        if head not in out:
-            continue
-        s = out[head]
-        if r.get("answer") == SKIP:
-            s["skipped"] += 1
-            continue
-        if r.get("answer") not in (YES, NO):
-            continue
-        owner = r["answer"] == YES
-        s["answered"] += 1
-        s["owner_yes" if owner else "owner_no"] += 1
-        verdict = {}
-        for side, said in (("head", r.get("head_said")), ("incumbent", r.get("incumbent_said"))):
-            yes = _head_says_yes(head, str(said))
-            kind = "right" if yes == owner else ("missed" if owner else "false_alarm")
-            s[side][kind] += 1
-            verdict[side] = kind == "right"
-        if verdict["head"] and not verdict["incumbent"]:
-            s["head_only_right"] += 1
-        if verdict["incumbent"] and not verdict["head"]:
-            s["incumbent_only_right"] += 1
+    out = {head: _empty_head_score() for head in HEADS}
+    for answer_row in _answered_subjects().values():
+        head = str(answer_row.get("question") or "")[len(QUESTION_KEY_PREFIX):]
+        if head in out:
+            _count_answer(out[head], head, answer_row)
     return out
 
 

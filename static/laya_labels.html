@@ -29,7 +29,8 @@
 <body>
 <main>
   <h1>Teach Laya</h1>
-  <p class="lead">A few real items from your own notifications and news. Your answers stay on this PC. There is no wrong answer; skip anything you are unsure of.</p>
+  <p class="lead">A few real items from your own notifications and news. Your answers stay on this PC.
+    There is no wrong answer; skip anything you are unsure of.</p>
   <div class="bar" aria-hidden="true"><i id="fill"></i></div>
   <p class="count" id="count" role="status">Loading…</p>
   <section class="card" id="card" hidden>
@@ -83,7 +84,8 @@
     if (busy || !items.length) return;
     busy = true; say('');
     ['yes', 'no', 'skip'].forEach(function (id) { $(id).disabled = true; });
-    api('/api/decisions/triage_labels', { method: 'POST', body: JSON.stringify({ subject: items[0].id, answer: choice }) })
+    var body = JSON.stringify({ subject: items[0].id, answer: choice });
+    api('/api/decisions/triage_labels', { method: 'POST', body: body })
       .then(function (d) {
         if (d.status !== 'ok') throw new Error(d.message || 'Could not save that answer.');
         items.shift(); answered += 1; show(); say('Saved. Receipt ' + d.receipt + '.');
