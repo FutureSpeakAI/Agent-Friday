@@ -65,7 +65,8 @@ and voice still go first. **Run now** skips only the idle wait.
 The third tab is a digest of what happened today, grouped by kind, newest first.
 Updates are quiet, with one exception: when a scheduled job or routine finishes well
 (a job that ran, a Front Page edition, the Daily Creation), its notice can interrupt you.
-The daily briefing and the weekly editions do not, unless you switch them on. Failures,
+The daily briefing and the weekly editions do not, unless you switch them on. You can see
+and change all of this under Settings, "What may interrupt you". Failures,
 approvals, status and routing notices and news are not changed. Muting a kind from the
 tray still works, and approvals can never be muted.
 
