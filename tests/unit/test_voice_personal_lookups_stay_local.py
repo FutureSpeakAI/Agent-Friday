@@ -181,6 +181,16 @@ def test_only_the_web_rule_is_overridden_by_a_store_every_other_rule_keeps_its_t
         assert r is not None and r.tool == tool, r
 
 
+@pytest.mark.parametrize("text", [
+    "search the web for Dana, keep it local", "search the web for Dana's phone number, offline only",
+    "google Dana, this is private", "google Dana, cancel", "search the web for Dana nevermind",
+    "search the web for Dana, web forbidden", "search the web for Dana, on device only",
+])
+def test_a_web_directive_followed_by_a_retraction_is_not_run(text):
+    r = lr.rule_route(text)
+    assert r is None or r.tool != "search_web" or r.decision != "tool", r
+
+
 def test_the_notes_rule_is_unchanged():
     r = lr.rule_route("Find my notes about octopuses.")
     assert r.tool == "search_wiki" and r.args["query"] == "octopuses"
