@@ -2,8 +2,9 @@
 
 There is one way a task starts: ``agent._spawn_task``. This gives the owner's phone that same door with what an owner
 turn would give a task the owner asked for: principal ``owner``, the default tool set (every tool still behind the
-action gate), the cloud and local policy in force, no model pin. Where the task came from is a journal decision, so the
-task record and ``_spawn_task`` are unchanged.
+action gate), the cloud and local policy in force, no model pin. Where the task came from is a journal decision and, for the phone to read and for the cap to count, the task record's
+``started_from`` (``pc`` or ``device:<id>``). The record's own ``origin`` (agent._task_origin: schedule, workflow, crew,
+...) is a different field, is signed into the task's receipt, and is never touched here.
 
 The PC enforces the limits, not the device: nothing starts while everything is stopped, and at most
 ``DEVICE_JOB_CAP`` device-started tasks run at once.
@@ -28,7 +29,6 @@ DEVICE_JOB_CAP = 3
 
 _log = logging.getLogger(__name__)
 _LOCK = threading.Lock()
-_FROM_DEVICE: dict = {}
 
 
 class Refused(Exception):
@@ -40,15 +40,22 @@ class Refused(Exception):
 
 def _running_from_devices() -> int:
     """Device-started jobs that have not ended. A job waiting on an approval card, for a seat, or paused is still
-    the device's job: only a terminal status (or a record that is gone) frees its place."""
+    the device's job: only a terminal status (or a record that is gone) frees its place. Counted from the task
+    records (``started_from``), so a finished or deleted record frees its place without any separate bookkeeping."""
     from agent_friday.services.agent import TASKS, TASKS_LOCK
     from agent_friday.services.task_journal import is_terminal
     with TASKS_LOCK:
-        live = {tid for tid in _FROM_DEVICE
-                if tid in TASKS and not is_terminal((TASKS[tid] or {}).get("status"))}
-    for tid in set(_FROM_DEVICE) - live:
-        _FROM_DEVICE.pop(tid, None)
-    return len(live)
+        return sum(1 for t in TASKS.values()
+                   if str((t or {}).get("started_from") or "").startswith("device:") and not is_terminal((t or {}).get("status")))
+
+
+def _record_origin(task_id, origin) -> None:
+    """Put where the job was started from on its task record (``started_from``), for the phone to read and for the cap
+    to count. Not the record's ``origin``: that is the receipted provenance of the task and stays as it was spawned."""
+    from agent_friday.services.agent import TASKS, TASKS_LOCK
+    with TASKS_LOCK:
+        if task_id in TASKS:
+            TASKS[task_id]["started_from"] = origin
 
 
 class DeviceSlot:
@@ -78,7 +85,7 @@ class DeviceSlot:
 
     def adopt(self, task_id) -> None:
         if self.origin is not None and task_id:
-            _FROM_DEVICE[task_id] = self.origin
+            _record_origin(task_id, self.origin)
 
 
 def _name(prompt: str) -> str:
@@ -112,8 +119,7 @@ def start(prompt, origin, conversation_id=None) -> str:
             raise Refused(409, "the PC could not start that job right now") from e
         if not task_id:
             raise Refused(409, "the PC would not start that job right now")
-        if origin != "pc":
-            _FROM_DEVICE[task_id] = origin
+        _record_origin(task_id, origin)
     try:
         task_journal.append(task_id, "decision", point="origin", chosen=origin,
                             reason="started by the owner from %s" % ("this PC" if origin == "pc" else origin))

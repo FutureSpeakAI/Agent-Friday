@@ -52,6 +52,7 @@ and change receipts name what Friday did to the owner's things.
 from __future__ import annotations
 
 import json
+import math
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -508,7 +509,7 @@ def api_ledger_export():
             args["limit"] = "500"
             kinds, where, _limit, archive = _filters(args)
             rows, archive_error = _read(kinds, newest_first=False, where=where, archive=archive,
-                                        limit=EXPORT_MAX)
+                                        limit=EXPORT_MAX, resolve_text=False)   # whole lines, so they check elsewhere
             if archive_error:
                 return jsonify({"status": "error", "code": "archive_unreadable",
                                 "error": "The archive could not be read (%s); nothing was exported." % archive_error}), 409
@@ -532,9 +533,11 @@ def api_ledger_evidence_pack():
     if not (_is_local_request() and screen_click.screen_session(request)):
         return jsonify({"status": "error", "code": "press_required",
                         "error": "Export the evidence pack on Friday's own page, on this PC."}), 403
-    body = request.get_json(silent=True) or {}
-    start, end = _when(body.get("since")), _when(body.get("until"), end=True)
-    if start is None or end is None:
+    body = request.get_json(silent=True)
+    body = body if isinstance(body, dict) else {}
+    days = (body.get("since"), body.get("until"))
+    start, end = ((_when(v, end=i == 1) if isinstance(v, str) else None) for i, v in enumerate(days))
+    if start is None or end is None or not (math.isfinite(start) and math.isfinite(end)):
         return jsonify({"status": "error", "error": "Say the first and last day to include."}), 400
     try:
         rng = evidence_pack.Range(int(start), int(end))

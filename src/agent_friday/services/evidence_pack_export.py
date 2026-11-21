@@ -42,7 +42,7 @@ def _signer() -> pack.Signer | None:
 def _read_ledger() -> list[dict]:
     try:
         return action_ledger.entries(None, newest_first=False, archive=True, strict=True,
-                                     gate=False)
+                                     gate=False, resolve_text=False)    # the lines as written: hashes, never the text
     except action_ledger.LedgerError as err:
         raise pack.PackRefused(
             f"The archive could not be read ({err.user_message}); nothing was exported.") from err
@@ -56,9 +56,30 @@ def app_version() -> str:
         return "unknown"
 
 
+def _revoked_flag(rows) -> list:
+    """A grant row's `revoked_at` is the time the export was made when the ledger says it was revoked (the file row
+    keeps none), so the pack says only THAT it was revoked, never when. Held by test_a_grant_the_ledger_says_is_revoked_is_flagged_without_a_time."""
+    return [dict({k: v for k, v in r.items() if k != "revoked_at"}, revoked=bool(r.get("revoked_at"))) for r in rows]
+
+
 def _grant_rows(action_gate) -> list:
     try:
-        return action_gate.ledger_grant_rows()
+        try:
+            return _revoked_flag(action_gate.ledger_grant_rows())
+        except action_ledger.LedgerError:
+            # A break stops the strict read of a grant's uses. The pack is for exactly that case, so it lists the
+            # grants without their uses, and the pack itself says the ledger did not verify. Any other reason the
+            # ledger could not be read (a vanished segment, an unreadable file, no key) still refuses: the pack
+            # would otherwise say "intact" beside grants it could not read. Held by
+            # test_a_break_in_range_with_a_real_signed_grant_on_file_still_gives_the_pack and
+            # test_a_grants_read_that_fails_while_the_chain_verifies_still_refuses_the_pack.
+            if action_ledger.verify(force=True).get("ok"):
+                raise
+            rows = action_gate.ledger_grant_rows(usage=False)
+            # Nothing the ledger would have said about a grant (uses, first use, revocation) was read, so none of it
+            # is stated: each row keeps its identity and its own dates and says its use was not read.
+            keep = ("grant_id", "tools", "created_at", "expires_at", "max_uses", "policy_version")
+            return [dict({k: r[k] for k in keep if k in r}, usage_read=False) for r in rows]
     except Exception as err:  # noqa: BLE001 - the key or the ledger could not be read
         raise pack.PackRefused("The grants could not be read (the ledger may have a break to review first), "
                                "so nothing was exported.") from err

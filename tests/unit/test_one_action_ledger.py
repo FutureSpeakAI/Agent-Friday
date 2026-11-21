@@ -70,7 +70,8 @@ def _snapshot(home: Path) -> dict:
 
 def _changed(before: dict, home: Path) -> set:
     after = _snapshot(home)
-    return {p for p, v in after.items() if before.get(p) != v}
+    # the local text sidecar (action_ledger.TEXTS_NAME) keeps owner words off the chain; it is not a second receipt file
+    return {p for p, v in after.items() if before.get(p) != v and Path(p).name != "texts.jsonl"}
 
 
 def _decision(tool: str) -> None:
@@ -111,6 +112,8 @@ def test_every_kind_of_receipt_lands_in_one_file(scratch_home):
     changed = _changed(before, scratch_home)
     assert len(changed) == 1, sorted(changed)
     text = Path(next(iter(changed))).read_text(encoding="utf-8")
+    sidecar = Path(next(iter(changed))).with_name("texts.jsonl")  # free text is hidden on the chain, kept here
+    text += sidecar.read_text(encoding="utf-8") if sidecar.exists() else ""
     for needle in ("probe_decision_2", "probe_journal", "probe_activity", "probe_dissent",
                    "probe_grant", "probe.example", "probe_diet", "probe_inbox"):
         assert needle in text, needle
