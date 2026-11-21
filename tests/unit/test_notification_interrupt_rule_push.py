@@ -54,7 +54,7 @@ def test_a_delivered_front_page_edition_interrupts():
 
 def test_a_front_page_the_owner_asked_for_does_not():
     ne.push(title="Front Page", body="ready", source="front-page", kind="front_page", priority="medium",
-            emitter=None, dedupe_key="front-page:manual")
+            emitter="E11", tier="fyi", dedupe_key="front-page:manual")
     assert _only_card()["tier"] == pol.FYI
 
 
@@ -72,7 +72,7 @@ def test_each_emitter_a_rule_names_passes_its_own_id_where_it_pushes(rule_id, mo
     text = (SERVICES / module).read_text(encoding="utf-8")
     registered = {e.id for e in notice_registry._ALL}
     for emitter in rule.emitters:
-        assert re.search(r'emitter\s*=\s*(?:None if manual else )?"%s"' % emitter, text), emitter
+        assert re.search(r'emitter\s*=\s*"%s"' % emitter, text), emitter
         assert emitter in registered
 
 
@@ -134,3 +134,9 @@ def test_a_dismissed_quiet_ran_card_stays_dismissed(monkeypatch):
     ne.dismiss_all()
     scheduler._notify_run(rec, "complete", "ok")
     assert ne.list_notifications(limit=50) == []
+
+
+def test_a_news_run_the_owner_asked_for_names_a_quiet_tier_at_every_delivery_push():
+    text = (SERVICES / "news_engine.py").read_text(encoding="utf-8")
+    for emitter in ("E11", "E12", "E13", "E14"):
+        assert re.search(r'emitter\s*=\s*"%s",\s*tier\s*=\s*"fyi" if manual else None' % emitter, text), emitter
