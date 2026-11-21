@@ -63584,6 +63584,59 @@ function TrackingPanel({
     }
   }, calib));
 }
+// Accepted issuers (NS-49.1-1): which issuers this PC accepts credits from. TEST CREDITS ONLY. The list starts empty; accepting is a click on
+// this PC's own screen (the server checks the press), withdrawing is not. Held by tests/unit/test_accepted_issuers_ui.py.
+function AcceptedIssuersPanel() {
+  const [issuers, setIssuers] = React.useState(null);
+  const [candidate, setCandidate] = React.useState('');
+  const [msg, setMsg] = React.useState('');
+  const [busy, setBusy] = React.useState(false);
+  const [stopped, setStopped] = React.useState([]);
+  const loadReports = () => apiFetch('/api/federation/issuer-reports').then(r => r.ok ? r.json() : null).then(d => setStopped(d && Array.isArray(d.reports) ? d.reports : [])).catch(() => setStopped([]));
+  const load = () => apiFetch('/api/federation/accepted-issuers').then(r => r.ok ? r.json() : null).then(d => setIssuers(d && Array.isArray(d.issuers) ? d.issuers : null)).catch(() => setIssuers(null));
+  React.useEffect(() => { load(); loadReports(); }, []);
+  const WORDS = { accepted: 'Accepted. Offers that name this issuer are now read.', already: 'That issuer was already accepted.', 'other-charter': 'This PC holds a different charter under that id, so it was not accepted.', 'cannot-sign': 'The list could not be signed, so nothing was changed.', 'press-required': 'Accepting needs a click on this PC itself.' };
+  const accept = async () => {
+    const id = candidate.trim();
+    if (!id) { setMsg('Type the issuer id first.'); return; }
+    setBusy(true); setMsg('');
+    try {
+      const r = await apiFetch('/api/federation/accepted-issuers', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ issuer_id: id }) });
+      const d = await r.json().catch(() => ({}));
+      if (r.status === 404) setMsg('This PC holds no charter for that issuer.');
+      else if (r.status === 400) setMsg('That is not a valid issuer id.');
+      else if (r.status === 403) setMsg(WORDS['press-required']);
+      else setMsg(WORDS[d.outcome] || (d.error ? 'That did not work: ' + d.error : 'That did not work.'));
+      if (r.ok) setCandidate('');
+      await load();
+    } catch (e) { setMsg('That did not work: ' + e.message); }
+    setBusy(false);
+  };
+  const withdraw = async id => {
+    setBusy(true); setMsg('');
+    try {
+      const r = await apiFetch('/api/federation/accepted-issuers/' + encodeURIComponent(id), { method: 'DELETE' });
+      setMsg(r.ok ? 'Withdrawn. Offers that name ' + id + ' are declined again.' : r.status === 404 ? id + ' was not in the list (it may already have been withdrawn).' : 'That did not work.');
+      await load();
+    } catch (e) { setMsg('That did not work: ' + e.message); }
+    setBusy(false);
+  };
+  const dim = { fontSize: 11, color: 'rgba(255,255,255,0.45)', lineHeight: 1.6, marginBottom: 10 };
+  const rows = issuers === null ? React.createElement('div', { style: dim }, 'Could not read the accepted issuers.')
+    : issuers.length === 0 ? React.createElement('div', { style: dim, 'data-accepted-issuers-empty': '1' }, 'No issuer is accepted. This is the default.')
+    : issuers.map(i => React.createElement('div', { key: i.issuer_id, 'data-accepted-issuer': i.issuer_id, style: { display: 'flex', alignItems: 'center', gap: 10, marginBottom: 6, fontSize: 12 } },
+        React.createElement('span', { style: { flex: 1 } }, i.issuer_id + ' (' + i.unit_code + ')'),
+        React.createElement('button', { className: 'btn', disabled: busy, 'aria-label': 'Withdraw ' + i.issuer_id, onClick: () => withdraw(i.issuer_id) }, 'Withdraw')));
+  const stoppedRows = stopped.map((s, n) => React.createElement('div', { key: 'stopped' + n, role: 'alert', 'data-stopped-issuer': s.issuer_id, style: { fontSize: 12, color: '#ff8c42', marginBottom: 6 } }, 'Recorded: this PC saw a problem with the history of issuer ' + s.issuer_id + ' (sequence ' + s.seq + ': ' + s.why + '). This is a record for you to read; it does not by itself change what is accepted.'));
+  return React.createElement('div', null,
+    ...stoppedRows,
+    React.createElement('div', { style: dim }, 'Test credits only. An offer that names an issuer you have not accepted is declined before it is read. Accepting needs a click on this PC; withdrawing does not.'),
+    rows,
+    React.createElement('div', { style: { display: 'flex', gap: 6, marginTop: 8 } },
+      React.createElement('input', { className: 'input', style: { fontSize: 12, flex: 1 }, value: candidate, placeholder: 'Issuer id this PC holds a charter for', 'aria-label': 'Issuer id', onChange: e => setCandidate(e.target.value), onKeyDown: e => { if (e.key === 'Enter' && candidate.trim() && !busy) accept(); } }),
+      React.createElement('button', { className: 'btn', disabled: busy || !candidate.trim(), onClick: accept }, 'Accept this issuer')),
+    React.createElement('div', { role: 'status', 'aria-live': 'polite', style: { fontSize: 11, color: 'rgba(255,255,255,0.7)', marginTop: 8, minHeight: 14 } }, msg));
+}
 function SettingsTabFederation() {
   return /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
     style: {
@@ -63593,6 +63646,12 @@ function SettingsTabFederation() {
       lineHeight: 1.6
     }
   }, ("Connect with other " + FRIDAY_BRAND.name + " instances. Each instance has its own signed identity, and messages between them are encrypted end to end.")), /*#__PURE__*/React.createElement(FederationPanel, null), /*#__PURE__*/React.createElement("div", {
+    style: {
+      marginTop: 24
+    }
+  }, /*#__PURE__*/React.createElement(StSection, {
+    title: "Accepted issuers"
+  }, /*#__PURE__*/React.createElement(AcceptedIssuersPanel, null))), /*#__PURE__*/React.createElement("div", {
     style: {
       marginTop: 24
     }
