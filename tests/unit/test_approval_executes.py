@@ -168,6 +168,29 @@ def test_a_ledger_file_that_is_busy_for_a_few_tries_does_not_stop_an_approved_ac
     assert len(ran) == 1, "a briefly busy ledger kept an approved action from running"
 
 
+def test_a_failed_integrity_check_seen_while_the_file_was_busy_is_not_kept_for_the_retries(store, ran, monkeypatch):
+    """The strict read checks the whole ledger first (verify), and verify keeps its last answer, a failed one too, while
+    no ledger file changes. A refusal that landed there once would answer every retry the same way."""
+    from agent_friday.services import action_ledger
+    from agent_friday.services import approval_executor as ex
+    ex.register()
+    real = action_ledger._verify_files
+    refused = {"n": 0}
+
+    def busy_once(key, deep=False):
+        if refused["n"] < 1:
+            refused["n"] += 1
+            return {"ok": False, "problems": [{"segment": "live", "reason": "could not be read"}]}
+        return real(key, deep=deep)
+
+    monkeypatch.setattr(action_ledger, "_verify_files", busy_once)
+    action_ledger._STATE.pop("verified", None)
+    rec = _card(store)
+    store.decide(rec["approval_id"], "approve", decided_by="owner")
+    assert refused["n"] >= 1, "the test never refused a check"
+    assert len(ran) == 1, "a failed integrity check that was only a busy file stopped an approved action"
+
+
 def test_a_ledger_file_that_stays_busy_still_claims_nothing(store, ran, monkeypatch):
     """Fail closed: when the read never succeeds the card is not claimed and nothing runs."""
     from agent_friday.services import approval_executor as ex

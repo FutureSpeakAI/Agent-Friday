@@ -541,6 +541,13 @@ def _ledger_has(approval_id: str, kinds=_SPENT_KINDS) -> bool:
             # a few times. A real break is still there after the last try, and the read raises: not claimed.
             if attempt == _BUSY_RETRIES - 1:
                 raise
+            if attempt == 0:
+                # verify() keeps even a failed check while no ledger file changes (up to FULL_RECHECK_S), so a
+                # refusal seen while it read would answer every retry. Check the files again, once.
+                try:
+                    action_ledger.verify(force=True)
+                except Exception:  # noqa: BLE001 - the strict read below judges
+                    pass
             time.sleep(0.02 * (attempt + 1))
     return any(str((e.get("rec") or {}).get("approval") or "") == aid for e in rows)
 
