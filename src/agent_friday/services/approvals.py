@@ -535,7 +535,10 @@ def _ledger_has(approval_id: str, kinds=_SPENT_KINDS) -> bool:
         try:
             rows = action_ledger.entries(list(kinds), newest_first=False, strict=True, archive=True)
             break
-        except PermissionError:
+        except (PermissionError, action_ledger.LedgerError):
+            # A strict read reports a file Windows refused for a moment as a LedgerError (its integrity check
+            # fails first: "a break to review"), with no trace of the cause, so any LedgerError is tried again,
+            # a few times. A real break is still there after the last try, and the read raises: not claimed.
             if attempt == _BUSY_RETRIES - 1:
                 raise
             time.sleep(0.02 * (attempt + 1))
