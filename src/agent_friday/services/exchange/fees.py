@@ -6,8 +6,9 @@ Pure functions only: settlement keeps its own durable accounting in its store, s
 Rules and the tests that hold them (tests/unit/test_exchange_orders.py):
 - Each fill is planned the increment, and the increments sum to the one-order fee:
   test_the_bundle_cash_vectors_pass_through_fees.
-- In any confirmation order the sum charged never exceeds the fee on the cumulative principal (S-12):
-  test_the_fee_total_never_exceeds_the_cumulative_fee_in_any_confirmation_order.
+- A fill's fee is its planned increment; the plan intervals of confirmed fills must not overlap (S-12', design 11.1):
+  test_a_plan_charges_each_fill_its_increment_and_two_fills_from_one_starting_point_overlap, and in settlement
+  test_every_plan_of_up_to_three_fills_confirmed_in_every_order_completes_with_the_one_order_fee.
 - Only a confirmed capture may charge, in one place: services/exchange/settlement.py (its own tests).
 """
 from __future__ import annotations
@@ -31,6 +32,8 @@ def planned_increments(principals) -> list:
     return out
 
 
-def within_cumulative(charged, principals) -> bool:
-    """True when what was charged never exceeds the fee on the cumulative principal of these fills."""
-    return all(type(c) is int and c >= 0 for c in charged) and sum(charged) <= cash_fee(sum(principals))
+def plan_overlaps(intervals) -> bool:
+    """True when any two plan intervals (planned_before, principal) of an order's fills overlap: two fills planned from the
+    same starting point would each be charged the full fee. The interval is [planned_before, planned_before + principal)."""
+    spans = sorted((start, start + size) for start, size in intervals)
+    return any(spans[i][1] > spans[i + 1][0] for i in range(len(spans) - 1))
