@@ -212,3 +212,15 @@ def test_locking_a_keystore_that_already_has_the_passphrase_changes_nothing_and_
     r = client.post("/api/security/keystore/wrap", json={"wrap": "passphrase", "passphrase": PASS}, headers=_token())
     assert r.status_code == 200 and r.get_json()["wrap"] == "passphrase"
     assert calls == [] and ks.KEYSTORE_PATH.read_bytes() == before
+
+
+def test_locking_a_keystore_wrapped_under_another_passphrase_rewraps_it_under_the_one_friday_uses(client, keystore):
+    # critic's edge case on #1061: two kept homes can hold different passphrases, so "already passphrase-wrapped" is not
+    # "wrapped with the passphrase Friday resolves"; only the second is a no-op
+    ks.set_wrap("passphrase", "an older passphrase")
+    assert ks.unwrapping_passphrase() != PASS
+    r = client.post("/api/security/keystore/wrap", json={"wrap": "passphrase", "passphrase": PASS}, headers=_token())
+    assert r.status_code == 200 and r.get_json()["wrap"] == "passphrase"
+    assert ks.unwrapping_passphrase() == PASS, "the store is now wrapped under the passphrase Friday resolves"
+    ks._reset_cache_for_tests()
+    assert ks.decrypt(keystore) == b"stored credential"
