@@ -441,7 +441,7 @@ def _no_real_dpapi_for_the_keystore(monkeypatch):
         from agent_friday.services import keystore
     except Exception:
         return
-    monkeypatch.setattr(keystore, "_dpapi_available", lambda: False)
+    monkeypatch.setattr(keystore, "_dpapi_available", lambda: False, raising=False)  # absent before the DPAPI default
 
 
 @pytest.fixture(autouse=True)
