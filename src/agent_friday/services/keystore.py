@@ -35,12 +35,18 @@ So:
     credential is exactly the operation you do not want to be halfway through
     when something goes wrong.
 
-  * WRAPPED, OR NOT, AND IT SAYS WHICH. `wrap: "none"` keeps the root key in
-    the file, protected by file permissions alone, which is what makes
-    unattended start-up work. `wrap: "passphrase"` encrypts it with
-    Argon2id(passphrase) so the file is useless on its own. Both are real
-    positions and the user picks; what is not on offer is a store that claims
+  * WRAPPED, OR NOT, AND IT SAYS WHICH. `wrap: "dpapi"` (the default where
+    Windows has it) seals the root key with DPAPI under the CurrentUser scope:
+    only that Windows account on that PC can open it, so a program run by a
+    different account, or a copy of the file taken elsewhere, gets nothing,
+    and start-up stays unattended. `wrap: "passphrase"` encrypts it with
+    Argon2id(passphrase) so the file is useless on its own; that stays the
+    owner's choice. `wrap: "none"` keeps the root key in the file, protected
+    by file permissions alone: it is what a machine without DPAPI gets, and
+    what older installs have until `migrate_default_wrap()` moves them at
+    start-up (with a receipt). What is not on offer is a store that claims
     one and does the other. `describe()` reports the truth for the UI.
+    Held by tests/unit/test_keystore_dpapi_default.py.
 
   * NO SILENT DOWNGRADE. If the file says the key is wrapped and no passphrase
     is available, this raises. The old code fell through from vault to DPAPI to
@@ -104,6 +110,31 @@ def _b64(b: bytes) -> str:
 
 def _unb64(s: str) -> bytes:
     return base64.b64decode(s.encode("ascii"))
+
+
+def _dpapi_available() -> bool:
+    try:
+        from agent_friday.services import vault_passphrase as _vp
+        return bool(_vp.dpapi_available())
+    except Exception:
+        return False
+
+
+def _dpapi(data: bytes, encrypt: bool):
+    """CurrentUser DPAPI (the one helper vault_passphrase owns), or None."""
+    from agent_friday.services import vault_passphrase as _vp
+    return _vp.dpapi(data, encrypt)
+
+
+def _dpapi_doc(root: bytes) -> dict | None:
+    """The file fields for a dpapi wrap of `root`, or None when DPAPI cannot seal it and open it again here."""
+    try:
+        sealed = _dpapi(root, True)
+        if not sealed or _dpapi(sealed, False) != root:
+            return None
+        return {"wrap": "dpapi", "scope": "CurrentUser", "wrapped_key": _b64(sealed)}
+    except Exception:
+        return None
 
 
 def _read_file() -> dict | None:
@@ -213,11 +244,14 @@ def _derive(passphrase: str, salt: bytes) -> bytes:
     return _vc.derive_key(passphrase, salt)
 
 
-def create(wrap: str = "none", passphrase: str = "") -> dict:
+def create(wrap: str = "default", passphrase: str = "") -> dict:
     """Create the keystore. Refuses to overwrite an existing one.
 
     Overwriting would mint a new root key and orphan every credential encrypted
     under the old one - unrecoverably, since the old key existed nowhere else.
+
+    `wrap="default"` is dpapi where Windows has it (and can open what it sealed
+    here), else none; a caller that asks for "none" or "passphrase" gets that.
     """
     with _LOCK:
         if KEYSTORE_PATH.exists():
@@ -237,7 +271,8 @@ def create(wrap: str = "none", passphrase: str = "") -> dict:
                 "check": _b64(_vc.encrypt(_CHECK_PLAINTEXT, key)),
             })
         else:
-            doc.update({"wrap": "none", "key": _b64(root)})
+            sealed = _dpapi_doc(root) if wrap == "default" and _dpapi_available() else None
+            doc.update(sealed or {"wrap": "none", "key": _b64(root)})
         # Created only if no other process made one in the meantime: two first
         # uses at once must not leave each holding a different root key.
         from agent_friday.services.credential_store import create_exclusive
@@ -265,7 +300,7 @@ def root_key(use_cache: bool = True) -> bytes:
                 raise RuntimeError("the keystore is present but cannot be read; "
                                    "refusing to replace it with a new root key")
             try:
-                create(wrap="none")
+                create()
                 return _CACHED_KEY                  # set by create()
             except FileExistsError:
                 # another process created it first: use its key, not a new one
@@ -278,6 +313,17 @@ def root_key(use_cache: bool = True) -> bytes:
             if len(key) != 32:
                 raise RuntimeError("the keystore is present but its root key is "
                                    "malformed; refusing to guess")
+            _CACHED_KEY = key
+            return key
+        if wrap == "dpapi":
+            try:
+                key = _dpapi(_unb64(doc.get("wrapped_key") or ""), False)
+            except Exception:
+                key = None
+            if not key or len(key) != 32:
+                raise KeystoreLocked(
+                    "Friday's keystore is tied to the Windows account that made it, and this account cannot open "
+                    "it. Restore from a Friday backup, or sign in as that account. Nothing was changed.")
             _CACHED_KEY = key
             return key
         if wrap != "passphrase":
@@ -320,7 +366,7 @@ def set_wrap(wrap: str, passphrase: str = "") -> dict:
         doc.update({"version": 1, "cipher": "aes-256-gcm",
                     "created": doc.get("created") or _now(),
                     "rewrapped": _now()})
-        for k in ("key", "wrapped_key", "salt_hex", "kdf", "check"):
+        for k in ("key", "wrapped_key", "salt_hex", "kdf", "check", "scope"):
             doc.pop(k, None)
         if wrap == "passphrase":
             if not passphrase:
@@ -331,12 +377,91 @@ def set_wrap(wrap: str, passphrase: str = "") -> dict:
                         "salt_hex": salt.hex(),
                         "wrapped_key": _b64(_vc.encrypt(root, key)),
                         "check": _b64(_vc.encrypt(_CHECK_PLAINTEXT, key))})
+        elif wrap == "dpapi":
+            sealed = _dpapi_doc(root) if _dpapi_available() else None
+            if sealed is None:
+                raise ValueError("Windows protection for this account is not available here")
+            doc.update(sealed)
         elif wrap == "none":
             doc.update({"wrap": "none", "key": _b64(root)})
         else:
-            raise ValueError("wrap must be 'none' or 'passphrase'")
+            raise ValueError("wrap must be 'dpapi', 'none' or 'passphrase'")
         _write_file(doc)
         return describe()
+
+
+def migrate_default_wrap() -> str:
+    """Move an unwrapped (`wrap: "none"`) keystore to the default wrap where DPAPI exists. Called once at start-up.
+
+    The SAME root key is kept (every credential sealed under it still opens). The new wrap is proven to open before the
+    file is replaced, and the file is restored if it does not read back as the same key. One receipt on the action ledger
+    says what changed (never the key). Returns "migrated", "already" (nothing to do), "passphrase" (the owner's choice is
+    left alone), "unavailable" (no DPAPI here), "absent" (no keystore yet) or "failed" (file untouched).
+    """
+    with _LOCK:
+        doc = _read_file()
+        if doc is None:
+            return "absent"
+        wrap = doc.get("wrap") or "none"
+        if wrap == "dpapi":
+            return "already"
+        if wrap == "passphrase":
+            return "passphrase"
+        if wrap != "none" or not _dpapi_available():
+            return "unavailable"
+        try:
+            root = _unb64(doc.get("key") or "")
+            if len(root) != 32:
+                return "failed"
+            sealed = _dpapi_doc(root)
+            if sealed is None:
+                return "failed"
+            original = KEYSTORE_PATH.read_bytes()
+            new = {k: v for k, v in doc.items() if k != "key"}
+            new.update(sealed)
+            new["rewrapped"] = _now()
+            _write_file(new)
+            try:
+                ok = root_key(use_cache=False) == root
+            except Exception:
+                ok = False
+            if not ok:
+                from agent_friday.services.credential_store import harden_permissions
+                KEYSTORE_PATH.write_bytes(original)
+                harden_permissions(KEYSTORE_PATH)
+                return "failed"
+        except Exception:
+            return "failed"
+        try:
+            from agent_friday.services import action_ledger
+            action_ledger.try_append("keystore_wrap", {"event": "wrapped", "from": "none", "to": "dpapi",
+                                                       "scope": "CurrentUser", "by": "start-up"})
+        except Exception:
+            pass
+        return "migrated"
+
+
+def portable_bytes(raw: bytes):
+    """The keystore file as it may travel in a backup bundle: a Windows-account (dpapi) wrap is opened here and written as
+    an unwrapped file (the bundle's own passphrase protects it, and the PC that restores it wraps it again at start-up).
+    Any other wrap is returned as it is. None when a dpapi wrap cannot be opened by this account, so the caller reports the
+    keystore as not carried instead of carrying something that cannot be opened. Held by
+    tests/unit/test_keystore_dpapi_default.py."""
+    try:
+        doc = json.loads(raw.decode("utf-8"))
+    except Exception:
+        return raw
+    if not isinstance(doc, dict) or doc.get("wrap") != "dpapi":
+        return raw
+    try:
+        root = _dpapi(_unb64(doc.get("wrapped_key") or ""), False)
+    except Exception:
+        root = None
+    if not root or len(root) != 32:
+        return None
+    out = {k: v for k, v in doc.items() if k not in ("wrapped_key", "scope")}
+    out.update({"wrap": "none", "key": _b64(root)})
+    return json.dumps(out, indent=2).encode("utf-8")
 
 
 def encrypt(data: bytes) -> bytes:
@@ -385,6 +510,7 @@ def describe() -> dict:
         "summary": (
             "Locked - " + detail if not unlocked else
             "Protected by your passphrase" if wrap == "passphrase" else
+            "Protected by your Windows account (only this account on this PC can open it)" if wrap == "dpapi" else
             "Protected by file permissions on this machine"),
     }
 

@@ -29,6 +29,7 @@ import agent_friday.core as core
 from agent_friday.services.agent import (
     _vault_read_text,
     _vault_write_text,
+    VaultKeyMissing,
 )  # noqa: E501
 from agent_friday.services.misc_engine import (
     FINANCE_DIR,
@@ -37,6 +38,16 @@ from agent_friday.services.misc_engine import (
 from agent_friday.routes._errors import api_error
 
 fh_bp = Blueprint('finance_health', __name__)
+
+
+def _create_template(path, template):
+    """Write a first-use template into the vault. With no vault key nothing is written and the owner's plain line comes back
+    (status 409) instead of a plain-text file (tests/unit/test_vault_refuses_plaintext.py); None when it was saved."""
+    try:
+        _vault_write_text(path, json.dumps(template, indent=2))
+    except VaultKeyMissing as exc:
+        return api_error(exc, "Couldn't save the template", 409)
+    return None
 
 
 @fh_bp.route('/api/finance/portfolio')
@@ -51,7 +62,9 @@ def finance_portfolio():
             return api_error(e, "Couldn't load the portfolio", 200)
     # Create template if missing — generic placeholders, no personal data.
     template = {"positions": [{"ticker": "EXMPL", "shares": 0, "cost_basis": 0}], "accounts": ["Your Brokerage Account"]}
-    _vault_write_text(path, json.dumps(template, indent=2))
+    refused = _create_template(path, template)
+    if refused:
+        return refused
     return jsonify({"status": "ok", **template})
 
 @fh_bp.route('/api/finance/perks')
@@ -65,7 +78,9 @@ def finance_perks():
         except Exception as e:
             return api_error(e, "Couldn't load the perks", 200)
     template = {"perks": [{"name": "Perk name", "value": "$X/yr", "used": False, "expires": "", "notes": ""}]}
-    _vault_write_text(path, json.dumps(template, indent=2))
+    refused = _create_template(path, template)
+    if refused:
+        return refused
     return jsonify({"status": "ok", **template})
 
 @fh_bp.route('/api/finance/contacts')
@@ -97,7 +112,9 @@ def health_medications():
         except Exception as e:
             return api_error(e, "Couldn't load the medications", 200)
     template = {"medications": [{"name": "Example Medication", "dose": "", "frequency": "", "notes": ""}]}
-    _vault_write_text(path, json.dumps(template, indent=2))
+    refused = _create_template(path, template)
+    if refused:
+        return refused
     return jsonify({"status": "ok", **template})
 
 @fh_bp.route('/api/health/appointments')
@@ -111,7 +128,9 @@ def health_appointments():
         except Exception as e:
             return api_error(e, "Couldn't load the appointments", 200)
     template = {"appointments": [{"provider": "", "type": "", "email": "", "next": "", "frequency": ""}]}
-    _vault_write_text(path, json.dumps(template, indent=2))
+    refused = _create_template(path, template)
+    if refused:
+        return refused
     return jsonify({"status": "ok", **template})
 
 @fh_bp.route('/api/health/insurance')
@@ -125,7 +144,9 @@ def health_insurance():
         except Exception as e:
             return api_error(e, "Couldn't load the insurance details", 200)
     template = {"insurance": {"provider": "Your Insurance Provider", "plan": "Add your plan name", "policy_number": "Add your policy number", "group_number": "Add your group number"}}
-    _vault_write_text(path, json.dumps(template, indent=2))
+    refused = _create_template(path, template)
+    if refused:
+        return refused
     return jsonify({"status": "ok", **template})
 
 @fh_bp.route('/api/health/vehicles')
@@ -139,5 +160,7 @@ def health_vehicles():
         except Exception as e:
             return api_error(e, "Couldn't load the vehicles", 200)
     template = {"vehicles": [{"name": "Your Vehicle", "miles": "", "notes": "", "mechanic": "", "service_history": []}], "mechanics": []}
-    _vault_write_text(path, json.dumps(template, indent=2))
+    refused = _create_template(path, template)
+    if refused:
+        return refused
     return jsonify({"status": "ok", **template})

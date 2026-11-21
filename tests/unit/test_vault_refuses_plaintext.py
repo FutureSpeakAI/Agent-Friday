@@ -6,7 +6,7 @@ file that already exists is unchanged (an old plain copy must stay readable unti
   1. no key: nothing is written (no file, no temp file), the error is a UserFacingError with one plain sentence;
   2. with a key the file is still encrypted and reads back (the refusal is only for the keyless case);
   3. a plain file that is already there still reads;
-  4. the route that creates a finance template answers 409 with that sentence and leaves no plain file behind.
+  (the route that creates a finance template is held by tests/api/test_vault_refuses_plaintext_route.py)
 """
 import pytest
 
@@ -46,12 +46,3 @@ def test_a_plain_file_that_is_already_there_still_reads(tmp_path, monkeypatch):
     p.write_text('{"legacy": true}', encoding="utf-8")
     assert agent._vault_read_text(p) == '{"legacy": true}'
 
-
-def test_the_finance_template_route_says_it_did_not_save_and_leaves_no_plain_file(client, tmp_path, monkeypatch):
-    from agent_friday.routes import finance_health as fh
-    _set_key(monkeypatch, None)
-    monkeypatch.setattr(fh, "FINANCE_DIR", tmp_path)
-    r = client.get("/api/finance/portfolio")
-    assert r.status_code == 409, r.get_data(as_text=True)[:300]
-    assert "plain text" in r.get_data(as_text=True)
-    assert not (tmp_path / "portfolio.json").exists()

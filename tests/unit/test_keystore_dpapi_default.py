@@ -21,6 +21,7 @@ import pytest
 
 from agent_friday.services import action_ledger as L
 from agent_friday.services import keystore as ks
+from tests.unit.test_friday_bundle import homes  # noqa: F401 - the two-PC fixture
 
 
 def _fake_dpapi(account="alice"):
@@ -126,3 +127,42 @@ def test_the_owner_can_still_choose_a_passphrase_wrap_from_dpapi_and_go_back(sto
     assert _doc()["wrap"] == "dpapi"
     ks._reset_cache_for_tests()
     assert ks.root_key() == root
+
+
+# ── backups: a Windows-account wrap cannot be opened on another PC ───────────
+
+def test_portable_bytes_opens_a_dpapi_wrap_leaves_other_wraps_and_refuses_one_it_cannot_open(store, monkeypatch):
+    root = ks.root_key()
+    portable = json.loads(ks.portable_bytes(ks.KEYSTORE_PATH.read_bytes()))
+    assert portable["wrap"] == "none" and base64.b64decode(portable["key"]) == root and "wrapped_key" not in portable
+    plain = json.dumps({"wrap": "none", "key": base64.b64encode(root).decode()}).encode()
+    assert ks.portable_bytes(plain) == plain
+    other = _fake_dpapi("bob")
+    monkeypatch.setattr(ks, "_dpapi", other, raising=False)
+    assert ks.portable_bytes(ks.KEYSTORE_PATH.read_bytes()) is None, "another account cannot open it: not carried"
+
+
+def test_a_bundle_made_on_one_pc_restores_on_another_and_start_up_wraps_it_there(homes, tmp_path, monkeypatch):
+    from agent_friday.services import friday_bundle as fb
+    from tests.unit.test_friday_bundle import PASS, _make, _point_at
+    a, b, _key = homes
+    monkeypatch.setattr(ks, "_CACHED_KEY", None)
+    monkeypatch.setattr(ks, "_passphrase", lambda: "")
+    monkeypatch.setattr(ks, "_dpapi", _fake_dpapi("alice"), raising=False)
+    monkeypatch.setattr(ks, "_dpapi_available", lambda: True, raising=False)
+    monkeypatch.setattr(ks, "KEYSTORE_PATH", a / "security" / "keystore.json")
+    (a / "security" / "keystore.json").unlink()
+    root = ks.root_key()
+    assert json.loads((a / "security" / "keystore.json").read_text())["wrap"] == "dpapi"
+    out = tmp_path / "x.fridaybundle"
+    _make(a, out)
+    # the other PC: another Windows account, the restored file must open and be wrapped again at start-up
+    _point_at(b, monkeypatch)
+    fb.restore(out, PASS, home=b)
+    monkeypatch.setattr(ks, "_dpapi", _fake_dpapi("carol"), raising=False)
+    monkeypatch.setattr(ks, "KEYSTORE_PATH", b / "security" / "keystore.json")
+    ks._reset_cache_for_tests()
+    assert json.loads(ks.KEYSTORE_PATH.read_text())["wrap"] == "none", "the bundle carried the portable form"
+    assert ks.migrate_default_wrap() == "migrated"
+    ks._reset_cache_for_tests()
+    assert json.loads(ks.KEYSTORE_PATH.read_text())["wrap"] == "dpapi" and ks.root_key() == root

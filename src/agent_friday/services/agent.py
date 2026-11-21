@@ -13796,19 +13796,19 @@ def _get_vault_key() -> bytes | None:
         if not _passphrase:
             _VAULT_ENCRYPTION_STATE["enabled"] = False
             _VAULT_ENCRYPTION_STATE["warning"] = (
-                "Vault encryption is DISABLED — sensitive data is stored as plaintext at rest. "
+                "Vault encryption is OFF — new vault files are refused, not stored as plain text. "
                 "Set FRIDAY_VAULT_PASSPHRASE or run: friday vault-setup"
             )
             _vlog.warning(
-                "[vault] FRIDAY_VAULT_PASSPHRASE not set — sensitive data stored "
-                "as PLAINTEXT at rest. Set the env var or run: friday vault-setup"
+                "[vault] FRIDAY_VAULT_PASSPHRASE not set — vault writes are refused "
+                "(never stored as plain text). Set the env var or run: friday vault-setup"
             )
         else:
             _VAULT_ENCRYPTION_STATE["enabled"] = False
             _VAULT_ENCRYPTION_STATE["error"] = "vault_crypto module unavailable"
             _vlog.error(
                 "[vault] vault_crypto/cryptography unavailable — "
-                "sensitive data stored as PLAINTEXT at rest."
+                "vault writes are refused (never stored as plain text)."
             )
         _VAULT_KEY = None
         return None
@@ -13867,14 +13867,29 @@ def _vault_read_text(path) -> str:
     return raw.decode("utf-8")
 
 
+from agent_friday.user_errors import UserFacingError as _UserFacingError  # noqa: E402
+
+
+class VaultKeyMissing(_UserFacingError, RuntimeError):
+    """No key resolves for the document vault, so a write would have stored plain text. The message is the one plain line
+    the owner sees. Held by tests/unit/test_vault_refuses_plaintext.py."""
+
+    status = 409
+
+
+VAULT_KEY_MISSING_LINE = ("Not saved: there is no key to protect this file, and it would have been stored as plain text. "
+                          "Set a vault passphrase (run: friday vault-setup) and try again.")
+
+
 def _vault_write_text(path, text: str) -> None:
-    """Write text, encrypting at rest when a vault key is available. Atomic."""
+    """Write text encrypted at rest. Atomic. With no vault key it writes nothing and raises VaultKeyMissing: a file that is
+    meant to be private is never stored as plain text because a key was missing."""
     p = Path(path)
-    p.parent.mkdir(parents=True, exist_ok=True)
-    data = text.encode("utf-8")
     key = _get_vault_key()
-    if key is not None:
-        data = _vc.encrypt(data, key)
+    if key is None:
+        raise VaultKeyMissing(VAULT_KEY_MISSING_LINE)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    data = _vc.encrypt(text.encode("utf-8"), key)
     tmp = p.with_name(p.name + ".tmp")
     tmp.write_bytes(data)
     tmp.replace(p)
