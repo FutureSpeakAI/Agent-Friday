@@ -168,7 +168,8 @@ class Refunded:
 
 
 class ProviderStatus(str, Enum):
-    UNKNOWN = "unknown"
+    UNKNOWN = "unknown"          # the provider has never heard of this key: nothing happened
+    UNREACHABLE = "unreachable"  # the provider could not be asked: nothing is known
     RESERVED = "reserved"
     CAPTURED = "captured"
     RELEASED = "released"
@@ -206,7 +207,7 @@ class Provider(Protocol):
 
     def release(self, key: str, reservation_ref: str, amount_minor: int) -> "Released | Refused | Uncertain": ...
 
-    def payout(self, key: str, seller_ref: str, amount_minor: int) -> "PayoutPending | Refused | Uncertain": ...
+    def payout(self, key: str, capture_ref: str, seller_ref: str, amount_minor: int) -> "PayoutPending | Refused | Uncertain": ...
 
     def refund(self, key: str, capture_ref: str, amount_minor: int, reason: str
                ) -> "Refunded | Refused | Uncertain": ...
