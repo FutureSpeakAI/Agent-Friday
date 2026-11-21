@@ -92,6 +92,15 @@ def test_a_bracket_that_only_looks_like_the_start_of_a_fence_is_spoken_after_all
     assert "doctor Dana's office" in out and "now." in out, out
 
 
+@pytest.mark.parametrize("unit", ["[a", "[", "[a ", "[document content below"])
+def test_bracket_dense_text_is_linear_in_one_feed(unit):
+    t = time.perf_counter()
+    f = DeltaFilter()
+    f.feed(unit * (200000 // len(unit)))
+    f.flush()
+    assert time.perf_counter() - t < 1.5, unit
+
+
 def test_long_unpunctuated_text_is_not_quadratic():
     big = ("a " * 50000)
     t = time.perf_counter()
