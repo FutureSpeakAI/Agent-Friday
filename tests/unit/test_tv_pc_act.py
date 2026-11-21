@@ -36,10 +36,11 @@ def _clean(tmp_path, monkeypatch):
 
 class Desk:
     def __init__(self):
-        self.posts, self.status, self.body, self.boom = [], 200, {"ok": True}, None
+        self.posts, self.bodies, self.status, self.body, self.boom = [], [], 200, {"ok": True}, None
 
-    def __call__(self, path):
+    def __call__(self, path, body=None):
         self.posts.append(path)
+        self.bodies.append(body)
         if self.boom:
             raise self.boom
         return self.status, self.body
@@ -265,3 +266,22 @@ def test_a_quiet_job_still_ends_the_stream_when_the_right_is_withdrawn(client, j
     monkeypatch.setattr(pc_act, "_desk_stream", quiet)
     status, text = read_stream(client, tv)
     assert text == ": keepalive\n\nevent: revoked\ndata: {}\n\n" and len(rounds) == 2
+
+
+def test_a_rerun_is_sent_to_the_pc_with_the_device_as_its_origin_and_nothing_else_from_the_device(client, desk):
+    tv = device()
+    post(client, tv, "/tv/v1/jobs/j1/rerun")
+    assert desk.posts == ["/api/tasks/j1/rerun"]
+    assert desk.bodies == [{"origin": "device:%s" % tv.id}]
+
+
+@pytest.mark.parametrize("action", ["stop-after-step", "resume"])
+def test_stop_and_resume_send_no_body(client, desk, action):
+    post(client, device(), "/tv/v1/jobs/j1/" + action)
+    assert desk.bodies == [None]
+
+
+def test_a_rerun_the_pc_refuses_for_the_cap_is_passed_on_in_its_words(client, desk):
+    desk.status, desk.body = 409, {"ok": False, "error": "3 jobs from your devices are already running; wait for one to finish"}
+    answer = post(client, device(), "/tv/v1/jobs/j1/rerun")
+    assert answer.status_code == 409 and "already running" in answer.get_json()["error"]
