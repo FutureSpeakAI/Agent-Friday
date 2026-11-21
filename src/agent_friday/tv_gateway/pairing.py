@@ -451,6 +451,7 @@ def _register() -> None:
     from agent_friday.services import approvals
     approvals.register_decision_hook(KIND, _on_decision)
     approvals.register_decision_hook(RIGHT_KIND, _on_right_decision)
+    device_pairing.on_pairing_window(opened=reset_budget, closed=end_in_flight)
 
 
 _register()

@@ -198,6 +198,27 @@ def _window_receipt(kind: str, by: str, **extra) -> None:
         pass
 
 
+_WINDOW_HOOKS = {"open": [], "close": []}
+
+
+def on_pairing_window(*, opened=None, closed=None) -> None:
+    """The gateway's pairing flow registers what it does when the window opens (forget what strangers used up) and
+    closes (end a pairing not yet pressed). Registered from tv_gateway/pairing, so this service never imports the
+    gateway (tests/unit/test_tv_pc_approve_key.py holds that line)."""
+    if opened is not None and opened not in _WINDOW_HOOKS["open"]:
+        _WINDOW_HOOKS["open"].append(opened)
+    if closed is not None and closed not in _WINDOW_HOOKS["close"]:
+        _WINDOW_HOOKS["close"].append(closed)
+
+
+def _run_window_hooks(which: str) -> None:
+    for hook in list(_WINDOW_HOOKS[which]):
+        try:
+            hook()
+        except Exception:
+            pass
+
+
 def open_pairing_window(seconds: float = 300, by: str = "owner:desk") -> dict:
     """Open pairing for ``seconds`` (clamped to 30 s .. 15 min). Callers prove the owner is at the PC."""
     global _WINDOW_UNTIL
@@ -208,8 +229,7 @@ def open_pairing_window(seconds: float = 300, by: str = "owner:desk") -> dict:
     secs = max(PAIRING_WINDOW_MIN_S, min(PAIRING_WINDOW_MAX_S, secs))
     with _LOCK:
         _WINDOW_UNTIL = time.time() + secs
-    from agent_friday.tv_gateway import pairing
-    pairing.reset_budget()
+    _run_window_hooks("open")
     _window_receipt("pairing_window_opened", by, seconds=int(secs))
     return pairing_window()
 
@@ -219,8 +239,7 @@ def close_pairing_window(by: str = "owner:desk") -> dict:
     with _LOCK:
         was_open = _WINDOW_UNTIL > time.time()
         _WINDOW_UNTIL = 0.0
-    from agent_friday.tv_gateway import pairing
-    pairing.end_in_flight()
+    _run_window_hooks("close")
     if was_open:
         _window_receipt("pairing_window_closed", by)
     return pairing_window()
