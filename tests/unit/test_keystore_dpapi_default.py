@@ -166,3 +166,81 @@ def test_a_bundle_made_on_one_pc_restores_on_another_and_start_up_wraps_it_there
     assert ks.migrate_default_wrap() == "migrated"
     ks._reset_cache_for_tests()
     assert json.loads(ks.KEYSTORE_PATH.read_text())["wrap"] == "dpapi" and ks.root_key() == root
+
+
+# ── critic on b832bcc4a: error paths, the restore branch, describe(), honest wording ─────────────────────────
+
+def test_a_failed_passphrase_wrap_puts_back_the_wrap_it_found_not_a_plain_key(store, monkeypatch):
+    from agent_friday.services import keystore_offer as offer
+    root = ks.root_key()
+    assert _doc()["wrap"] == "dpapi"
+    monkeypatch.setattr(offer, "passphrase_is_kept", lambda pw: True)
+    real = ks.root_key
+    calls = {"n": 0}
+
+    def fails_on_the_proof(use_cache=True):
+        calls["n"] += 1
+        if not use_cache:
+            raise RuntimeError("the next start could not unwrap it")
+        return real(use_cache)
+    monkeypatch.setattr(ks, "root_key", fails_on_the_proof)
+    ok, _why = offer.protect_keystore("correct horse")
+    assert ok is False and _doc()["wrap"] == "dpapi" and "key" not in _doc(), "never downgraded to a plain key on disk"
+    monkeypatch.setattr(ks, "root_key", real)
+    ks._reset_cache_for_tests()
+    assert ks.root_key() == root
+
+
+def test_the_owner_removing_the_passphrase_goes_to_the_default_wrap(store):
+    ks.set_wrap("passphrase", "correct horse")
+    ks.set_wrap("default")
+    assert _doc()["wrap"] == "dpapi" and "key" not in _doc()
+
+
+def test_migration_whose_proof_fails_after_the_write_restores_the_file_and_the_cached_key(store, monkeypatch):
+    root, _sealed = _old_none_keystore(monkeypatch)
+    ks.root_key()
+    before = ks.KEYSTORE_PATH.read_bytes()
+    seen = {"n": 0}
+    real = _fake_dpapi()
+
+    def wrong_key_on_the_third_open(data, encrypt):
+        if not encrypt:
+            seen["n"] += 1
+            if seen["n"] >= 2:                       # the check inside _dpapi_doc is the first; the proof is the next
+                return b"\x07" * 32
+        return real(data, encrypt)
+    monkeypatch.setattr(ks, "_dpapi", wrong_key_on_the_third_open, raising=False)
+    assert ks.migrate_default_wrap() == "failed"
+    assert ks.KEYSTORE_PATH.read_bytes() == before and json.loads(before)["wrap"] == "none"
+    assert ks._CACHED_KEY == root, "the process keeps the key the file still holds"
+    assert L.entries(["keystore_wrap"]) == []
+
+
+def test_migration_leaves_a_file_another_process_changed_meanwhile_alone(store, monkeypatch):
+    _old_none_keystore(monkeypatch)
+    real_doc = ks._dpapi_doc
+
+    def another_process_wraps_with_a_passphrase_first(root):
+        sealed = real_doc(root)
+        ks.set_wrap("passphrase", "correct horse")
+        return sealed
+    monkeypatch.setattr(ks, "_dpapi_doc", another_process_wraps_with_a_passphrase_first)
+    assert ks.migrate_default_wrap() == "failed"
+    assert _doc()["wrap"] == "passphrase", "the owner's passphrase choice is not overwritten"
+
+
+def test_describe_says_locked_for_a_dpapi_keystore_this_account_cannot_open(store, monkeypatch):
+    ks.root_key()
+    ks._reset_cache_for_tests()
+    monkeypatch.setattr(ks, "_dpapi", _fake_dpapi("bob"), raising=False)
+    d = ks.describe()
+    assert d["unlocked"] is False and d["summary"].startswith("Locked")
+
+
+def test_the_dpapi_wording_names_what_it_does_not_stop(store):
+    summary = ks.describe()["summary"] if ks.root_key() else ""
+    assert "running as you" in summary or "same account" in summary, summary
+    from agent_friday.services import privacy_map
+    state, words = privacy_map._enc_keys()
+    assert state == "partly" and "running as you" in words and "passphrase" in words
