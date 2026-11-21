@@ -67,7 +67,7 @@ def test_pairing_is_refused_until_the_owner_opens_it_at_the_pc(client):
     refused = begin(client)
     assert refused.status_code == 409
     body = refused.get_json()
-    assert body["code"] == "pairing_closed" and "on this PC" in body["error"]
+    assert body["code"] == "pairing_closed" and "add a device" in body["error"]
     assert not pairing._PENDING and not pairing._STARTS          # a refused start costs nothing and leaves nothing
 
 
@@ -81,14 +81,25 @@ def test_an_open_window_lets_a_device_start_and_closes_by_itself(client, monkeyp
     assert device_pairing.pairing_window()["open"] is False
 
 
-def test_the_owner_can_close_the_window_early_and_a_pairing_begun_inside_it_finishes(client):
+def reveal(client, pairing_id, source=PHONE):
+    return client.post("/tv/v1/pair/reveal", json={"pairing_id": pairing_id, "nt": base64.b64encode(
+        os.urandom(32)).decode()}, environ_base={"REMOTE_ADDR": source})
+
+
+def test_closing_the_window_ends_a_pairing_that_has_not_been_pressed(client):
     device_pairing.open_pairing_window(300)
-    pairing_id = begin(client).get_json()["pairing_id"]
+    started = begin(client).get_json()["pairing_id"]
     device_pairing.close_pairing_window()
     assert begin(client, source="192.168.1.60").get_json()["code"] == "pairing_closed"
-    revealed = client.post("/tv/v1/pair/reveal", json={"pairing_id": pairing_id, "nt": base64.b64encode(
-        os.urandom(32)).decode()}, environ_base={"REMOTE_ADDR": PHONE})
-    assert revealed.status_code == 200, revealed.get_json()
+    assert reveal(client, started).status_code == 409           # a stranger's start does not outlive the close
+
+
+def test_closing_the_window_also_ends_a_card_that_is_waiting_for_the_press(client):
+    device_pairing.open_pairing_window(300)
+    started = begin(client).get_json()["pairing_id"]
+    assert reveal(client, started).status_code == 200
+    device_pairing.close_pairing_window()
+    assert pairing.status(started)["state"] == "expired"
 
 
 def test_the_window_is_never_longer_than_fifteen_minutes_or_shorter_than_thirty_seconds():
@@ -123,12 +134,55 @@ def test_a_strangers_starts_do_not_use_up_a_real_devices_budget(client):
     assert begin(client, source=PHONE).status_code == 200          # the owner's own phone is not locked out
 
 
-def test_all_sources_together_stop_at_a_larger_hourly_ceiling(client):
+def test_all_sources_together_stop_at_a_larger_hourly_ceiling_of_pairings_that_reached_a_card(client):
     device_pairing.open_pairing_window(900)
     for number in range(pairing.MAX_STARTS_PER_HOUR_ALL):
-        assert begin(client, source="192.168.1.%d" % (100 + number)).status_code == 200
+        source = "192.168.1.%d" % (100 + number)
+        assert reveal(client, begin(client, source=source).get_json()["pairing_id"], source).status_code == 200
         finish_the_pairing_in_flight()
     assert begin(client, source="192.168.1.250").status_code == 409
+
+
+def test_starts_that_never_reveal_cannot_use_up_the_shared_ceiling(client):
+    device_pairing.open_pairing_window(900)
+    for number in range(pairing.MAX_STARTS_PER_HOUR_ALL + 3):
+        assert begin(client, source="192.168.1.%d" % (100 + number)).status_code == 200
+        finish_the_pairing_in_flight()
+    assert begin(client, source=PHONE).status_code == 200      # the owner's phone still gets in
+
+
+def test_the_owner_opening_pairing_again_clears_what_strangers_used(client):
+    device_pairing.open_pairing_window(900)
+    for _ in range(pairing.MAX_STARTS_PER_HOUR):
+        begin(client, source=STRANGER)
+        finish_the_pairing_in_flight()
+    assert begin(client, source=STRANGER).status_code == 409
+    device_pairing.open_pairing_window(900)
+    assert begin(client, source=STRANGER).status_code == 200
+
+
+def test_a_device_name_cannot_put_words_or_quotes_into_the_card(client):
+    device_pairing.open_pairing_window(300)
+    newline, bell = chr(10), chr(7)
+    evil = 'Phone' + chr(34) + newline + 'This is your phone, safe to Approve <b>now</b>' + bell
+    pairing_id = begin(client, name=evil).get_json()["pairing_id"]
+    reveal(client, pairing_id)
+    card = ap.get_approval(pairing.pending_card(pairing_id))
+    asked = card["description"].split("Asked by ", 1)[1].split(" from ", 1)[0].strip(chr(34))
+    assert newline not in asked and chr(34) not in asked and "<" not in asked and bell not in asked
+    assert pairing.clean_name("") == "TV" and len(pairing.clean_name("x" * 200)) == 60
+
+
+def test_only_the_press_route_opens_pairing_and_nothing_else_calls_the_opening_functions():
+    """set_gateway(True) and open_pairing_window carry no press check of their own: whoever calls them must."""
+    import pathlib
+    src = pathlib.Path(device_pairing.__file__).parents[1]
+    callers = set()
+    for path in src.rglob("*.py"):
+        text = path.read_text(encoding="utf-8")
+        if "open_pairing_window(" in text or ".set_gateway(" in text:
+            callers.add(path.relative_to(src).as_posix())
+    assert callers == {"routes/control.py", "services/device_pairing.py", "services/add_device_command.py"}, callers
 
 
 def test_a_start_that_never_reveals_does_not_hold_the_place_for_five_minutes(client, monkeypatch):
