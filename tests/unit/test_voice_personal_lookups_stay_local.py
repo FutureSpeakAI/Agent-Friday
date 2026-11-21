@@ -42,7 +42,35 @@ PERSONAL_PHRASINGS = STORE_LOOKUPS + [
     "look up my online order status",
     "look up my Google Drive files",
     "look up Acme",
+    "look up the weather at Dana's house",
+    "look up the distance to Dana's house",
+    "look up the time zone for Dana",
+    "look up the weather and Dana's address",
+    "look up the weather in Paris and where Dana lives",
+    "look up the weather where Dana lives",
+    "look up population of Canada and Stephen's address",
+    "look up the definition of Dana",
+    "look up the forecast for Stephen's wedding",
+    "look up recipe for grandma's cake",
 ]
+
+
+def test_a_topic_word_beside_a_person_is_not_a_public_question():
+    for text in PERSONAL_PHRASINGS:
+        r = lr.rule_route(text)
+        assert r is None or r.tool != "search_web" or r.decision != "tool", text
+
+
+@pytest.mark.parametrize("text,not_tool", [
+    ("check my email for messages from my contacts", "search_wiki"),
+    ("find the pdf from my contacts folder", "search_wiki"),
+    ("find the file about taxes in the wiki", "search_wiki"),
+    ("check the memory for leaks", "search_wiki"),
+    ("find news about Ukraine in my notes", "search_wiki"),
+])
+def test_a_lookup_that_names_another_tools_thing_keeps_that_tool(text, not_tool):
+    r = lr.rule_route(text)
+    assert r is None or r.tool != not_tool, r
 
 
 @pytest.mark.parametrize("text", STORE_LOOKUPS)
