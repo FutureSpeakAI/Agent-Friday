@@ -136,6 +136,35 @@ def test_the_web_runs_when_the_owner_directs_it_there(text):
     assert r is not None and r.decision == "tool" and r.tool == "search_web", r
 
 
+_LOOKUPS = ["look up Dana", "search for Dana", "find Dana", "look up Dana Whitfield"]
+_NEGATIONS = ["dont use", "don't use", "do not use", "never use", "avoid", "skip", "stay off", "off", "instead of",
+              "rather than", "other than", "except", "ignore", "forget", "leave out", "minus", "excluding", "w/o",
+              "with out", "wihtout", "without", "nothing from", "no", "not on", "not from"]
+_WEBS = ["the web", "the internet", "online"]
+
+
+def test_a_walk_over_negation_forms_and_web_words_never_reaches_the_web():
+    """Generated, not hand-listed: every lookup x negation x web word, in both orders."""
+    for lookup in _LOOKUPS:
+        for neg in _NEGATIONS:
+            for web in _WEBS:
+                for text in (f"{lookup} {neg} {web}", f"{neg} {web}, {lookup}", f"{lookup}, {neg} {web} please"):
+                    r = lr.rule_route(text)
+                    assert r is None or r.tool != "search_web" or r.decision != "tool", text
+
+
+@pytest.mark.parametrize("text", [
+    "look up the internet bill", "look up the internet password for my router", "look up the web designer I hired",
+    "look up the web developer Dana", "search for the internet bill", "look up the web page Dana sent me",
+    "look up the web hosting login", "look up Dana from the web team", "look up the internet provider's number",
+    "google Dana in the knowledge graph", "google Dana in the vault", "google Dana in contacts",
+    "google Dana from the address book", "google Dana in memory", "look up my weather", "look up my forecast",
+])
+def test_the_web_or_internet_as_a_noun_in_the_owners_own_things_is_not_a_directive(text):
+    r = lr.rule_route(text)
+    assert r is None or r.tool != "search_web" or r.decision != "tool", r
+
+
 def test_the_notes_rule_is_unchanged():
     r = lr.rule_route("Find my notes about octopuses.")
     assert r.tool == "search_wiki" and r.args["query"] == "octopuses"
