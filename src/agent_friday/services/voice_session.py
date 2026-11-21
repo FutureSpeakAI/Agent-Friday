@@ -46,6 +46,7 @@ import queue
 import re
 import threading
 import time
+import unicodedata
 import uuid
 
 log = logging.getLogger("friday.voice_session")
@@ -81,6 +82,15 @@ STATES = ("idle", "proving", "ready", "refused", "listening", "hearing",
 _CLAUSE_END = ".!?;:"
 _MARKUP_OPEN = "<|"
 _MARKUP_CLOSE = "|>"
+#: The opening phrase of a fence around untrusted content, matched on normalised text (compatibility forms and
+#: invisible characters removed) at the start of a "[" candidate.
+_FENCE_OPEN = re.compile(
+    r"\[\s*(?:(?:document|web[\s_\-]*page)[\s_\-]*content[\s_\-]*below"
+    r"|end[\s_\-]*of[\s_\-]*(?:(?:document|web[\s_\-]*page)[\s_\-]*)?content)", re.I)
+#: A "[" candidate that is still only letters and spaces and could yet become an opener.
+_FENCE_PREFIX = re.compile(r"\[[a-z\s_\-]*", re.I)
+_FENCE_PROBE = 48
+_FENCE_INVISIBLE = re.compile("[­​-‏‪-‮⁠-⁤﻿]")
 
 
 class DeltaFilter:
@@ -97,8 +107,47 @@ class DeltaFilter:
     def __init__(self):
         self._hold = ""
         self._in_markup = False
+        self._fence_hold = ""
+        self._in_fence = False
 
     def feed(self, delta: str) -> str:
+        return self._fence(self._markup(delta))
+
+    def _fence(self, s: str) -> str:
+        """Mute the fence wording around untrusted content ("[document content below ... ]", "[web page content
+        below ... ]", "[end of ... content ...]") from its opening phrase to its closing bracket, whatever the
+        delta split. The clause chunker would cut that wording into clauses that each look innocent; here it is
+        withheld whole. Held by tests/unit/test_voice_wrapper_text_is_never_spoken.py."""
+        s = self._fence_hold + s
+        self._fence_hold = ""
+        out = []
+        while s:
+            if self._in_fence:
+                j = s.find("]")
+                if j < 0:
+                    return "".join(out)
+                s = s[j + 1:]
+                self._in_fence = False
+                continue
+            i = s.find("[")
+            if i < 0:
+                out.append(s)
+                break
+            out.append(s[:i])
+            rest = s[i:]
+            probe = _FENCE_INVISIBLE.sub("", unicodedata.normalize("NFKC", rest[:_FENCE_PROBE]))
+            if _FENCE_OPEN.match(probe):
+                self._in_fence = True
+                s = rest[1:]
+                continue
+            if len(rest) < _FENCE_PROBE and "]" not in rest and _FENCE_PREFIX.fullmatch(probe):
+                self._fence_hold = rest          # may still become an opener: wait for more text
+                break
+            out.append("[")
+            s = rest[1:]
+        return "".join(out)
+
+    def _markup(self, delta: str) -> str:
         s = self._hold + (delta or "")
         self._hold = ""
         out = []
@@ -128,7 +177,9 @@ class DeltaFilter:
     def flush(self) -> str:
         h = self._hold
         self._hold = ""
-        return "" if self._in_markup else h
+        tail = self._fence("" if self._in_markup else h)
+        held, self._fence_hold = self._fence_hold, ""
+        return tail if self._in_fence else tail + held
 
 
 class ClauseChunker:

@@ -62,22 +62,11 @@ _HIDDEN = re.compile("[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f"
                      "\u00ad\u061c\u180e\u200b-\u200f\u202a-\u202e\u2060-\u206f\ufeff\ufff9-\ufffb]")
 
 
-#: The fence wording that marks someone else's text ("[document content below ... UNVERIFIABLE ...]", "[web page
-#: content below ...]", "[end of document content ...]"), cut to its closing bracket or the end of its line, and
-#: any sentence still carrying the word. Held by tests/unit/test_voice_wrapper_text_is_never_spoken.py.
-_FENCE_SPOKEN = re.compile(
-    r"\[\s*(?:document|web[\s_\-]*page)[\s_\-]*content[\s_\-]*below[^\]\n]*\]?"
-    r"|\[\s*end[\s_\-]*of[\s_\-]*(?:(?:document|web[\s_\-]*page)[\s_\-]*)?content[^\]\n]*\]?", re.I)
-_UNVERIFIABLE_SENTENCE = re.compile(r"[^.!?\n]*\bUNVERIFIABLE\b[^.!?\n]*(?:[.!?]|$)\s*", re.I | re.M)
-
-
 def speakable(text: str) -> str:
-    """`text` without markdown or fence wording: what a mouth should read aloud."""
+    """`text` without markdown: what a mouth should read aloud."""
     s = str(text or "")
     if not s:
         return s
-    s = _FENCE_SPOKEN.sub("", s)
-    s = _UNVERIFIABLE_SENTENCE.sub("", s)
     s = _MD_LINK.sub(r"\1", s)
     s = _MD_LINE.sub("", s)
     s = _MD_NUMBERED.sub("", s)
