@@ -310,6 +310,7 @@ _ASK_FOR = {
     "search_wiki": "What should I look up in your notes?",
     "search_past_conversations": "What part of our past conversations should I look for?",
 }
+_ASK_WHERE = "Do you want me to search the public web for that, or look in your notes?"
 _ASK_WHICH = "Do you want me to look that up, and where: your email, calendar, files, notes, the web, or something else?"
 
 
@@ -522,6 +523,44 @@ _YES = re.compile(r"^(?:friday,?\s+)?(?:yes|yeah|yep|sure|ok(?:ay)?|go ahead|do 
                   r"please do|that's fine|sounds good)\b[\s,.!]*(?:(?:go ahead|do it|please)[\s,.!]*)?$", re.I)
 _NO = re.compile(r"^(?:friday,?\s+)?(?:no|nope|don'?t|do not|decline|deny|cancel(?: that| it)?|"
                  r"never mind|stop)\b[\s,.!]*(?:(?:thanks|thank you)[\s,.!]*)?$", re.I)
+
+#: The owner's own stores a spoken lookup may name. A lookup in one of them is the local search, whatever verb
+#: introduced it (a bare "look up" used to win and send the subject to the web).
+_OWN_STORE = r"(?:knowledge (?:graph|base)|memory|memories|vault|contacts?|address book)"
+_OWN_STORE_AFTER = re.compile(
+    r"\b(?:look up|look for|search|find|check|pull up)\s+(?P<q>.+?)\s+(?:in|from|on|using|within)\s+(?:my|the)\s+"
+    + _OWN_STORE + r"\b", re.I)
+_OWN_STORE_FIRST = re.compile(
+    r"\b(?:look up|look in|search|check|find|pull up)\s+(?:in\s+)?(?:my|the)\s+" + _OWN_STORE
+    + r"\s+(?:for|about|on)\s+(?P<q>.+)", re.I)
+#: The owner says the web. Anything weaker is not enough to leave the PC.
+_SAYS_WEB = re.compile(r"\b(?:the web|the internet|online|google|web search)\b", re.I)
+
+
+_PUBLIC_CUE = re.compile(
+    r"^(?:what|when|where|who|why|how|which)\b|\b(?:weather|forecast|time|capital|price|hours|population|score|"
+    r"recipe|sunset|sunrise|distance|definition|meaning|translate|currency|exchange rate)\b", re.I)
+_PERSONAL_WORD = re.compile(r"\b(?:my|me|mine|our|we|i)\b", re.I)
+
+
+def _public_question(text: str, m) -> bool:
+    """Whether a bare "look up ..." is a question about the world (the weather, a capital, sunset time) and
+    nothing of the owner's. A bare name or anything that says my/our is not: it is asked back."""
+    try:
+        q = _query(text, m)["query"]
+    except Exception:  # noqa: BLE001
+        return False
+    return bool(_PUBLIC_CUE.search(q)) and not _PERSONAL_WORD.search(q)
+
+
+def _own_store_query(text: str) -> str:
+    """The subject of a lookup the owner pointed at their own store, else "". Pure."""
+    for pat in (_OWN_STORE_AFTER, _OWN_STORE_FIRST):
+        m = pat.search(text or "")
+        if m:
+            return _clean_query(m.group("q"))
+    return ""
+
 
 #: (tool, pattern). First match wins; order is most specific first.
 _RULES: List[Tuple[str, re.Pattern]] = [(t, re.compile(p, re.I)) for t, p in [
@@ -784,10 +823,19 @@ def _tier0_rest(text: str) -> Optional[Route]:
             return Route("no_tool", confidence=0.95, layer="rule", reason="small talk")
         return Route("no_tool", confidence=0.9, layer="rule",
                      reason="a statement, not a request")
+    q = _own_store_query(text)
+    if q:
+        label, _, required = TOOLS["search_wiki"]
+        return _with_args("search_wiki", {"query": q}, 0.95, "rule", label, required,
+                          reason="a lookup in the owner's own store stays local", text=text)
     for tool, pat in _RULES:
         m = pat.search(text)
         if m:
             label, template, required = TOOLS[tool]
+            if tool == "search_web" and not _SAYS_WEB.search(text) and not _public_question(text, m):
+                return Route("ask", tool=tool, confidence=0.95, layer="rule", label=label,
+                             question=_ASK_WHERE,
+                             reason="a lookup that names no place is asked, never sent to the web")
             return _with_args(tool, template(text, m), 0.95, "rule", label, required,
                               reason="pattern", text=text)
     if _SMALL_TALK.match(text):
