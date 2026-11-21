@@ -343,6 +343,8 @@ def wiki_correct():
         return jsonify({"status": "error", "message": "old_text required"}), 400
     modified = []
     pages = []
+    skipped = []
+    from agent_friday.services.agent import VaultKeyMissing
     if WIKI_DIR.exists():
         for f in WIKI_DIR.rglob('*'):
             if not f.is_file() or f.suffix not in ('.md', '.txt'):
@@ -356,6 +358,11 @@ def wiki_correct():
                 if rel:
                     modified.append({"scope": "wiki", "path": rel})
                     pages.append((rel, detail))
+            except VaultKeyMissing:
+                # a page of a locked section with no key: left exactly as it was, and the owner is told
+                # (tests/api/test_wiki_encryption.py)
+                skipped.append({"scope": "wiki", "reason": "locked",
+                                "path": str(f.relative_to(WIKI_DIR)).replace("\\", "/")})
             except Exception as e:
                 print(f"  [WIKI] Correct failed for {f}: {e}")
     # KNOWN RISK (pre-existing, not changed in the M16 slice; filed separately):
@@ -374,6 +381,11 @@ def wiki_correct():
                 except Exception as e:
                     print(f"  [WIKI] Correct failed for {f}: {e}")
     out = {"status": "ok", "modified": modified, "count": len(modified)}
+    if skipped:
+        out["skipped"] = skipped
+        out["message"] = ("%d page%s of a locked section %s not changed, because there is no key to protect it: "
+                          "set a vault passphrase and correct again." % (len(skipped), "" if len(skipped) == 1 else "s",
+                                                                           "was" if len(skipped) == 1 else "were"))
     if modified:
         eid = _record_wiki_correction(old_text, new_text, pages, modified,
                                       str(data.get("reason") or "")[:300])
