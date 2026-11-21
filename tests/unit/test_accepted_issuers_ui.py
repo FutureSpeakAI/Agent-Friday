@@ -89,8 +89,8 @@ def test_the_component_parses_as_javascript(sources):
 
 def test_the_check_can_fail_a_load_time_post_would_be_seen(sources):
     body = component(sources["index.html"])
-    broken = body.replace("React.useEffect(() => { load(); }, []);",
-                          "React.useEffect(() => { load(); apiFetch('/x', { method: 'POST' }); }, []);")
+    broken = body.replace("React.useEffect(() => { load(); loadReports(); }, []);",
+                          "React.useEffect(() => { load(); loadReports(); apiFetch('/x', { method: 'POST' }); }, []);")
     accept = broken[broken.index("const accept = async"):broken.index("const withdraw = async")]
     assert "POST" in broken.replace(accept, ""), "the load-time POST would be seen"
     assert "POST" not in body.replace(body[body.index("const accept = async"):body.index("const withdraw = async")], "")
@@ -168,3 +168,16 @@ def test_withdraw_names_its_issuer_and_a_missing_one_gets_its_own_words(sources)
                                   "DELETE /api/federation/accepted-issuers/test.one": {"status": 404, "body": {"ok": False}}})
     assert out["label"] == "Withdraw test.one"
     assert "was not in the list" in out["after"]
+
+
+REPORTS = "GET /api/federation/issuer-reports"
+
+
+def test_a_stopped_issuer_is_shown_with_its_reason_and_a_failed_read_shows_nothing_false(sources):
+    reports = {"status": 200, "body": {"ok": True, "reports": [{"issuer_id": "test.one", "seq": 3, "why": "another head at this sequence"}], "stopped": ["test.one"]}}
+    out = run_component(sources, {LIST: {"status": 200, "body": {"issuers": []}}, REPORTS: reports})
+    assert "Recorded: this PC saw a problem with the history of issuer test.one (sequence 3: another head at this sequence)" in out["text"]
+    none = run_component(sources, {LIST: {"status": 200, "body": {"issuers": []}}, REPORTS: {"status": 500, "body": {}}})
+    assert "Recorded:" not in none["text"]
+    quiet = run_component(sources, {LIST: {"status": 200, "body": {"issuers": []}}, REPORTS: {"status": 200, "body": {"ok": True, "reports": [], "stopped": []}}})
+    assert "Recorded:" not in quiet["text"]

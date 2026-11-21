@@ -328,6 +328,19 @@ def _accepted_issuers():
     return _ACCEPTED
 
 
+_HEAD_PINS = None
+
+
+def _head_pins():
+    """The heads this PC has pinned per issuer, opened on first use; its reports survive a restart."""
+    global _HEAD_PINS
+    if _HEAD_PINS is None:
+        from agent_friday.core import FRIDAY_DIR
+        from agent_friday.services import issuer_authority
+        _HEAD_PINS = issuer_authority.HeadPins(FRIDAY_DIR / "federation" / "head_pins.json")
+    return _HEAD_PINS
+
+
 def _issuer_registry():
     from agent_friday.core import FRIDAY_DIR
     from agent_friday.services import issuer_registry
@@ -405,6 +418,16 @@ def federation_accept_issuer():
     outcome = _accepted_issuers().accept(ref, _issuers.Press.from_request(request), int(time.time()))
     status = {"accepted": 201, "already": 200, "cannot-sign": 503}.get(outcome.value, 409)
     return jsonify({"ok": status < 300, "outcome": outcome.value}), status
+
+
+@federation_bp.route("/api/federation/issuer-reports", methods=["GET"])
+@login_required
+def federation_issuer_reports():
+    """Issuers stopped for showing two histories or a head that does not link: issuer id, sequence and reason only.
+    Read-only. Held by tests/api/test_issuer_reports_route.py."""
+    pins = _head_pins()
+    reports = [{"issuer_id": r["issuer_id"], "seq": r["seq"], "why": r["why"]} for r in pins.reports]
+    return jsonify({"ok": True, "reports": reports, "stopped": sorted({r["issuer_id"] for r in reports})})
 
 
 @federation_bp.route("/api/federation/accepted-issuers/<issuer_id>", methods=["DELETE"])
