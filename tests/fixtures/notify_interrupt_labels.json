@@ -1,0 +1,101 @@
+{
+ "about": "Stephen's own answers (2026-11-21, via Dispatch) to 'Should this have interrupted you?' for the 12 notification items on the label list: the successful completion or delivery of a scheduled task or routine may interrupt; a status or routing notice does not. Each row is the notice's kind, source and emitter as the notification store holds them, never its wording. 'item' is the number on the list he was shown.",
+ "rows": [
+  {
+   "item": 1,
+   "kind": "front_page",
+   "source": "front-page",
+   "emitter": "E11",
+   "priority": "high",
+   "interrupts": true
+  },
+  {
+   "item": 3,
+   "kind": "front_page",
+   "source": "front-page",
+   "emitter": "E11",
+   "priority": "high",
+   "interrupts": true
+  },
+  {
+   "item": 5,
+   "kind": "front_page",
+   "source": "front-page",
+   "emitter": "E11",
+   "priority": "high",
+   "interrupts": true
+  },
+  {
+   "item": 7,
+   "kind": "avatar",
+   "source": "avatar",
+   "emitter": "E54",
+   "priority": "low",
+   "interrupts": false
+  },
+  {
+   "item": 9,
+   "kind": "creation",
+   "source": "daily-creation",
+   "emitter": "E17",
+   "priority": "low",
+   "interrupts": true
+  },
+  {
+   "item": 11,
+   "kind": "creation",
+   "source": "daily-creation",
+   "emitter": "E17",
+   "priority": "low",
+   "interrupts": true
+  },
+  {
+   "item": 13,
+   "kind": "front_page",
+   "source": "front-page",
+   "emitter": "E11",
+   "priority": "medium",
+   "interrupts": true
+  },
+  {
+   "item": 15,
+   "kind": "front_page",
+   "source": "front-page",
+   "emitter": "E11",
+   "priority": "high",
+   "interrupts": true
+  },
+  {
+   "item": 17,
+   "kind": "creation",
+   "source": "daily-creation",
+   "emitter": "E17",
+   "priority": "low",
+   "interrupts": true
+  },
+  {
+   "item": 19,
+   "kind": "front_page",
+   "source": "front-page",
+   "emitter": "E11",
+   "priority": "medium",
+   "interrupts": true
+  },
+  {
+   "item": 21,
+   "kind": "scheduled_task",
+   "source": "scheduler",
+   "emitter": "E07",
+   "priority": "low",
+   "interrupts": true
+  },
+  {
+   "item": 23,
+   "kind": "front_page",
+   "source": "front-page",
+   "emitter": "E11",
+   "priority": "medium",
+   "interrupts": true
+  }
+ ]
+}
