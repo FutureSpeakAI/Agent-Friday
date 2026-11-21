@@ -1174,6 +1174,20 @@ def _stop_everything_gate(fn):
     return _inner
 
 
+def _add_device_gate(fn):
+    """"Friday, add a device" typed into chat opens the pairing window (services/add_device_command)."""
+    @wraps(fn)
+    def _inner(*args, **kwargs):
+        from agent_friday.services import add_device_command as _ad
+        data = request.get_json(silent=True)
+        message = data.get("message") if isinstance(data, dict) else None
+        reply = _ad.handle(message, request)
+        if reply is not None:
+            return jsonify({"status": "ok", "response": reply})
+        return fn(*args, **kwargs)
+    return _inner
+
+
 def _guest_turn(sess_ctx) -> bool:
     """A codebase turn on a guest's key never moves to the owner's key (salon spec 4.7)."""
     try:
@@ -1608,6 +1622,7 @@ def _end_grant_turn(sess_ctx, session_id, conversation_id):
 
 @chat_bp.route('/api/chat', methods=['POST'])
 @_stop_everything_gate
+@_add_device_gate
 @_cloud_fallback_choice
 @_withhold_pasted_keys
 @_traced_turn
@@ -3813,6 +3828,7 @@ def _screen_block_for(provider_name, conversation_id):
 
 @chat_bp.route('/api/chat/send', methods=['POST'])
 @_stop_everything_gate
+@_add_device_gate
 @_cloud_fallback_choice
 @_withhold_pasted_keys
 @_traced_turn

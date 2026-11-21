@@ -81,6 +81,8 @@ RIGHT_CARDS = {
 PAIR_TTL_S = 300
 MAX_STARTS_PER_HOUR = 3             # per source address
 MAX_STARTS_PER_HOUR_ALL = 12        # from every address together
+PAIRING_CLOSED = ("Pairing is closed. On the PC, say or type \"Friday, add a device\" "
+                  "(or open Add a device at /pairing), then try again.")
 REVEAL_WITHIN_S = 30                # a start that has not revealed by then frees its place
 SAS_CONTEXT = b"friday-tv-pair-v1|"
 COMMIT_CONTEXT = b"friday-tv-pair-commit-v1|"
@@ -158,11 +160,34 @@ def stale_rows(spki: bytes, name: str, kind: str, member: str) -> list:
     return out
 
 
+_NAME_DROPPED = frozenset(['"', "<", ">", "`", chr(92)])
+
+
+def clean_name(name: str) -> str:
+    """A device's name as data: printable characters only, no quotes or angle brackets, one line, 60 long.
+    It is shown on the owner's approval card, and a stranger chooses it."""
+    kept = "".join(c if c.isprintable() and c not in _NAME_DROPPED else " " for c in str(name or ""))
+    return " ".join(kept.split())[:60] or "TV"
+
+
+def end_in_flight() -> None:
+    """The owner closed pairing: a pairing not yet pressed ends with it (a card for it does nothing)."""
+    with _LOCK:
+        for p in _PENDING.values():
+            if p["state"] in ("committed", "awaiting_press"):
+                p["state"] = "expired"
+
+
+def reset_budget() -> None:
+    """The owner opened pairing: whatever strangers used up before is forgotten."""
+    with _LOCK:
+        _STARTS.clear()
+
+
 def start(device_spki: bytes, name: str, kind: str = "tv", remote: str = "") -> dict:
     now = time.time()
     if not device_pairing.pairing_window()["open"]:
-        raise PairingRefused("pairing is not open: open it on this PC (Paired devices), then try again",
-                             code="pairing_closed")
+        raise PairingRefused(PAIRING_CLOSED, code="pairing_closed")
     remote = str(remote or "")[:64]
     try:
         device_pairing._load_pub(device_spki)
@@ -180,17 +205,18 @@ def start(device_spki: bytes, name: str, kind: str = "tv", remote: str = "") -> 
         _expire(now)
         while _STARTS and now - _STARTS[0][0] > 3600:
             _STARTS.popleft()
-        if (len(_STARTS) >= MAX_STARTS_PER_HOUR_ALL
-                or sum(1 for _, src in _STARTS if src == remote) >= MAX_STARTS_PER_HOUR):
+        if (sum(1 for e in _STARTS if e[2]) >= MAX_STARTS_PER_HOUR_ALL      # only starts that got as far as a card
+                or sum(1 for e in _STARTS if e[1] == remote) >= MAX_STARTS_PER_HOUR):
             raise PairingRefused("too many pairing attempts this hour; try again later")
         if any(p["state"] in ("committed", "awaiting_press") for p in _PENDING.values()):
             raise PairingRefused("another device is pairing right now")
-        _STARTS.append((now, remote))
+        entry = [now, remote, False]
+        _STARTS.append(entry)
         pid = secrets.token_urlsafe(16)
         nd = secrets.token_bytes(32)
         pin = _pin()
-        _PENDING[pid] = {"state": "committed", "spki": device_spki, "name": str(name or "TV")[:60],
-                         "nd": nd, "pin": pin, "expires": now + PAIR_TTL_S, "started": now, "card_id": None,
+        _PENDING[pid] = {"state": "committed", "spki": device_spki, "name": clean_name(name),
+                         "nd": nd, "pin": pin, "expires": now + PAIR_TTL_S, "started": now, "entry": entry, "card_id": None,
                          "remote": remote,
                          "kind": kind, "member": member,
                          "device_id": device_pairing.spki_id(device_spki)}
@@ -206,6 +232,7 @@ def reveal(pairing_id: str, nt: bytes) -> bytes:
         if p is None or p["state"] != "committed":
             raise PairingRefused("no pairing waiting for this step")
         p["state"] = "awaiting_press"
+        p["entry"][2] = True
         code = sas(p["pin"], p["spki"], bytes(nt), p["nd"])
         nd = p["nd"]
     from agent_friday.services import approvals

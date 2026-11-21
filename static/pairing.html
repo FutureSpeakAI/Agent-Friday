@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Add a device - Agent Friday</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  body { background:#04070e; color:#dfe7ef; font:15px/1.5 system-ui, sans-serif; margin:0; padding:24px; }
+  h1 { font-size:20px; color:#00d4ff; margin:0 0 4px; }
+  p { max-width:680px; }
+  p.lead { color:#9aa8b8; margin:0 0 18px; }
+  section { border:1px solid rgba(0,212,255,0.2); border-radius:8px; padding:14px 16px; margin:0 0 16px; max-width:720px; }
+  button { background:rgba(0,212,255,0.12); color:#00d4ff; border:1px solid rgba(0,212,255,0.45); border-radius:6px;
+           padding:8px 14px; font:inherit; cursor:pointer; margin-right:8px; }
+  button:focus-visible { outline:2px solid #fbbf24; outline-offset:2px; }
+  button[disabled] { opacity:0.45; cursor:default; }
+  #state { font-size:18px; margin:0 0 12px; }
+  #state.open { color:#3effa1; }
+  #note { color:#fbbf24; min-height:1.5em; }
+  .muted { color:#9aa8b8; font-size:13px; }
+</style>
+</head>
+<body>
+<main>
+<h1>Add a device</h1>
+<p class="lead">A new phone, tablet or watch can only pair while pairing is open on this PC. You can also say or type "Friday, add a device".</p>
+
+<section aria-labelledby="open-h">
+  <h2 id="open-h" style="font-size:15px;margin:0 0 8px">Pairing</h2>
+  <p id="state" role="status" aria-live="polite">Checking...</p>
+  <button id="open" type="button">Open pairing for 5 minutes</button>
+  <button id="close" type="button">Close pairing</button>
+  <p id="note" role="alert"></p>
+</section>
+
+<section aria-labelledby="how-h">
+  <h2 id="how-h" style="font-size:15px;margin:0 0 8px">What happens next</h2>
+  <p>On the new device, open Friday and start pairing. Six digits appear on the device and a card appears here.
+     Press Approve on this screen only if the digits match and the device is yours; press Decline if you did not
+     start it. Pairing closes by itself when the time is up, and closing it ends any pairing not yet approved.</p>
+  <p class="muted">Anyone on your home network can ask to pair while it is open, which is why it stays open for minutes, not hours.</p>
+</section>
+</main>
+<script>
+(function () {
+  'use strict';
+  const tok = window.__FRIDAY_API_TOKEN || '';
+  // A press counts only with this launch's desk key, which the loopback door
+  // hands to Friday's own pages on this PC (services/desk_press).
+  let deskKey = '';
+  function refreshDesk() {
+    return fetch('/api/desk/where', { cache: 'no-store', headers: { 'X-Friday-Token': tok } })
+      .then(r => r.ok ? r.json() : null).then(w => {
+        const port = w && Number(w.port);
+        if (!port || port < 1 || port > 65535 || Math.floor(port) !== port) return false;
+        return fetch('http://127.0.0.1:' + port + '/desk-key', { cache: 'no-store', credentials: 'omit', mode: 'cors' })
+          .then(r => r.ok ? r.json() : null).then(d => {
+            if (d && typeof d.key === 'string' && d.key) { deskKey = d.key; return true; }
+            return false;
+          });
+      }).catch(() => false);
+  }
+  const once = (url, opts) => fetch(url, Object.assign({ cache: 'no-store' }, opts || {}, {
+    headers: Object.assign({ 'X-Friday-Token': tok, 'Content-Type': 'application/json' },
+                           deskKey ? { 'X-Friday-Desk': deskKey } : {})
+  })).then(r => r.json().then(d => ({ ok: r.ok, status: r.status, d })).catch(() => ({ ok: r.ok, status: r.status, d: {} })));
+  const api = (url, opts) => once(url, opts).then(res =>
+    (res.status === 403) ? refreshDesk().then(ok => ok ? once(url, opts) : res) : res);
+  const $ = id => document.getElementById(id);
+  let until = 0;
+
+  function paint(open, secs) {
+    const el = $('state');
+    el.className = open ? 'open' : '';
+    el.textContent = open ? 'Pairing is open: ' + Math.floor(secs / 60) + ':' + String(secs % 60).padStart(2, '0') + ' left.'
+                          : 'Pairing is closed.';
+    $('close').disabled = !open;
+  }
+  function tick() {
+    const left = Math.max(0, Math.round((until - Date.now()) / 1000));
+    paint(left > 0, left);
+  }
+  function show(d) { until = Date.now() + ((d && d.open ? d.remaining_s : 0) * 1000); tick(); }
+  function sync() {
+    return api('/api/pairing-window').then(({ d }) => show(d))
+      .catch(() => { $('state').textContent = 'Could not read the pairing state. Reload this page.'; });
+  }
+  $('open').addEventListener('click', () => {
+    $('note').textContent = '';
+    api('/api/pairing-window', { method: 'POST', body: JSON.stringify({ seconds: 300 }) }).then(res => {
+      if (res.ok) { show(res.d); return; }
+      $('note').textContent = (res.d && res.d.error) ||
+        'Pairing did not open. Reload this page on this PC and try again.';
+    }).catch(() => { $('note').textContent = 'Pairing did not open: Friday did not answer. Reload this page and try again.'; });
+  });
+  $('close').addEventListener('click', () => {
+    $('note').textContent = '';
+    api('/api/pairing-window', { method: 'DELETE' }).then(res => {
+      if (res.ok) show(res.d);
+      else $('note').textContent = 'Pairing could not be closed. Reload this page and try again.';
+    }).catch(() => { $('note').textContent = 'Pairing could not be closed: Friday did not answer.'; });
+  });
+  refreshDesk().then(sync);
+  setInterval(tick, 1000);
+  setInterval(sync, 15000);
+})();
+</script>
+</body>
+</html>

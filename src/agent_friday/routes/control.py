@@ -231,6 +231,26 @@ def pairing_window_close():
     return jsonify(device_pairing.close_pairing_window(by="owner:desk"))
 
 
+_PAIRING_PAGE = Path(__file__).resolve().parents[3] / "static" / "pairing.html"
+
+
+@control_bp.route('/pairing', methods=['GET'])
+@login_required
+def pairing_page():
+    """Add a device: the owner's button, countdown and Close for the pairing window. This PC only."""
+    if not core._is_local_request():
+        return "Add a device opens on this PC only.", 403
+    try:
+        page = _PAIRING_PAGE.read_text(encoding="utf-8")
+    except OSError:
+        return "Add a device page not found", 404
+    tok = ('<script>window.__FRIDAY_API_TOKEN="%s";</script>'  # pragma: allowlist secret
+           % core._current_api_token())
+    resp = Response(page.replace("<head>", "<head>" + tok, 1), content_type="text/html")
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
 # ── Folders Friday may use (services/path_policy, BD-26) ─────────────────────
 #
 # A grant widens where the file tools may read or write, so it is a press on

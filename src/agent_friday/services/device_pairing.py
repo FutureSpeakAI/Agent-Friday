@@ -156,6 +156,8 @@ def gateway_config() -> dict:
 
 
 def set_gateway(enabled: bool, port: int = 0) -> dict:
+    """Turning the gateway on opens pairing for 10 minutes, so a caller must carry the same proof as the
+    pairing-window route (a press on this PC's own page); tests/unit/test_pairing_window.py guards who calls it."""
     with _LOCK:
         body = _load()
         was_on = bool(body["gateway"].get("enabled"))
@@ -206,6 +208,8 @@ def open_pairing_window(seconds: float = 300, by: str = "owner:desk") -> dict:
     secs = max(PAIRING_WINDOW_MIN_S, min(PAIRING_WINDOW_MAX_S, secs))
     with _LOCK:
         _WINDOW_UNTIL = time.time() + secs
+    from agent_friday.tv_gateway import pairing
+    pairing.reset_budget()
     _window_receipt("pairing_window_opened", by, seconds=int(secs))
     return pairing_window()
 
@@ -215,6 +219,8 @@ def close_pairing_window(by: str = "owner:desk") -> dict:
     with _LOCK:
         was_open = _WINDOW_UNTIL > time.time()
         _WINDOW_UNTIL = 0.0
+    from agent_friday.tv_gateway import pairing
+    pairing.end_in_flight()
     if was_open:
         _window_receipt("pairing_window_closed", by)
     return pairing_window()
