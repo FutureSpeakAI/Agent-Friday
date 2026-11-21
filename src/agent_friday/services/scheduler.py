@@ -777,11 +777,6 @@ LOCAL_ONLY_BY_DEFAULT = {
 #: The News routines. A run that cannot reach the local seat waits and catches
 #: up the same day (SeatWaiting) instead of being skipped: the owner reads them
 #: on a schedule, so a silent gap is a missing edition, not a quiet heartbeat.
-#: Routines whose delivery has its own notice (the Front Page, the Daily Creation, the briefing, the weekly
-#: editions). Their run-finished card stays a quiet one, so one event never interrupts twice.
-OWN_DELIVERY_NOTICE = LOCAL_ONLY_BY_DEFAULT - {"sch_heartbeat"}
-
-
 NEWS_ROUTINES = {
     "sch_news_morning",
     "sch_front_page_evening",
@@ -789,6 +784,14 @@ NEWS_ROUTINES = {
     "sch_weekly_digest",
     "sch_weekly_editorial",
 }
+
+
+#: Routines that also push their own delivery notice (the Front Page, the Daily Creation, the briefing,
+#: the weekly editions). Their "ran" card stays a quiet one, so one event never interrupts twice.
+OWN_DELIVERY_NOTICE = frozenset({
+    "sch_daily_creation", "sch_news_morning", "sch_front_page_evening",
+    "sch_afternoon_briefing", "sch_weekly_digest", "sch_weekly_editorial",
+})
 
 #: Builtins whose result is for a time of day (the editions): in the Local AI
 #: queue they still run one at a time and yield to interactive turns, but they
@@ -1796,6 +1799,7 @@ def _notify_run(rec, status, summary):
         _ne.resolve(f"sched-held:{sid}")
         if not finish_notice_on(rec):
             return
+        _ne.resolve(f"sched-ok:{sid}")   # a dismissed success is news again; a quiet one stays dismissed
         _ne.push(title=f"\u2713 {name} ran",
                  body=(summary or "")[:300] or "Completed.", priority="low",
                  source="scheduler", kind="scheduled_task", emitter="E07",
