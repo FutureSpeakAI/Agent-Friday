@@ -216,6 +216,7 @@ def test_a_silent_connection_does_not_stop_the_next_tls_client(monkeypatch):
         port = srv.server_address[1]
         stalled = socket.create_connection(("127.0.0.1", port))      # connects, never starts the handshake
         client = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+        client.minimum_version = ssl.TLSVersion.TLSv1_3                 # the gateway is TLS 1.3 only
         client.check_hostname = False
         client.verify_mode = ssl.CERT_NONE
         raw = socket.create_connection(("127.0.0.1", port), timeout=5)
