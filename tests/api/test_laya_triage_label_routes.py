@@ -59,13 +59,19 @@ def test_the_score_route_reports_the_owner_s_answers(client):
     assert s["answered"] == 1 and s["owner_yes"] == 1 and s["head"]["missed"] == 1
 
 
-@pytest.mark.parametrize("method, path", [("get", "/laya/labels"), ("get", "/api/decisions/triage_queue"),
-                                          ("post", "/api/decisions/triage_labels"), ("get", "/api/decisions/triage_score")])
-def test_every_route_refuses_a_caller_that_is_not_on_this_pc(client, _home, monkeypatch, method, path):
+ROUTES = [("get", "/laya/labels"), ("get", "/api/decisions/triage_queue"),
+          ("post", "/api/decisions/triage_labels"), ("get", "/api/decisions/triage_score")]
+ANSWER = {"subject": "item:aaaa1111aaaa1111", "answer": "yes"}
+
+
+@pytest.mark.parametrize("method, path", ROUTES)
+def test_every_route_refuses_a_caller_not_on_this_pc_even_with_a_valid_login(client, _home, monkeypatch, method, path):
+    """The login passes (loopback trusted) and only the route's own on-this-PC check can refuse."""
     from agent_friday import core
+    monkeypatch.setattr(core, "_loopback_trusted", lambda: True)
     monkeypatch.setattr(core, "_is_local_request", lambda: False)
-    r = getattr(client, method)(path, **({"json": {"subject": "item:aaaa1111aaaa1111", "answer": "yes"}} if method == "post" else {}))
-    assert r.status_code in (302, 401, 403)
+    r = getattr(client, method)(path, **({"json": ANSWER} if method == "post" else {}))
+    assert r.status_code == 403 and b"this PC only" in r.data
     assert not (_home / "laya_labels.jsonl").exists()
 
 

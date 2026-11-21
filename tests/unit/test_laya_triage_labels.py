@@ -181,7 +181,6 @@ def test_two_labels_that_mean_the_same_answer_are_not_a_disagreement():
                  _row("news", "w3", "promo", "analysis", 0.9))        # opposite
     got = {i["id"]: i["kind"] for i in tl.choose(rows, {h: "x" for h in rows})}
     assert got == {"item:n1": "edge", "item:w1": "edge", "item:w2": "edge", "item:w3": "disagree"}
-    assert list(got)[:2] == ["item:w3", "item:n1"] or got["item:w3"] == "disagree"
 
 
 def test_opposite_answers_are_asked_before_look_alikes_even_when_the_look_alikes_are_surer():
@@ -205,13 +204,16 @@ def test_a_damaged_queue_file_asks_nothing_and_never_raises(home, damage):
 
 
 def test_one_bad_item_does_not_hide_the_good_ones(home):
-    (home / "laya_triage_queue.json").write_text(json.dumps({"items": [{"id": "item:x"}, _item("ok")]}), encoding="utf-8")
+    queue = {"items": [{"id": "item:x"}, _item("ok")]}
+    (home / "laya_triage_queue.json").write_text(json.dumps(queue), encoding="utf-8")
     assert [i["id"] for i in tl.queue()["items"]] == ["item:ok"]
 
 
 def test_a_labels_file_with_odd_rows_still_reads(home):
     _queue(home, _item("n1"))
-    (home / "laya_labels.jsonl").write_text('{"question": "triage_notify", "subject": ["x"]}'+ chr(10) + "not json" + chr(10), encoding="utf-8")
+    odd_rows = ['{"question": "triage_notify", "subject": ["x"]}', "not json"]
+    newline = chr(10)
+    (home / "laya_labels.jsonl").write_text(newline.join(odd_rows) + newline, encoding="utf-8")
     assert [i["id"] for i in tl.queue()["items"]] == ["item:n1"]
 
 
@@ -228,7 +230,8 @@ def test_an_answer_after_a_torn_last_line_is_its_own_line(home):
 def test_notification_words_are_title_then_body_as_the_head_read_them(home, monkeypatch):
     from agent_friday import core
     monkeypatch.setattr(core, "FRIDAY_DIR", home)
-    (home / "notifications.json").write_text(json.dumps({"items": [{"title": "Start My Day", "body": "ran"}, 7]}), encoding="utf-8")
+    stored = {"items": [{"title": "Start My Day", "body": "ran"}, 7]}
+    (home / "notifications.json").write_text(json.dumps(stored), encoding="utf-8")
     assert list(tl._notification_texts()) == ["Start My Day. ran"]
 
 
