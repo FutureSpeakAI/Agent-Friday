@@ -11,7 +11,8 @@ answer, so this module asks him. It does three things, all on this PC:
              archive, and write the list to ~/.friday/laya_triage_queue.json.
   answer()   record one answer, yes / no / skip, as a line in
              ~/.friday/laya_labels.jsonl with a receipt that chains to the
-             one before it, so a missing or edited line shows.
+             one before it, so an edited line, or one removed from the middle,
+             shows (a removed last line does not: the chain has no head).
   score()    set the owner's yes / no answers against what the heads and the
              incumbent said. A skip is never an answer and never scored.
 
@@ -51,6 +52,8 @@ NEWS_NOT_WORTH = frozenset({"promo", "other"})
 #: The notify head's label that means "interrupt".
 NOTIFY_RAISE = "needs_you"
 QUESTION_KEY_PREFIX = "triage_"
+#: Why an item is on the list: the two sides answer the question oppositely, or it is a close call.
+KIND_DISAGREE, KIND_EDGE = "disagree", "edge"
 SUBJECT_PREFIX = "item:"
 
 DEFAULT_LIMIT = 25
@@ -96,38 +99,44 @@ def choose(rows: Dict[str, dict], texts: Dict[str, str], limit: int = DEFAULT_LI
     kind of disagreement fills the list, then the agreements nearest the line
     (lowest confidence). The two heads are interleaved. Pure and deterministic.
     """
-    by_head: Dict[str, List[dict]] = {h: [] for h in HEADS}
-    for h, r in rows.items():
-        if h in texts and texts[h]:
-            by_head[r["head"]].append(r)
-    picks = {head: _spread(by_head[head], cap)
-             for head, cap in (("notify", notify_share), ("news", max(0, limit)))}
-    notify = picks["notify"][:min(notify_share, limit)]
-    news = picks["news"][:max(0, limit - len(notify))]
+    limit = max(0, limit)
+    by_head: Dict[str, List[dict]] = {head: [] for head in HEADS}
+    for digest, row in rows.items():
+        if texts.get(digest):
+            by_head[row["head"]].append(row)
+    notify = _spread(by_head["notify"], min(notify_share, limit))
+    news = _spread(by_head["news"], limit - len(notify))
     ordered = _interleave(notify, news)
-    return [{"id": SUBJECT_PREFIX + r["h"], "head": r["head"], "text": _one_line(texts[r["h"]]),
-             "question": QUESTIONS[r["head"]], "head_said": r["label"], "incumbent_said": r["incumbent"],
-             "p": r.get("p"), "kind": "disagree" if r["label"] != r["incumbent"] else "edge"}
-            for r in ordered[:limit]]
+    return [{"id": SUBJECT_PREFIX + row["h"], "head": row["head"], "text": _one_line(texts[row["h"]]),
+             "question": QUESTIONS[row["head"]], "head_said": row["label"], "incumbent_said": row["incumbent"],
+             "p": row.get("p"), "kind": KIND_DISAGREE if _reads_differently(row) else KIND_EDGE}
+            for row in ordered[:limit]]
+
+
+def _reads_differently(row: dict) -> bool:
+    """The two sides land on opposite answers to the owner's question. The head's
+    abstain label ("other") and two labels that both mean the same yes or no are not a disagreement:
+    his answer could not tell head from incumbent."""
+    return _head_says_yes(row["head"], row["label"]) != _head_says_yes(row["head"], row["incumbent"])
 
 
 def _spread(rows: List[dict], cap: int) -> List[dict]:
-    disagree: Dict[tuple, List[dict]] = {}
+    cells: Dict[tuple, List[dict]] = {}
     agree: List[dict] = []
-    for r in rows:
-        if r["label"] != r["incumbent"]:
-            disagree.setdefault((r["incumbent"], r["label"]), []).append(r)
+    for row in rows:
+        if _reads_differently(row):
+            cells.setdefault((row["incumbent"], row["label"]), []).append(row)
         else:
-            agree.append(r)
-    cells = sorted(disagree.values(), key=lambda c: (-len(c), c[0]["incumbent"], c[0]["label"]))
-    for c in cells:
-        c.sort(key=lambda r: (-(r.get("p") or 0.0), r["h"]))
+            agree.append(row)
+    ranked = sorted(cells.values(), key=lambda cell: (-len(cell), cell[0]["incumbent"], cell[0]["label"]))
+    for cell in ranked:
+        cell.sort(key=lambda row: (-(row.get("p") or 0.0), row["h"]))
     out: List[dict] = []
-    for rank in range(max((len(c) for c in cells), default=0)):
-        for c in cells:
-            if rank < len(c):
-                out.append(c[rank])
-    agree.sort(key=lambda r: ((r.get("p") or 0.0), r["h"]))
+    for rank in range(max((len(cell) for cell in ranked), default=0)):
+        for cell in ranked:
+            if rank < len(cell):
+                out.append(cell[rank])
+    agree.sort(key=lambda row: ((row.get("p") or 0.0), row["h"]))
     return (out + agree)[:cap]
 
 
@@ -178,14 +187,14 @@ def recover_texts(wanted: Dict[str, dict]) -> Dict[str, str]:
     found: Dict[str, str] = {}
     sources = {"notify": _notification_texts, "news": _news_titles}
     for head, source in sources.items():
-        need = {h for h, r in wanted.items() if r["head"] == head}
+        need = {digest for digest, row in wanted.items() if row["head"] == head}
         if not need:
             continue
         for text in source():
-            clip = triage_heads._clip(text)
-            h = triage_heads.digest(clip)
-            if h in need and h not in found:
-                found[h] = clip
+            clipped = triage_heads._clip(text)
+            digest = triage_heads.digest(clipped)
+            if digest in need and digest not in found:
+                found[digest] = clipped
                 if len(found) == len(wanted):
                     return found
     return found
@@ -247,9 +256,9 @@ def _triage_rows() -> List[dict]:
 def _answered_subjects() -> Dict[str, dict]:
     """subject -> the newest answer (a changed mind is a new line)."""
     out: Dict[str, dict] = {}
-    for r in _triage_rows():
-        if r.get("subject"):
-            out[r["subject"]] = r
+    for row in _triage_rows():
+        if isinstance(row.get("subject"), str):
+            out[row["subject"]] = row
     return out
 
 
@@ -260,14 +269,30 @@ def receipt_of(prev: str, row: dict) -> str:
     return hashlib.sha256(blob.encode("utf-8")).hexdigest()[:16]
 
 
+_ITEM_FIELDS = ("id", "head", "text", "question", "head_said", "incumbent_said")
+
+
+def queue_items() -> List[dict]:
+    """The listed items, read once at the edge: a damaged file, or an entry missing a field, is
+    dropped here so nothing past this point has to guess."""
+    try:
+        data = json.loads(queue_path().read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return []
+    listed = data.get("items") if isinstance(data, dict) else None
+    return [item for item in listed if _is_item(item)] if isinstance(listed, list) else []
+
+
+def _is_item(item) -> bool:
+    return (isinstance(item, dict) and all(isinstance(item.get(f), str) and item[f] for f in _ITEM_FIELDS)
+            and item["head"] in HEADS and item["id"].startswith(SUBJECT_PREFIX))
+
+
 def queue() -> dict:
     """The items still waiting, and how far along the owner is."""
-    try:
-        items = json.loads(queue_path().read_text(encoding="utf-8")).get("items") or []
-    except (OSError, ValueError):
-        items = []
+    items = queue_items()
     done = _answered_subjects()
-    waiting = [i for i in items if i["id"] not in done]
+    waiting = [item for item in items if item["id"] not in done]
     return {"items": waiting, "total": len(items), "answered": len(items) - len(waiting)}
 
 
@@ -287,18 +312,20 @@ def answer(subject: str, choice: str, *, by: str = "owner") -> dict:
                "answer": choice, "by": str(by)[:40], "head_said": item["head_said"],
                "incumbent_said": item["incumbent_said"]}
         row["receipt"] = receipt_of(prev, row)
-        p = laya_labels.labels_path()
-        p.parent.mkdir(parents=True, exist_ok=True)
-        with open(p, "a", encoding="utf-8", newline="\n") as fh:
-            fh.write(json.dumps(row, ensure_ascii=False) + "\n")
+        _append_line(laya_labels.labels_path(), json.dumps(row, ensure_ascii=False))
     return row
 
 
-def queue_items() -> List[dict]:
-    try:
-        return json.loads(queue_path().read_text(encoding="utf-8")).get("items") or []
-    except (OSError, ValueError):
-        return []
+def _append_line(path: Path, line: str) -> None:
+    """Append one line, starting a fresh one first if a crash left the file's last line unfinished."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "ab+") as fh:
+        size = fh.seek(0, os.SEEK_END)
+        torn = False
+        if size:
+            fh.seek(size - 1)
+            torn = fh.read(1) != b"\n"
+        fh.write((b"\n" if torn else b"") + line.encode("utf-8") + b"\n")
 
 
 def chain_ok() -> bool:

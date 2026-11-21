@@ -32,8 +32,8 @@
   <p class="lead">A few real items from your own notifications and news. Your answers stay on this PC. There is no wrong answer; skip anything you are unsure of.</p>
   <div class="bar" aria-hidden="true"><i id="fill"></i></div>
   <p class="count" id="count" role="status">Loading…</p>
-  <section class="card" id="card" hidden aria-live="polite">
-    <p class="item" id="item"></p>
+  <section class="card" id="card" hidden>
+    <p class="item" id="item" aria-live="polite"></p>
     <p class="kind" id="kind"></p>
     <p class="ask" id="ask"></p>
     <div class="row">
@@ -89,7 +89,11 @@
         items.shift(); answered += 1; show(); say('Saved. Receipt ' + d.receipt + '.');
       })
       .catch(function (e) { say(e.message || 'Could not save that answer.', true); })
-      .then(function () { busy = false; ['yes', 'no', 'skip'].forEach(function (id) { $(id).disabled = false; }); });
+      .then(function () {
+        busy = false;
+        ['yes', 'no', 'skip'].forEach(function (id) { $(id).disabled = false; });
+        if (items.length) $('yes').focus();
+      });
   }
   $('yes').addEventListener('click', function () { send('yes'); });
   $('no').addEventListener('click', function () { send('no'); });

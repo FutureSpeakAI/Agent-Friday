@@ -69,7 +69,9 @@ def triage_label():
     from agent_friday import core
     if not core._is_local_request():
         return jsonify({"status": "error", "message": _ON_THIS_PC}), 403
-    data = request.get_json(silent=True) or {}
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return jsonify({"status": "error", "message": "Send the item and your answer."}), 400
     try:
         row = triage.answer(str(data.get("subject") or ""), str(data.get("answer") or ""))
     except ValueError as e:
