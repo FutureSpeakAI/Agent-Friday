@@ -21,7 +21,7 @@ Design rules (consistent with the rest of the codebase):
   • The google-genai SDK and the Gemini client are imported LAZILY inside the
     call sites, so importing this module never requires the SDK or a key — it
     stays import-safe under FRIDAY_TESTING and offline.
-  • The API key is read from core.GEMINI_API_KEY (loaded from env / credential store).
+  • The client goes through the key gateway (services/gemini_client): it holds only a stand-in key.
     No keys in source.
   • Every generation surfaces a holographic process orb (register → progress →
     complete → fade) exactly like the self-improvement / daily-creation loops.
