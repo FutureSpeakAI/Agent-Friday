@@ -378,6 +378,12 @@ def disclosure(row: Optional[dict]) -> str:
             "keep it on your PC." % (where, name))
 
 
+def _lead(notes: list, text: str) -> str:
+    """A refusal raised after the bind said something (a lost chat) carries it first: a refusal is the one thing the
+    device shows, so a note kept for a later answer would never be heard if the retry is answered in another chat."""
+    return " ".join([str(n) for n in notes] + [text])
+
+
 def bind_pick(cid: Optional[str], model_id: str, row: Optional[dict] = None, dev_id: str = "") -> Bound:
     """Make the chat run on ``model_id`` for a pick and return the chat it now runs in, with what the reply should
     say. Raises turn.TurnRefused with the PC's own reason when the seat cannot be bound, never a quiet other
@@ -431,22 +437,29 @@ def bind_pick(cid: Optional[str], model_id: str, row: Optional[dict] = None, dev
             inner = bind_pick(None, model_id, row, dev_id)
             _relocate(dev_id, asked_cid or "", inner.cid)
             return Bound(inner.cid, (LOST_CHAT_NOTE,) + tuple(inner.notes), True)
-        raise turn.TurnRefused(404, "this computer has no such chat", "unknown_conversation", **_made(started, cid))
-    if status >= 500 or status in (401, 403):
-        raise turn.TurnRefused(503, "this computer could not change that chat right now", "chat_unavailable",
+        raise turn.TurnRefused(404, _lead(notes, "this computer has no such chat"), "unknown_conversation",
                                **_made(started, cid))
+    if status >= 500 or status in (401, 403):
+        raise turn.TurnRefused(503, _lead(notes, "this computer could not change that chat right now"),
+                               "chat_unavailable", **_made(started, cid))
     conv = d.get("conversation") or {}
     if d.get("seat_pending") and (conv.get("seat") or {}).get("model") != model_id:
-        raise turn.TurnRefused(503, str(d.get("note") or "this computer is still checking its local models")[:240],
-                               "seat_pending", model=model_id, retry=True, **_made(started, cid))
+        say = str(d.get("note") or "this computer is still checking its local models")[:240]
+        raise turn.TurnRefused(503, _lead(notes, say), "seat_pending", model=model_id, retry=True,
+                               **_made(started, cid))
     if d.get("superseded") and (conv.get("seat") or {}).get("model") != model_id:
-        raise turn.TurnRefused(409, "the model for this chat was changed on this computer a moment ago; pick again",
+        raise turn.TurnRefused(409, _lead(notes, "the model for this chat was changed on this computer a moment ago; "
+                                                 "pick again"),
                                "seat_superseded", model=model_id, **_made(started, cid))
     if (conv.get("seat") or {}).get("model") != model_id:
         reason = str(d.get("note") or "this computer would not use that model for this chat")[:240]
         if dev_id and _refused_before(key, reason):
             return Bound(cid, tuple(notes) + (reason.rstrip(".") + ". " + FELL_BACK_NOTE,), started)
-        raise turn.TurnRefused(409, reason, "seat_refused", model=model_id, **_made(started, cid))
+        if dev_id and started:
+            # The 409 hands back the chat this call made; the retry INTO it is a different key and must fall back
+            # at once, not be refused a second time. The lost-chat note is said here, with the refusal.
+            _refused_before((dev_id, cid, model_id), reason)
+        raise turn.TurnRefused(409, _lead(notes, reason), "seat_refused", model=model_id, **_made(started, cid))
     _forget_refusal(key)
     said = disclosure(row)
     if said:

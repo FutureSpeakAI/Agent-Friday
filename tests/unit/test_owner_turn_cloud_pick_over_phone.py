@@ -190,6 +190,26 @@ def test_a_device_that_keeps_sending_the_lost_chat_id_is_answered_in_the_one_fre
     assert desk.minted == 1
 
 
+def test_a_refusal_in_a_lost_or_new_chat_is_not_repeated_when_the_phone_retries_into_the_chat_it_was_handed(gw, desk):
+    desk.refuse = "no room"
+    for sent in (STALE, None):              # a chat the PC lost, and a first message with no chat id at all
+        dev = phone()
+        turns = len(desk.turns)
+        first = ask(gw, dev, model=OPUS, conversation_id=sent) if sent else ask(gw, dev, model=OPUS)
+        body = first.get_json()
+        assert first.status_code == 409 and len(desk.turns) == turns        # refused, no turn ran
+        handed = body["conversation_id"]                    # the chat this refusal made, so a retry reuses it
+        if sent:
+            assert "new chat" in body["error"].lower()      # the lost chat is said once, with the refusal itself
+        made = desk.minted
+        again = ask(gw, dev, model=OPUS, conversation_id=handed)
+        assert again.status_code == 200, again.get_data(as_text=True)     # answered, not refused a second time
+        b = block(again)
+        assert b["substituted"] is True and "no room" in b["notice"] and b["conversation_id"] == handed
+        assert desk.minted == made                          # no second chat
+        assert "new chat" not in b["notice"].lower()        # and the lost chat is not announced twice
+
+
 def test_a_conversation_id_this_pc_would_never_mint_never_touches_a_path(gw, desk, monkeypatch):
     seen = []
     real = desk.api
