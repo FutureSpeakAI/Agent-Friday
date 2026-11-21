@@ -166,11 +166,43 @@ def test_two_threads_cannot_both_spend_the_same_balance(tmp_path):
     assert journal.balances()["treasury"] == 1 and journal.head() == 3
 
 
+def test_threads_of_one_journal_are_never_told_another_writer_holds_it(tmp_path):
+    """Found by a test that failed about one run in two: each write probes the authority's lock, and two threads probing
+    at once refused each other, so a thread raised AuthorityHeld when no authority existed. Rule: the writer lock is
+    probed one thread at a time, so only a real holder can refuse a write."""
+    errors = []
+    for round_ in range(20):
+        journal = make(tmp_path / f"r{round_}.sqlite", supply=100)
+
+        def spend(n):
+            try:
+                journal.execute(cmd(f"e{n}", treasury=-1, **{f"acct{n}": 1}))
+            except ij.AuthorityHeld as err:
+                errors.append(err)
+        threads = [threading.Thread(target=spend, args=(n,)) for n in range(8)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+    assert errors == []
+
+
 RACE = textwrap.dedent("""
     import sys
     sys.path.insert(0, {src!r})
+    import time
     from agent_friday.services import issuer_journal as ij
-    j = ij.IssuerJournal({path!r}, "test.one", 10)
+    # the journal has one writer at a time (the exclusive authority lock): the other process waits its turn to open it
+    # and never writes beside it. test_two_processes_cannot_overdraw_one_balance fails if either process posts past the supply.
+    deadline = time.time() + 90
+    while True:
+        try:
+            j = ij.IssuerJournal({path!r}, "test.one", 10)
+            break
+        except ij.AuthorityHeld:
+            if time.time() > deadline:
+                raise
+            time.sleep(0.05)
     posted = 0
     for n in range(6):
         o = j.execute({{"issuer": "test.one", "effect": "p{tag}-%d" % n, "action": "p{tag}-%d" % n,
