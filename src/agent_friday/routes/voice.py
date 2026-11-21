@@ -3043,6 +3043,15 @@ def _build_front_speaker_prompt(settings=None, model_label=None):
 #: is the deeper mind's business (it may wait for the call to end), so the
 #: words promise a report, not an outcome.
 DEFER_ACK = "I'll hand that to my deeper mind; it'll report back."
+#: The same hand-off while the call has the brain parked: nothing runs until the call ends. Held by
+#: tests/unit/test_voice_parked_brain_is_honest.py.
+PARKED_ACK = "I can't do that during this call. I'll do it right after we finish, and it will ask for your approval first."
+
+
+def _brain_parked_for_this_call(session) -> bool:
+    """True for a local voice call while the brain seat is not serving (work for it is queued until the end)."""
+    from agent_friday.services import voice_engine as _ve
+    return _ve._local_session(session) and _ve._brain_serving() is None
 
 
 def _lr_follow_turns() -> int:
@@ -3119,7 +3128,8 @@ def _voice_route_plan(user_text, held, *, pending_card=None, route_fn=None,
     if r.decision == "defer" and "delegate_to_friday" in held:
         tool, args = "delegate_to_friday", {"request": _deferred_request(
             user_text, r, local=_deeper_mind_is_local(session))}
-        ack, label, handed = DEFER_ACK, "handed to the deeper mind", "delegate_to_friday"
+        ack = PARKED_ACK if _brain_parked_for_this_call(session) else DEFER_ACK
+        label, handed = "handed to the deeper mind", "delegate_to_friday"
     receipt = _lr.surface_receipt(r, ran=tool, handed_to=handed)
     return {"tool": tool, "args": args, "ack": ack, "label": label,
             "question": r.question if r.decision == "ask" else "", "receipt": receipt}
