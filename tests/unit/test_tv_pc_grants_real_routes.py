@@ -12,6 +12,7 @@ from agent_friday.services import approvals, standing_grants as sg
 from tests.unit.test_tv_pc_standing_offer import _grant_stores, _offer, _grants  # noqa: F401 (fixture + helpers)
 from tests.unit.test_tv_pc_standing_offer import Enrolled, _clean, client  # noqa: F401 (fixtures)
 
+
 def test_the_phone_lists_the_grant_it_made_through_the_real_desktop_route(client):
     phone = Enrolled(client)
     offer = _offer()
