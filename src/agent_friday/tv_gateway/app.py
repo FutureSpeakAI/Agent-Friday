@@ -124,9 +124,9 @@ def create_app(tailnet: bool = False) -> Flask:
         try:
             token = device_pairing.open_session(str(body.get("device_id", "")),
                                                 str(body.get("nonce", "")), sig)
-        except device_pairing.ReconfirmNeeded:
-            return _refuse(403, "This device's 30 days are up. Ask the owner to press Approve on the Keep this "
-                                "device paired card on the PC, then try again.", code="reconfirm_needed")
+        except device_pairing.ReconfirmNeeded as e:
+            return _refuse(403, "This device's %d days are up. Ask the owner to press Approve on the Keep this "
+                                "device paired card on the PC, then try again." % e.days, code="reconfirm_needed")
         if token is None:
             return _refuse(401, "not paired, or the challenge was wrong or used", code="not_paired_or_bad_challenge")
         from agent_friday.tv_gateway import tailnet as tn

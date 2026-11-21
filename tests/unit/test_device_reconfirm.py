@@ -301,7 +301,7 @@ def test_the_card_says_which_device_it_is_how_long_it_buys_and_when_it_would_sto
     tv = pair(due_in_days=3, kind=kind)
     try_open(client, tv)
     [card] = cards(tv)
-    stops = time.strftime("%A %d %B", time.localtime(device_pairing.get_device(tv.id)["reconfirm_by"]))
+    stops = device_pairing.day_text(device_pairing.get_device(tv.id)["reconfirm_by"])
     assert "Living room TV" in card["title"] and word in card["title"].replace("Living room TV", "")
     assert "%d more days" % days in card["description"]
     assert "stops connecting on " + stops in card["description"]
@@ -311,5 +311,17 @@ def test_the_card_for_a_device_that_has_already_stopped_says_so(client):
     tv = pair(due_in_days=-2)
     try_open(client, tv)
     [card] = cards(tv)
-    stopped = time.strftime("%A %d %B", time.localtime(device_pairing.get_device(tv.id)["reconfirm_by"]))
+    stopped = device_pairing.day_text(device_pairing.get_device(tv.id)["reconfirm_by"])
     assert "stopped connecting on " + stopped in card["description"]
+
+
+@pytest.mark.parametrize("kind,days", [("tv", 90), ("phone", 30)])
+def test_the_refusal_names_the_period_of_that_kind_not_always_thirty(client, kind, days):
+    tv = pair(due_in_days=-1, kind=kind)
+    refused = try_open(client, tv).get_json()
+    assert "%d days are up" % days in refused["error"] and refused["code"] == "reconfirm_needed"
+
+
+def test_a_date_has_no_leading_zero():
+    five = time.mktime((2026, 12, 5, 12, 0, 0, 0, 0, -1))
+    assert " 5 " in device_pairing.day_text(five) and " 05 " not in device_pairing.day_text(five)

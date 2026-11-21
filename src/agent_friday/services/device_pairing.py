@@ -507,9 +507,9 @@ def session_message(nonce: str, device_id: str) -> bytes:
 class ReconfirmNeeded(Exception):
     """A device past its reconfirm date asked for a session. Raised only after it signed the challenge."""
 
-    def __init__(self, device_id: str):
+    def __init__(self, device_id: str, days: int = RECONFIRM_DAYS):
         super().__init__("the owner has not kept this device paired")
-        self.device_id = device_id
+        self.device_id, self.days = device_id, days
 
 
 def reconfirm_state(dev: dict) -> str:
@@ -543,7 +543,7 @@ def request_reconfirm(dev: dict) -> Optional[str]:
         what = RECONFIRM_KIND_WORDS.get(str(dev.get("kind") or "").lower(), "device")
         days = reconfirm_days(dev.get("kind"))
         due = float(dev.get("reconfirm_by") or now)
-        when = time.strftime("%A %d %B", time.localtime(due))
+        when = day_text(due)
         # create_approval returns the newest card ever made for a subject, decided or not, so the subject names
         # the ask window too: a later due date, or a re-ask after a decline, gets a fresh card.
         card = approvals.create_approval(
@@ -564,6 +564,12 @@ def request_reconfirm(dev: dict) -> Optional[str]:
         return card.get("approval_id")
     except Exception:
         return None
+
+
+def day_text(ts: float) -> str:
+    """A date for the owner's screen in the PC's own language: "Friday 5 December" (no leading zero)."""
+    local = time.localtime(ts)
+    return "%s %d %s" % (time.strftime("%A", local), local.tm_mday, time.strftime("%B", local))
 
 
 def plain_name(name) -> str:
@@ -619,7 +625,7 @@ def open_session(device_id: str, nonce: str, signature_der: bytes) -> Optional[s
     if state != "ok":
         request_reconfirm(dev)
         if state == "overdue":
-            raise ReconfirmNeeded(dev["id"])
+            raise ReconfirmNeeded(dev["id"], reconfirm_days(dev.get("kind")))
     token = SESSION_PREFIX + secrets.token_urlsafe(32)
     with _LOCK:
         _restore_sessions()
