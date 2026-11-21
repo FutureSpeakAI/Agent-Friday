@@ -526,13 +526,17 @@ _NO = re.compile(r"^(?:friday,?\s+)?(?:no|nope|don'?t|do not|decline|deny|cancel
 
 #: The owner's own stores a spoken lookup may name. A lookup in one of them is the local search, whatever verb
 #: introduced it. Held by tests/unit/test_voice_personal_lookups_stay_local.py (the personal-store tests).
-_OWN_STORE = r"(?:knowledge (?:graph|base)|memory|memories|vault|contacts?|address book|notes|wiki)"
+_OWN_STORE = (r"(?:my\s+(?:knowledge (?:graph|base)|memory|memories|vault|contacts?|address book|notes|wiki)"
+              r"|the\s+(?:knowledge (?:graph|base)|wiki))")
 _OWN_STORE_AFTER = re.compile(
-    r"\b(?:look up|look for|search|find|check|pull up)\s+(?P<q>.+?)\s+(?:in|from|on|using|within)\s+(?:my|the)\s+"
+    r"\b(?:look up|look for|search|find|check|pull up)\s+(?P<q>.+?)\s+(?:in|from|on|using|within)\s+"
     + _OWN_STORE + r"\b", re.I)
 _OWN_STORE_FIRST = re.compile(
-    r"\b(?:look up|look in|search|check|find|pull up)\s+(?:in\s+)?(?:my|the)\s+" + _OWN_STORE
+    r"\b(?:look up|look in|search|check|find|pull up)\s+(?:in\s+)?" + _OWN_STORE
     + r"\s+(?:for|about|on)\s+(?P<q>.+)", re.I)
+#: A lookup that also names what another tool searches (email, files, news, the calendar) is that tool's, as before.
+_OTHER_TOOL_NOUN = re.compile(
+    r"\b(?:e-?mails?|inbox|messages?|files?|folders?|pdfs?|documents?|docs?|news|headlines|calendar)\b", re.I)
 #: The owner directs a search to the web: "the web", "the internet", "web search" always; "search/look/find
 #: online" and a leading "google X" only when the words say nothing of the owner (my online banking, my Google
 #: Drive are the owner's own things, not a request for the web). Held by the web and personal-phrasing tests.
@@ -541,12 +545,16 @@ _SAYS_WEB_WEAK = re.compile(
     r"\b(?:search|look|find|check)(?: out)?(?: it| that| this| for it)? online\b|\bonline for\b"
     r"|^(?:please |can you |could you )?google\s+(?!drive|docs|calendar|photos|account)", re.I)
 _PERSONAL_WORD = re.compile(r"\b(?:my|me|mine|our|we|i)\b", re.I)
-#: A question about the world the owner can have answered by the web without naming anyone: a fixed list of
-#: topics, not wh-words (a person's name behind "who", "where" or "what" is not a public-world question).
+#: A question about the world the owner can have answered by the web without naming anyone. The WHOLE query must be
+#: one fixed topic, optional small words, and at most two plain words for the place or day: no possessive, no
+#: "and", no wh-word (so "weather at Dana's house" or "weather where Dana lives" are not public). Held by
+#: test_a_topic_word_beside_a_person_is_not_a_public_question.
 _PUBLIC_TOPIC = re.compile(
-    r"\b(?:weather|forecast|sunset|sunrise|exchange rate|currency|time zone|capital of|population of|"
-    r"opening hours|hours of|recipe for|score of|translate|definition of|meaning of|"
-    r"distance (?:to|from|between))\b", re.I)
+    r"(?:what(?:'s| is| time is| time)? )?(?:the )?"
+    r"(?:weather|forecast|sunset|sunrise|exchange rate|currency|capital|population|opening hours)"
+    r"(?: time)?(?: is)?"
+    r"(?: (?:of|in|for|at|to|from|today|tomorrow|tonight|now|right now|this (?:morning|afternoon|evening|week|weekend)))*"
+    r"(?: (?!(?:and|or|who|where|when|what|how|my|me|our|we|i)\b)[a-z.]+){0,2}", re.I)
 
 
 def _owner_says_web(text: str) -> bool:
@@ -558,11 +566,13 @@ def _owner_says_web(text: str) -> bool:
 def _public_question(text: str, m) -> bool:
     """Whether a bare "look up ..." asks about the world and nothing of the owner's."""
     q = _query(text, m).get("query", "")
-    return bool(_PUBLIC_TOPIC.search(q)) and not _PERSONAL_WORD.search(q)
+    return bool(_PUBLIC_TOPIC.fullmatch(q)) and not _PERSONAL_WORD.search(q)
 
 
 def _own_store_query(text: str) -> str:
     """The subject of a lookup the owner pointed at their own store, else "". Pure."""
+    if _OTHER_TOOL_NOUN.search(text or ""):
+        return ""
     for pat in (_OWN_STORE_AFTER, _OWN_STORE_FIRST):
         m = pat.search(text or "")
         if m:
