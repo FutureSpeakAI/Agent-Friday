@@ -90,7 +90,7 @@ _FENCE_OPEN = re.compile(
 #: A "[" candidate that is still only letters and spaces and could yet become an opener.
 _FENCE_PREFIX = re.compile(r"\[[a-z\s_\-]*", re.I)
 _FENCE_PROBE = 48
-_FENCE_INVISIBLE = re.compile("[­​-‏‪-‮⁠-⁤﻿]")
+_FENCE_INVISIBLE = re.compile("[\u00ad\u200b-\u200f\u202a-\u202e\u2060-\u2064\ufeff]")
 
 
 class DeltaFilter:
@@ -116,43 +116,42 @@ class DeltaFilter:
 
     def _fence(self, s: str) -> str:
         """Mute the fence wording around untrusted content ("[document content below ... ]", "[web page content
-        below ... ]", "[end of ... content ...]") from its opening phrase to its closing bracket, whatever the
-        delta split. The clause chunker would cut that wording into clauses that each look innocent; here it is
-        withheld whole. Held by tests/unit/test_voice_wrapper_text_is_never_spoken.py."""
+        below ... ]", "[end of ... content ...]") from its opening phrase to its matching closing bracket, whatever
+        the delta split. The clause chunker would cut that wording into clauses that each look innocent; here it is
+        withheld whole. Linear in the input (indices, no re-slicing). Held by
+        tests/unit/test_voice_wrapper_text_is_never_spoken.py."""
         s = self._fence_hold + s
         self._fence_hold = ""
         out = []
-        while s:
+        n, p = len(s), 0
+        while p < n:
             if self._in_fence:
-                k = 0
-                while k < len(s) and self._fence_depth > 0:      # nested brackets inside the fence close in pairs
-                    if s[k] == "[":
+                while p < n and self._fence_depth > 0:       # nested brackets inside the fence close in pairs
+                    if s[p] == "[":
                         self._fence_depth += 1
-                    elif s[k] == "]":
+                    elif s[p] == "]":
                         self._fence_depth -= 1
-                    k += 1
+                    p += 1
                 if self._fence_depth > 0:
-                    return "".join(out)
-                s = s[k:]
+                    break
                 self._in_fence = False
                 continue
-            i = s.find("[")
+            i = s.find("[", p)
             if i < 0:
-                out.append(s)
+                out.append(s[p:])
                 break
-            out.append(s[:i])
-            rest = s[i:]
-            probe = _FENCE_INVISIBLE.sub("", unicodedata.normalize("NFKC", rest[:_FENCE_PROBE]))
+            out.append(s[p:i])
+            probe = _FENCE_INVISIBLE.sub("", unicodedata.normalize("NFKC", s[i:i + _FENCE_PROBE]))
             if _FENCE_OPEN.match(probe):
                 self._in_fence = True
                 self._fence_depth = 1
-                s = rest[1:]
+                p = i + 1
                 continue
-            if len(rest) < _FENCE_PROBE and "]" not in rest and _FENCE_PREFIX.fullmatch(probe):
-                self._fence_hold = rest          # may still become an opener: wait for more text
+            if n - i < _FENCE_PROBE and "]" not in s[i:] and _FENCE_PREFIX.fullmatch(probe):
+                self._fence_hold = s[i:]         # may still become an opener: wait for more text
                 break
             out.append("[")
-            s = rest[1:]
+            p = i + 1
         return "".join(out)
 
     def _markup(self, delta: str) -> str:
@@ -961,6 +960,7 @@ class VoiceSession:
                 reply = (mind["reply"] or "").strip()
                 tail = dfilter.flush()
                 if tail:
+                    streamed["chars"] += len(tail)
                     for clause in chunker.feed(tail):
                         self._enqueue_clause(turn, clause, receipt)
                 if streamed["chars"] == 0 and reply:
