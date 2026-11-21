@@ -34,6 +34,16 @@ def _isolated(tmp_path, monkeypatch):
     from agent_friday.routes import federation as routes
     from agent_friday.services import approvals, peer_wire_v2
     monkeypatch.setattr(routes, "_V2_STORE", peer_wire_v2.PeerEventStore(tmp_path / "v2.db"))
+    # No issuer is accepted by default (NS-40.4-1); the bundle's vectors name this one, so the owner has accepted it.
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+    from agent_friday.services import accepted_issuers, issuer_registry
+    owner = Ed25519PrivateKey.from_private_bytes(bytes(range(32)))
+    owner_public = owner.public_key().public_bytes(serialization.Encoding.Raw, serialization.PublicFormat.Raw).hex()
+    accepted = accepted_issuers.AcceptedIssuers(tmp_path / "accepted.json", lambda data: owner.sign(data).hex(),
+                                                owner_public)
+    accepted.accept(issuer_registry.IssuerRef("test-issuer", "d" * 64, "TESTP"), accepted_issuers.Press(), 1)
+    monkeypatch.setattr(routes, "_ACCEPTED", accepted)
     monkeypatch.setattr(approvals, "APPROVALS_FILE", tmp_path / "approvals.json")
     monkeypatch.setattr(approvals, "_notify_pending", lambda rec: None)
     monkeypatch.setattr(core, "_load_settings", lambda: {"held_features": dict(ALLOW)})
