@@ -24,6 +24,6 @@ def test_a_failed_sensitivity_check_refuses_without_quoting_the_message(monkeypa
     assert "RuntimeError" in why and "does not cover it" in why, "it still refuses, and says what kind of error"
 
 
-def test_the_check_can_fail_the_old_format_quoted_the_exception_text():
-    exc = RuntimeError("could not classify: " + CANARY)
-    assert CANARY in ("the sensitivity check could not run (%s)" % exc)
+def test_any_exception_type_is_named_through_the_real_function(monkeypatch):
+    why = _refusal(monkeypatch, ValueError(CANARY))
+    assert "ValueError" in why and CANARY not in why, "the type is the part of the error the reason names"
