@@ -7,6 +7,8 @@ what is remembered, what the taint ledger is told, and that the turn is marked s
 """
 from __future__ import annotations
 
+import threading
+
 import pytest
 
 from tests.api.turn_context_helpers import capture_requests, route_to, turn_context, whole_request
@@ -77,6 +79,49 @@ def test_the_outside_text_is_stored_nowhere_and_the_turn_is_kept_off_the_record(
     assert all((m.get("meta") or {}).get("off_record") for m in rows if m.get("role") in ("user", "assistant", "friday"))
     assert {m.get("role") for m in rows} >= {"user", "friday"}
     assert "Pay invoice" not in client.get("/api/chat/history").get_data(as_text=True)
+
+
+def test_every_store_that_asks_off_record_is_told_to_skip_the_turn(client, captured, monkeypatch):
+    from agent_friday.services import off_record
+    asked = []
+    real = off_record.skip
+    me = threading.get_ident()           # a stream's worker thread can still be finishing when the next test runs
+    monkeypatch.setattr(off_record, "skip", lambda store, settings=None: (
+        asked.append((store, real(store, settings))) if threading.get_ident() == me else None,
+        real(store, settings))[1])
+    route_to(monkeypatch, "cloud")
+    send(client, new_conversation(client), outside_context=OUTSIDE)
+    assert asked and all(skipped for _, skipped in asked), asked    # one mechanism: the trace and the rest skip too
+    assert "conversations" in {store for store, _ in asked}
+
+
+def test_the_stream_route_holds_the_turn_from_the_moment_it_is_accepted(client, captured, monkeypatch):
+    from agent_friday.services import off_record
+    asked = []
+    real = off_record.skip
+    me = threading.get_ident()           # a stream's worker thread can still be finishing when the next test runs
+    monkeypatch.setattr(off_record, "skip", lambda store, settings=None: (
+        asked.append((store, real(store, settings))) if threading.get_ident() == me else None,
+        real(store, settings))[1])
+    route_to(monkeypatch, "cloud")
+    cid = new_conversation(client)
+    r = client.post("/api/chat/stream", json={"message": SAID, "conversation_id": cid, "outside_context": OUTSIDE})
+    assert r.status_code == 200, r.get_data(as_text=True)[:300]
+    mine = [skipped for store, skipped in asked if store == "conversations"]
+    assert mine and all(mine), asked                              # the owner's accepted words are memory-only too
+
+
+def test_an_ordinary_turn_asks_the_same_stores_and_none_skips(client, captured, monkeypatch):
+    from agent_friday.services import off_record
+    asked = []
+    real = off_record.skip
+    me = threading.get_ident()           # a stream's worker thread can still be finishing when the next test runs
+    monkeypatch.setattr(off_record, "skip", lambda store, settings=None: (
+        asked.append((store, real(store, settings))) if threading.get_ident() == me else None,
+        real(store, settings))[1])
+    route_to(monkeypatch, "cloud")
+    send(client, new_conversation(client))
+    assert asked and not any(skipped for _, skipped in asked)
 
 
 def test_an_ordinary_turn_is_still_kept_normally(client, captured, monkeypatch):
