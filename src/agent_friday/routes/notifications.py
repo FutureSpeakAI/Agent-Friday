@@ -129,6 +129,24 @@ def mute_notification_kind():
     return jsonify({"status": "ok", "mutes": mutes})
 
 
+@notif_bp.route('/api/notifications/interrupt-rules', methods=['GET', 'POST'])
+def interrupt_rules():
+    """What may interrupt the owner, in words: GET the rules; POST {id, on} to switch one on or off.
+    Only the successful completion or delivery of a scheduled routine can be switched on here;
+    failures, approvals, status and routing notices and news keep their own rules."""
+    from agent_friday.services import notification_policy as _pol
+    if request.method == 'GET':
+        return jsonify({"status": "ok", "rules": _pol.rules_in_words()})
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return jsonify({"status": "error", "message": "Send the rule and on or off."}), 400
+    try:
+        rules = _pol.set_interrupt_rule(str(data.get('id') or ''), data.get('on'))
+    except ValueError as e:
+        return jsonify({"status": "error", "message": str(e)}), 400
+    return jsonify({"status": "ok", "rules": rules})
+
+
 @notif_bp.route('/api/notifications/clear-all', methods=['POST'])
 def clear_all_notifications():
     """Clear the tray; pending approvals stay."""

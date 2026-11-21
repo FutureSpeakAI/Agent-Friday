@@ -66060,6 +66060,29 @@ function SettingsNotificationMutes() {
           React.createElement('button', { className: 'settings-btn', onClick: () => unmute(m) }, 'Unmute'))));
 }
 
+/* What may interrupt you: the rule (notification_interrupt_rules) in words, editable here. Only the
+   successful completion or delivery of a scheduled routine can be switched on; failures, approvals,
+   status and routing notices and news keep their own rules. */
+function SettingsNotificationInterrupts() {
+  const [rules, setRules] = React.useState(null);
+  const load = () => apiFetch('/api/notifications/interrupt-rules').then(r => r.json())
+    .then(d => setRules((d && d.rules) || [])).catch(() => setRules([]));
+  React.useEffect(() => { load(); }, []);
+  const toggle = r => {
+    apiFetch('/api/notifications/interrupt-rules', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id: r.id, on: !r.on }) })
+      .then(res => res.json()).then(d => { if (d && d.rules) setRules(d.rules); }).catch(() => {});
+  };
+  return React.createElement(StSection, { title: 'What may interrupt you' },
+    React.createElement('div', { style: { fontSize: 10, color: 'rgba(255,255,255,0.55)', marginBottom: 8, lineHeight: 1.5 } },
+      'A notice that a scheduled job or routine finished well can interrupt you when its box is ticked. ' +
+      'Failures, approvals, status and routing notices and news keep their own rules.'),
+    rules === null ? null : rules.map(r => React.createElement('label', { key: r.id, className: 'notif-interrupt-row',
+        style: { display: 'flex', alignItems: 'center', gap: 8, fontSize: 11, padding: '3px 0' } },
+      React.createElement('input', { type: 'checkbox', checked: !!r.on, onChange: () => toggle(r) }),
+      React.createElement('span', null, r.words))));
+}
+
 function SettingsTabBrowser() {
   const [st, setSt] = useState(null);
   const [msg, setMsg] = useState('');
@@ -68167,7 +68190,7 @@ function SettingsWS() {
   }, /*#__PURE__*/React.createElement(ScheduledJobDefaults, {
     s: s,
     save: save
-  })), /*#__PURE__*/React.createElement(SettingsNotificationMutes, null)), tab === 'intelligence' && /*#__PURE__*/React.createElement(SettingsTabIntelligence, {
+  })), /*#__PURE__*/React.createElement(SettingsNotificationInterrupts, null), /*#__PURE__*/React.createElement(SettingsNotificationMutes, null)), tab === 'intelligence' && /*#__PURE__*/React.createElement(SettingsTabIntelligence, {
     s: s,
     save: save
   }), tab === 'connections' && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement(StSection, {
