@@ -21,6 +21,12 @@ a requested id that is not the served id is marked ``substituted``. Nothing is c
 phone sends no model, or one this PC does not list: the chat runs on its own seat and the block still
 says what served and what was asked.
 
+A device's pick never loops on a refusal (Stephen, 2026-11-20, the phone screenshot at 07:18): a chat this PC no
+longer has is answered in one fresh chat on the pick, said once; a seat the PC refuses with a reason is refused
+once, then the next message is answered on the chat's own seat with that reason as its notice; a cloud pick says
+once what leaves the PC; the ``friday`` block carries no JSON null. Held by
+tests/unit/test_owner_turn_cloud_pick_over_phone.py and tests/api/test_owner_turn_real_seat_route.py.
+
 How: the turn runs on this PC's own app, in process, with this PC's own session token (a gateway
 device never holds or sees one). Nothing about the owner's chat is reimplemented here.
 """
@@ -32,7 +38,8 @@ import queue
 import re
 import threading
 import time
-from typing import Iterator, Optional
+from collections import OrderedDict
+from typing import Iterator, NamedTuple, Optional
 
 from agent_friday.tv_gateway import voice_reply
 
@@ -296,15 +303,124 @@ def _patch_seat_waiting(cid: str, seat: dict):
         time.sleep(SEAT_POLL_S)
 
 
-def bind_seat(cid: Optional[str], model_id: str) -> str:
-    """Make the chat run on ``model_id`` and return its conversation id. Raises turn.TurnRefused with the PC's own
-    reason when the seat cannot be bound, never a quiet other model: 409 ``seat_refused`` (the PC will not),
-    503 ``seat_pending`` (still checking its local models after waiting SEAT_WAIT_S: retry), 409 ``seat_superseded``
-    (the chat's model was changed at the PC meanwhile), 400 ``bad_request``, 404 ``unknown_conversation``,
-    503 ``chat_unavailable`` (the PC's chat store failed)."""
+class Bound(NamedTuple):
+    """A pick bound to a chat: the chat it runs in, what the reply should say about the bind (a lost chat, a
+    visible fallback's reason, a cloud disclosure), and whether THIS call made that chat (a refusal later in the
+    same turn then carries its id, so a retry reuses it)."""
+    cid: str
+    notes: tuple = ()
+    made: bool = False
+
+
+#: One refusal per (device, chat, model): the same refusal is never given twice. The second message with the same
+#: pick is answered on the chat's own seat with the reason as its notice (Stephen, 2026-11-20: "never repeat the
+#: same refusal; if a pick truly can't run, fall back visibly or ask once"). A bind that later succeeds forgets
+#: it. Bounded, no expiry (the owner's words were "never"): a restart forgets everything, which costs at most one
+#: more refusal.
+_REFUSED: "OrderedDict[tuple, str]" = OrderedDict()
+#: (device, the chat id it keeps sending) -> the fresh chat it was moved to when that chat was gone: one fresh chat
+#: per lost chat, not one per message, until the device adopts the new id.
+_RELOCATED: "OrderedDict[tuple, str]" = OrderedDict()
+_REFUSED_MAX = 256
+_REFUSED_LOCK = threading.Lock()
+
+LOST_CHAT_NOTE = "The chat this device was in is no longer on your PC, so a new chat was started for your pick."
+FELL_BACK_NOTE = ("This message was answered by this chat's own model instead; pick another model on the chip to "
+                  "change it.")
+
+
+def _refused_before(key: tuple, reason: str) -> bool:
+    with _REFUSED_LOCK:
+        if _REFUSED.get(key) == reason:
+            return True
+        _REFUSED[key] = reason
+        _REFUSED.move_to_end(key)
+        while len(_REFUSED) > _REFUSED_MAX:
+            _REFUSED.popitem(last=False)
+        return False
+
+
+def _forget_refusal(key: tuple) -> None:
+    with _REFUSED_LOCK:
+        _REFUSED.pop(key, None)
+
+
+def _reset_for_tests() -> None:
+    with _REFUSED_LOCK:
+        _REFUSED.clear()
+        _RELOCATED.clear()
+
+
+def _relocation(dev_id: str, cid: str) -> Optional[str]:
+    with _REFUSED_LOCK:
+        return _RELOCATED.get((dev_id, cid))
+
+
+def _relocate(dev_id: str, cid: str, new_cid: str) -> None:
+    if not dev_id or not cid:
+        return
+    with _REFUSED_LOCK:
+        _RELOCATED[(dev_id, cid)] = new_cid
+        _RELOCATED.move_to_end((dev_id, cid))
+        while len(_RELOCATED) > _REFUSED_MAX:
+            _RELOCATED.popitem(last=False)
+
+
+def disclosure(row: Optional[dict]) -> str:
+    """What leaves the PC when a cloud model is bound from a device, said once at the bind: the provider, the
+    model, and that the context the PC adds goes with it. Nothing for a local model."""
+    if not row or row.get("kind") != "cloud":
+        return ""
+    name = str(row.get("name") or row.get("id") or "this model")
+    where = str(row.get("provider_name") or row.get("provider") or "its provider")
+    return ("Your pick leaves your PC: this chat now goes to %s (%s) with the context your PC adds "
+            "(knowledge graph, wiki, memory), redacted by the egress gate. Pick a local model on the chip to "
+            "keep it on your PC." % (where, name))
+
+
+def _lead(notes: list, text: str) -> str:
+    """A refusal raised after the bind said something (a lost chat) carries it first: a refusal is the one thing the
+    device shows, so a note kept for a later answer would never be heard if the retry is answered in another chat."""
+    return " ".join([str(n) for n in notes] + [text])
+
+
+def bind_pick(cid: Optional[str], model_id: str, row: Optional[dict] = None, dev_id: str = "") -> Bound:
+    """Make the chat run on ``model_id`` for a pick and return the chat it now runs in, with what the reply should
+    say. Raises turn.TurnRefused with the PC's own reason when the seat cannot be bound, never a quiet other
+    model: 409 ``seat_refused`` (the PC will not), 503 ``seat_pending`` (still checking its local models after
+    waiting SEAT_WAIT_S: retry), 409 ``seat_superseded`` (the chat's model was changed at the PC meanwhile),
+    400 ``bad_request``, 404 ``unknown_conversation``, 503 ``chat_unavailable`` (the PC's chat store failed).
+
+    With a ``dev_id`` (a device's pick) three things are softened, none of them into a quiet other model:
+    a chat this PC no longer has starts a fresh chat on the pick and says so once (a device that keeps sending
+    the lost id is answered in that same fresh chat: relocated, no second chat, no second notice); a seat the
+    PC refuses with a reason is refused ONCE per (device, chat, model), and the next message with the same pick
+    is answered on the chat's own seat with the reason as its notice; and a cloud model says once what leaves
+    the PC. With no ``dev_id`` (bind_seat, the strict form) none of that applies and every refusal raises
+    (tests/unit/test_owner_turn_cloud_pick_over_phone.py)."""
     from agent_friday.tv_gateway import turn
     seat = {"model": model_id}
+    asked_cid = cid
+    key = (dev_id, cid or "", model_id)
+    notes: list = []
     started = not cid
+    if cid:
+        if not valid_cid(cid):
+            raise turn.TurnRefused(400, "that chat id is not valid", "bad_request")
+        conv = conversation(cid)
+        if conv is None and dev_id:
+            moved = _relocation(dev_id, cid)
+            if moved and moved != cid and valid_cid(moved):
+                cid = moved                 # the fresh chat this device was moved to the last time
+                conv = conversation(cid)
+        if conv is None:
+            if not dev_id:
+                raise turn.TurnRefused(404, "this computer has no such chat", "unknown_conversation")
+            notes.append(LOST_CHAT_NOTE)
+            cid = None
+        elif (conv.get("seat") or {}).get("model") == model_id:
+            _forget_refusal(key)
+            return Bound(cid)               # this chat's OWN seat already: nothing to change, nothing to reload
     if not cid:
         # Start the chat WITHOUT a seat, then bind it through the same checked path as an existing chat: the
         # desktop's create route stores a seat unchecked, and only its PATCH refuses a second local model.
@@ -312,32 +428,50 @@ def bind_seat(cid: Optional[str], model_id: str) -> str:
         cid = (d.get("conversation") or {}).get("id")
         if not cid:
             raise turn.TurnRefused(503, "this computer could not start that chat", "chat_unavailable")
-    else:
-        if not valid_cid(cid):
-            raise turn.TurnRefused(400, "that chat id is not valid", "bad_request")
-        conv = conversation(cid)
-        if not conv:
-            raise turn.TurnRefused(404, "this computer has no such chat", "unknown_conversation")
-        if (conv.get("seat") or {}).get("model") == model_id:
-            return cid                      # this chat's OWN seat already: nothing to change, nothing to reload
+        started = True
+        _relocate(dev_id, asked_cid or "", cid)
     # (the PATCH below is shared by both branches; a slow local-model check is waited out, not refused)
     status, d = _patch_seat_waiting(cid, seat)
     if status == 404:
-        raise turn.TurnRefused(404, "this computer has no such chat", "unknown_conversation", **_made(started, cid))
-    if status >= 500 or status in (401, 403):
-        raise turn.TurnRefused(503, "this computer could not change that chat right now", "chat_unavailable",
+        if dev_id and not started:          # gone between the read and the write: the same fresh start
+            inner = bind_pick(None, model_id, row, dev_id)
+            _relocate(dev_id, asked_cid or "", inner.cid)
+            return Bound(inner.cid, (LOST_CHAT_NOTE,) + tuple(inner.notes), True)
+        raise turn.TurnRefused(404, _lead(notes, "this computer has no such chat"), "unknown_conversation",
                                **_made(started, cid))
+    if status >= 500 or status in (401, 403):
+        raise turn.TurnRefused(503, _lead(notes, "this computer could not change that chat right now"),
+                               "chat_unavailable", **_made(started, cid))
     conv = d.get("conversation") or {}
     if d.get("seat_pending") and (conv.get("seat") or {}).get("model") != model_id:
-        raise turn.TurnRefused(503, str(d.get("note") or "this computer is still checking its local models")[:240],
-                               "seat_pending", model=model_id, retry=True, **_made(started, cid))
+        say = str(d.get("note") or "this computer is still checking its local models")[:240]
+        raise turn.TurnRefused(503, _lead(notes, say), "seat_pending", model=model_id, retry=True,
+                               **_made(started, cid))
     if d.get("superseded") and (conv.get("seat") or {}).get("model") != model_id:
-        raise turn.TurnRefused(409, "the model for this chat was changed on this computer a moment ago; pick again",
+        raise turn.TurnRefused(409, _lead(notes, "the model for this chat was changed on this computer a moment ago; "
+                                                 "pick again"),
                                "seat_superseded", model=model_id, **_made(started, cid))
     if (conv.get("seat") or {}).get("model") != model_id:
-        raise turn.TurnRefused(409, str(d.get("note") or "this computer would not use that model for this chat")[:240],
-                               "seat_refused", model=model_id, **_made(started, cid))
-    return cid
+        reason = str(d.get("note") or "this computer would not use that model for this chat")[:240]
+        if dev_id and _refused_before(key, reason):
+            return Bound(cid, tuple(notes) + (reason.rstrip(".") + ". " + FELL_BACK_NOTE,), started)
+        if dev_id and started:
+            # The 409 hands back the chat this call made; the retry INTO it is a different key and must fall back
+            # at once, not be refused a second time. The lost-chat note is said here, with the refusal.
+            _refused_before((dev_id, cid, model_id), reason)
+        raise turn.TurnRefused(409, _lead(notes, reason), "seat_refused", model=model_id, **_made(started, cid))
+    _forget_refusal(key)
+    said = disclosure(row)
+    if said:
+        notes.append(said)
+    return Bound(cid, tuple(notes), started)
+
+
+def bind_seat(cid: Optional[str], model_id: str) -> str:
+    """Make the chat run on ``model_id`` and return its conversation id, or raise turn.TurnRefused with the PC's
+    reason (the codes are bind_pick's). The strict form: no memo, no fallback, no relocation. The switch route
+    (conversation_state), the voice default and tests use it."""
+    return bind_pick(cid, model_id).cid
 
 
 def served(payload: dict, requested: str, cid: Optional[str], expected: str = "") -> dict:
@@ -432,6 +566,7 @@ def run(dev: dict, body: dict) -> Iterator[str]:
     asked = requested
     voice = is_voice_turn(dev, body)
     default = None
+    notes: list = []                        # what the bind has to say, heard once with this turn's reply
     if requested:
         # A pick is honoured or refused loudly, with the reason, before anything runs: never a quiet
         # other model (Stephen, 2026-11-14: "I selected opus ... no response at all").
@@ -449,7 +584,9 @@ def run(dev: dict, body: dict) -> Iterator[str]:
             raise turn.TurnRefused(503, "this computer could not check that model right now; try again",
                                    "slate_unavailable", requested=requested)
         requested = row["id"]                   # a family word or a display name means this one id
-        cid = bind_seat(cid, requested)
+        bound = bind_pick(cid, requested, row, str((dev or {}).get("id") or ""))
+        cid, notes = bound.cid, list(bound.notes)
+        new_chat = new_chat or bound.made   # a chat the bind made for a lost one rides on a later refusal too
     elif voice:
         cid, default = fast_voice_default(cid, dev)
     from agent_friday.tv_gateway import tailnet
@@ -472,7 +609,8 @@ def run(dev: dict, body: dict) -> Iterator[str]:
     if response.status_code != 200:
         # Always 503: a 401/423 from the desktop's own door is the PC's problem, not the phone's session failing.
         raise turn.TurnRefused(503, "this computer did not take the turn", **_made(new_chat and bool(cid), cid))
-    return _stream(response, dev, requested, cid, expected=expected, voice=voice, voice_default=default, asked=asked)
+    return _stream(response, dev, requested, cid, expected=expected, voice=voice, voice_default=default, asked=asked,
+                   notes=notes)
 
 
 def _status(status: str, started: float, detail: str = "") -> str:
@@ -482,9 +620,22 @@ def _status(status: str, started: float, detail: str = "") -> str:
                                               "elapsed_s": int(time.time() - started)}})
 
 
+def _with_notes(truth: dict, notes: Optional[list]) -> dict:
+    """What the bind had to say (a lost chat, a fallback's reason, a cloud disclosure) joins the desktop's notice,
+    on an answer and on a turn that came back empty alike: a one-time note is heard once."""
+    truth["notice"] = " ".join(s for s in [str(truth.get("notice") or "")] + [str(n) for n in notes or []]
+                               if s).strip() or None
+    return truth
+
+
+def _public(truth: dict) -> dict:
+    """The block as a device reads it: no JSON null (a phone's JSON reader prints one as the word "null")."""
+    return {k: v for k, v in truth.items() if v is not None}
+
+
 def _stream(response, dev: Optional[dict] = None, requested: str = "", cid: Optional[str] = None,
             voice: bool = False, voice_default: Optional[dict] = None, asked: str = "",
-            expected: str = "") -> Iterator[str]:
+            expected: str = "", notes: Optional[list] = None) -> Iterator[str]:
     """The phone's stream: progress while the desktop works, then the FINAL answer only.
 
     The desktop's own deltas are not relayed as they arrive: they can carry a tool round's narration,
@@ -534,10 +685,11 @@ def _stream(response, dev: Optional[dict] = None, requested: str = "", cid: Opti
         # scratchpad came back, a failure, the deadline). Guarded by tests/unit/test_owner_turn_long_turn.py.
         yield _event({"type": "error", "error": {"type": "api_error", "message": (failed or (
             "the computer finished without an answer; it may be on its screen")) [:300]},
-                      "friday": served(payload, requested, cid, expected)})
+                      "friday": _public(_with_notes(served(payload, requested, cid, expected), notes))})
         return
     truth = served(payload, requested, cid, expected)
-    note_served(truth)
+    note_served(truth)                                          # the state record never holds a one-time note
+    truth = _with_notes(truth, notes)
     if dev is not None:
         from agent_friday.tv_gateway import turn
         from agent_friday.tv_gateway.tailnet import via as tailnet_via
@@ -557,5 +709,5 @@ def _stream(response, dev: Optional[dict] = None, requested: str = "", cid: Opti
     if text:
         yield _event({"type": "content_block_delta", "index": 0, "delta": {"type": "text_delta", "text": text}})
     yield _event({"type": "content_block_stop", "index": 0})
-    yield _event({"type": "message_delta", "delta": {"stop_reason": "end_turn"}, "friday": truth})
+    yield _event({"type": "message_delta", "delta": {"stop_reason": "end_turn"}, "friday": _public(truth)})
     yield _event({"type": "message_stop"})
