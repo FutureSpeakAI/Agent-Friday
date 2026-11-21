@@ -281,7 +281,7 @@ def test_the_tailnet_door_is_reported_open_only_while_it_serves(monkeypatch):
 
         def shutdown(self):
             pass
-    monkeypatch.setattr("werkzeug.serving.make_server", lambda *a, **k: Srv())
+    monkeypatch.setattr("agent_friday.tv_gateway.app.make_bounded_server", lambda *a, **k: Srv())
     monkeypatch.setattr("agent_friday.tv_gateway.tls.server_context", lambda: None)
     got = tailnet.serve("100.101.102.103", 47810)
     assert got["address"] == "100.101.102.103" and got["port"] == 47810 and tailnet.info() == got
