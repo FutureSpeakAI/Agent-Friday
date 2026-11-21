@@ -1012,6 +1012,32 @@ def _arm(chat_fixture_gmail, monkeypatch):
     return _pending()[0]["approval_id"]
 
 
+@pytest.fixture
+def _left_busy():
+    """What an earlier test in the same worker leaves behind when its rung overran: the typed-chat safe-write
+    rung marked busy, which the router answers with "no" (None) until its cool-down ends."""
+    lr._rung_busy[("chat", "safe_write")] = time.monotonic()
+    yield
+    lr._rung_busy.pop(("chat", "safe_write"), None)
+
+
+def test_a_slow_machine_does_not_turn_a_card_into_nothing(chat, monkeypatch):
+    """F3: the typed-chat rung has a time budget (laya.POINT_ACT_BUDGET_MS, 4 s). On a busy runner the router
+    overran it and answered None, so the card never came (TypeError: 'NoneType' object is not subscriptable,
+    KeyError: 'history_text', 'refused' == 'card' in CI). Here the rung takes six seconds; the test machine
+    must still get its card."""
+    real = lr._bounded
+    monkeypatch.setattr(lr, "_bounded", lambda name, fn, text, budget_ms, surface="voice":
+                        None if budget_ms < 6000 else real(name, fn, text, budget_ms, surface))
+    _arm(None, monkeypatch)
+
+
+def test_a_rung_left_busy_by_an_earlier_test_does_not_hide_the_card(_left_busy, chat, monkeypatch):
+    """F3: the router keeps a per-rung busy mark in module state; one test's overrun made the next test's
+    rung "busy" and its card None. Every test starts with no rung busy."""
+    _arm(None, monkeypatch)
+
+
 def _typed_yes(cid, words="yes", decision="approve"):
     toks = [agent._CURRENT_SURFACE.set("chat"), agent._CURRENT_CONVERSATION.set(CONV),
             agent._CURRENT_OWNER_TEXT.set(words)]

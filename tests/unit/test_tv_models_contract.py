@@ -221,12 +221,13 @@ def test_a_family_word_means_one_listed_model_and_the_reply_says_which(client, d
     b = block(r)
     assert b["requested"] == "claude-opus-5-5" and b["asked"] == "opus" and b["model"] == "claude-opus-5-5"
     assert b["substituted"] is False
-    assert desk.api_calls[0][2]["seat"] == {"model": "claude-opus-5-5"}
+    assert desk.api_calls[-1][:2] == ("PATCH", "/api/conversations/conv-new")      # created without a seat, then bound
+    assert desk.api_calls[-1][2]["seat"] == {"model": "claude-opus-5-5"}
 
 
 def test_a_display_name_is_accepted_for_its_id(client, desk):
     r = ask(client, paired("tablet", "stephen"), model="Claude Haiku 5.5")
-    assert r.status_code == 200 and desk.api_calls[0][2]["seat"] == {"model": "claude-haiku-5-5"}
+    assert r.status_code == 200 and desk.api_calls[-1][2]["seat"] == {"model": "claude-haiku-5-5"}
 
 
 def test_a_tv_that_names_a_model_is_still_answered_by_the_household_and_never_by_the_owners_seat(client, desk, monkeypatch):

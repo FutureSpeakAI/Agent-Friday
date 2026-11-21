@@ -140,3 +140,12 @@ def test_losing_the_sidecar_never_resets_the_owners_never_to_ask_again():
         sidecar.unlink()
     L._TEXTS.clear()
     assert doctor_weekly._answer_on_record()["answer"] == "never"
+
+
+def test_append_hands_back_the_entry_as_the_caller_wrote_it():
+    # CI on 2ac67421c: action_gate signs its decision (hmac over the text) and returns what append() gave back;
+    # a hidden rec made verify_receipt fail for the receipt the caller held (test_artifact_manifest_fields)
+    e = _write()
+    assert e["rec"]["summary"] == "Created " + CANARY and e["rec"]["items"][0]["path"] == CANARY
+    assert L.entry_ok(e, L._key()), "the returned entry still hashes as the line that was written"
+    assert b"CANARY-31ab" not in _live_bytes()
