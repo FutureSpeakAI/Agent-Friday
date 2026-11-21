@@ -13768,7 +13768,7 @@ def _get_vault_key() -> bytes | None:
 
     Resolution order lives in ONE place — services/vault_passphrase.py — and is
     documented there. Returns the 32-byte key, or None when encryption is
-    unavailable. On None, callers fall back to plaintext; vault encryption
+    unavailable. On None, vault writes are refused (VaultKeyMissing), never made as plain text; vault encryption
     failure is logged at ERROR and surfaces in /api/health as a persistent
     warning banner.
 

@@ -17,7 +17,9 @@ and in neither of the other two launchers.
 TWO PROBLEMS, ONE ANSWER. The second problem is that two of those five sources
 are the Windows credential store (keyring, and DPAPI), which makes Friday's
 credentials depend on a platform Friday is not supposed to need. Friday has
-its own credential store and does not depend on the Windows one.
+its own credential store; since the default wrap its root key may be sealed by Windows
+DPAPI (one source, one file, no resolver order), and where Windows has no DPAPI nothing
+about the store depends on it.
 
 So:
 
@@ -39,7 +41,10 @@ So:
     Windows has it) seals the root key with DPAPI under the CurrentUser scope:
     only that Windows account on that PC can open it, so a program run by a
     different account, or a copy of the file taken elsewhere, gets nothing,
-    and start-up stays unattended. `wrap: "passphrase"` encrypts it with
+    and start-up stays unattended. WHAT IT DOES NOT STOP: DPAPI without extra
+    entropy opens for any program running as the same Windows account, so
+    malware or an agent running as you can still read the keys; only the
+    passphrase wrap covers that. Say so wherever the protection is described. `wrap: "passphrase"` encrypts it with
     Argon2id(passphrase) so the file is useless on its own; that stays the
     owner's choice. `wrap: "none"` keeps the root key in the file, protected
     by file permissions alone: it is what a machine without DPAPI gets, and
@@ -164,6 +169,24 @@ def _write_file(doc: dict) -> None:
                 os.fsync(fh.fileno())
         except Exception:
             pass
+        harden_permissions(tmp)
+        tmp.replace(KEYSTORE_PATH)
+    finally:
+        try:
+            tmp.unlink()
+        except Exception:
+            pass
+    harden_permissions(KEYSTORE_PATH)
+
+
+def _write_bytes(raw: bytes) -> None:
+    """Put `raw` back as the keystore: temp file, fsync, atomic replace (the way _write_file does), byte for byte."""
+    from agent_friday.services.credential_store import _unique_tmp, harden_permissions
+    tmp = _unique_tmp(KEYSTORE_PATH)
+    try:
+        tmp.write_bytes(raw)
+        with open(tmp, "r+b") as fh:
+            os.fsync(fh.fileno())
         harden_permissions(tmp)
         tmp.replace(KEYSTORE_PATH)
     finally:
@@ -377,17 +400,24 @@ def set_wrap(wrap: str, passphrase: str = "") -> dict:
                         "salt_hex": salt.hex(),
                         "wrapped_key": _b64(_vc.encrypt(root, key)),
                         "check": _b64(_vc.encrypt(_CHECK_PLAINTEXT, key))})
-        elif wrap == "dpapi":
+        elif wrap in ("dpapi", "default"):
             sealed = _dpapi_doc(root) if _dpapi_available() else None
-            if sealed is None:
+            if sealed is None and wrap == "dpapi":
                 raise ValueError("Windows protection for this account is not available here")
-            doc.update(sealed)
+            doc.update(sealed or {"wrap": "none", "key": _b64(root)})
         elif wrap == "none":
             doc.update({"wrap": "none", "key": _b64(root)})
         else:
-            raise ValueError("wrap must be 'dpapi', 'none' or 'passphrase'")
+            raise ValueError("wrap must be 'dpapi', 'default', 'none' or 'passphrase'")
         _write_file(doc)
         return describe()
+
+
+def restore_wrap(previous) -> None:
+    """Put back the wrap a failed change found: dpapi or none as they were, anything else (a passphrase this caller no
+    longer holds) as the default. Never the other way round: a failed change must not leave a DPAPI keystore as an
+    unwrapped key on disk."""
+    set_wrap(previous if previous in ("dpapi", "none") else "default")
 
 
 def migrate_default_wrap() -> str:
@@ -399,6 +429,7 @@ def migrate_default_wrap() -> str:
     left alone), "unavailable" (no DPAPI here), "absent" (no keystore yet) or "failed" (file untouched).
     """
     with _LOCK:
+        original = KEYSTORE_PATH.read_bytes() if KEYSTORE_PATH.exists() else b""
         doc = _read_file()
         if doc is None:
             return "absent"
@@ -416,19 +447,21 @@ def migrate_default_wrap() -> str:
             sealed = _dpapi_doc(root)
             if sealed is None:
                 return "failed"
-            original = KEYSTORE_PATH.read_bytes()
+            if KEYSTORE_PATH.read_bytes() != original:
+                return "failed"                  # another process changed it meanwhile: its choice stands
             new = {k: v for k, v in doc.items() if k != "key"}
             new.update(sealed)
             new["rewrapped"] = _now()
+            global _CACHED_KEY
+            held = _CACHED_KEY
             _write_file(new)
             try:
                 ok = root_key(use_cache=False) == root
             except Exception:
                 ok = False
             if not ok:
-                from agent_friday.services.credential_store import harden_permissions
-                KEYSTORE_PATH.write_bytes(original)
-                harden_permissions(KEYSTORE_PATH)
+                _write_bytes(original)           # the file exactly as it was, written the same atomic way
+                _CACHED_KEY = held
                 return "failed"
         except Exception:
             return "failed"
@@ -492,7 +525,7 @@ def describe() -> dict:
     wrap = doc.get("wrap") or "none"
     unlocked = True
     detail = ""
-    if wrap == "passphrase":
+    if wrap in ("passphrase", "dpapi"):
         try:
             root_key()
         except KeystoreLocked as e:
@@ -510,7 +543,8 @@ def describe() -> dict:
         "summary": (
             "Locked - " + detail if not unlocked else
             "Protected by your passphrase" if wrap == "passphrase" else
-            "Protected by your Windows account (only this account on this PC can open it)" if wrap == "dpapi" else
+            "Protected by your Windows account: other accounts and copies of the file cannot open it, "
+            "but a program running as you can (a passphrase stops that too)" if wrap == "dpapi" else
             "Protected by file permissions on this machine"),
     }
 

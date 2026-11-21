@@ -153,21 +153,19 @@ def wiki_read_text(path) -> str:
 
 
 def wiki_write_text(path, text: str) -> None:
-    """Write a wiki file, encrypting when its section is opted in and a vault
-    key is available (silent plaintext fallback otherwise — the vault layer
-    already warns once at startup). Atomic."""
+    """Write a wiki file, encrypting when its section is opted in. A section the owner locked is never written as plain
+    text because a key is missing: with no vault key the write is refused (agent.VaultKeyMissing, one plain line) and
+    nothing is written. Held by tests/api/test_wiki_encryption.py. Atomic."""
     p = Path(path)
-    p.parent.mkdir(parents=True, exist_ok=True)
     data = text.encode("utf-8")
     if _wiki_path_is_sensitive(p):
-        try:
-            import agent_friday.privacy.vault_crypto as _vc
-            from agent_friday.services.agent import _get_vault_key  # upper layer — lazy
-            key = _get_vault_key()
-            if key is not None:
-                data = _vc.encrypt(data, key)
-        except Exception:
-            pass
+        from agent_friday.services.agent import VaultKeyMissing, VAULT_KEY_MISSING_LINE, _get_vault_key  # upper layer: lazy
+        key = _get_vault_key()
+        if key is None:
+            raise VaultKeyMissing(VAULT_KEY_MISSING_LINE)
+        import agent_friday.privacy.vault_crypto as _vc
+        data = _vc.encrypt(data, key)
+    p.parent.mkdir(parents=True, exist_ok=True)
     tmp = p.with_name(p.name + ".tmp")
     tmp.write_bytes(data)
     tmp.replace(p)
