@@ -176,11 +176,21 @@ def event_schema() -> dict:
     return _schema_cache
 
 
+def _incompatible_protocol(env) -> bool:
+    """True when the event names another asimov-peer version (the wire is fixed to v2: no down-negotiation). Anything
+    that is not an asimov-peer version string is not this: it stays a schema error. Held by
+    tests/unit/test_peer_wire_protocol_incompatible.py."""
+    body = env.get("body") if isinstance(env, dict) else None
+    protocol = body.get("protocol") if isinstance(body, dict) else None
+    return (isinstance(protocol, str) and protocol.startswith("asimov-peer/")
+            and protocol != "asimov-peer/v2")
+
+
 def verify_event(raw: bytes, trusted_keys, recipient: str | None = None) -> Verified:
     """Authenticate one wire event. `trusted_keys` is the set of actor public keys (64 hex
     characters) the caller already trusts for this realm; an unknown actor is refused.
     Raises WireError(code) with code in: size, encoding, duplicate_key, number, string,
-    integer, depth, type, noncanonical, schema, untrusted_key, signature, header,
+    integer, depth, type, noncanonical, protocol_incompatible, schema, untrusted_key, signature, header,
     terms_mismatch, role, split, recipient. Returning means authenticated bytes, nothing more.
 
     `recipient`: the caller's own id. When given, an event addressed to anyone else is refused with code
@@ -188,6 +198,8 @@ def verify_event(raw: bytes, trusted_keys, recipient: str | None = None) -> Veri
     (a cheap check, spec: schema, signature, key, realm, recipient, type before content). None keeps the old
     behaviour; tests/unit/test_peer_wire_recipient.py holds the rule and shows it can fail."""
     env = decode(raw)
+    if _incompatible_protocol(env):
+        _fail("protocol_incompatible")    # another asimov-peer version: said explicitly, before anything else is read
     if not isinstance(env, dict) or not schema_matches(env, event_schema()):
         _fail("schema")
     body = env["body"]
