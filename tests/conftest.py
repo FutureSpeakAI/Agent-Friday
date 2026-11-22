@@ -1101,40 +1101,51 @@ def _put_back(path: Path, before: bytes | None) -> None:
         "this process would inherit the state it left" % (path, err))
 
 
-def _local_queue_ids() -> set:
-    """The ids on the Local AI queue right now (services/agent.local_queue_snapshot), or none if it is not loaded."""
+def _local_queue_jobs() -> dict:
+    """The Local AI queue right now, id -> "state kind: label" (services/agent.local_queue_snapshot), or empty if it is
+    not loaded or cannot be read."""
     ag = sys.modules.get("agent_friday.services.agent")
     if ag is None:
-        return set()
+        return {}
     try:
-        return {str(j.get("id")) for j in (ag.local_queue_snapshot() or {}).get("jobs") or [] if j.get("id")}
+        return {str(j["id"]): "%s %s: %s" % (j.get("state") or "?", j.get("kind") or "?", j.get("label") or j["id"])
+                for j in (ag.local_queue_snapshot() or {}).get("jobs") or [] if j.get("id")}
     except Exception:
-        return set()
+        return {}
 
 
 def _drop_local_jobs(ids) -> None:
-    """Take these jobs off the Local AI queue: the seat supervisor's own records (a queued one is withdrawn, a
-    running one's seat is freed) and, for any other source (a lease, a waiting call), its own cancel."""
+    """Take these jobs off the Local AI queue. The seat supervisor's records are all taken out under one hold of its
+    lock (so its loop cannot start one that is about to go), each marked cancel_requested so a thread still waiting in
+    admit_inline raises JobCancelled instead of running in the next file; then each is withdrawn from the seat queue and
+    its seat freed. Any other source (a lease, a waiting call) gets its own cancel."""
     ag = sys.modules.get("agent_friday.services.agent")
     sup = getattr(ag, "_SEAT_SUPERVISOR", None) if ag is not None else None
     ls = sys.modules.get("agent_friday.services.local_scheduler")
-    for jid in ids:
-        if sup is not None:
-            with sup._lock:
-                rec = sup._records.pop(jid, None)
-                if rec is not None:
-                    try:
-                        sup.queue.cancel(jid)
-                        sup.queue.complete(jid)
-                    except Exception:
-                        pass
-                    rec["status"] = "cancelled"
-                    sup._started.discard(jid)
-                    ev = sup._inline_events.pop(jid, None)
-                    if ev is not None:
-                        ev.set()
-                    continue
-        if ls is not None:
+    rest = list(ids)
+    if sup is not None:
+        with sup._lock:
+            taken = {jid: sup._records.pop(jid) for jid in list(rest) if jid in sup._records}
+            for jid, rec in taken.items():
+                rec["cancel_requested"] = True
+                rec["status"] = "cancelled"
+                sup._started.discard(jid)
+                ev = sup._inline_events.pop(jid, None)
+                if ev is not None:
+                    ev.set()
+            for jid in taken:
+                try:
+                    sup.queue.cancel(jid)
+                except Exception:
+                    pass
+            for jid in taken:
+                try:
+                    sup.queue.complete(jid)
+                except Exception:
+                    pass
+        rest = [jid for jid in rest if jid not in taken]
+    if ls is not None:
+        for jid in rest:
             try:
                 ls.cancel(jid)
             except Exception:
@@ -1142,18 +1153,22 @@ def _drop_local_jobs(ids) -> None:
 
 
 @pytest.fixture(scope="module", autouse=True)
-def _local_queue_does_not_outlive_its_file():
+def _local_queue_does_not_outlive_its_file(request):
     """Each test file leaves the Local AI queue as it found it.
 
     The seat supervisor is one per process (services/agent._SEAT_SUPERVISOR). A file that starts a local task and
     never waits for it left that job counted on the top bar ("1 task in Activity; 1 local-queue job") for every later
     file on the worker, and tests/api/test_workspace_job_card_ui.py errored at setup when it came after such a file
     (b60 gate 2026-11-22; CI on #652 #810 #828 #974 #1041). Jobs a file added are taken off when it ends
-    (tests/unit/test_local_queue_does_not_leak_between_files.py)."""
-    before = _local_queue_ids()
+    (tests/unit/test_local_queue_does_not_leak_between_files.py), and a RuntimeWarning names the file and the jobs,
+    so a real leak in the product stays visible."""
+    before = set(_local_queue_jobs())
     yield
-    left = _local_queue_ids() - before
+    now = _local_queue_jobs()
+    left = {jid: words for jid, words in now.items() if jid not in before}
     if left:
+        warnings.warn(RuntimeWarning("LocalQueueLeak: %s left %d Local AI queue job(s) behind, taken off: %s" % (
+            request.node.nodeid, len(left), "; ".join(sorted(left.values())))))
         _drop_local_jobs(left)
 
 
