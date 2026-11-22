@@ -18,8 +18,9 @@ import re
 from pathlib import Path
 from typing import List, Optional
 
-#: A briefing is named for its date. ``_index.md`` and ``2026-11-21-supplement.md`` are not briefings.
-DATED = re.compile(r"^\d{4}-\d{2}-\d{2}\.(md|html)$")
+#: A briefing is named for its date, with ``-pm`` for the afternoon edition. ``_index.md`` and
+#: ``2026-11-21-supplement.md`` are not briefings.
+DATED = re.compile(r"^\d{4}-\d{2}-\d{2}(-pm)?\.(md|html)$")
 
 
 def briefings_dir() -> Path:
@@ -28,13 +29,14 @@ def briefings_dir() -> Path:
 
 
 def dated(directory: Optional[Path] = None) -> List[Path]:
-    """The briefing files in the folder, newest date first (a day with both kinds lists ``.md`` first)."""
+    """The briefing files in the folder, newest first: by date, the afternoon edition after the morning one, ``.md``
+    before ``.html`` for the same edition."""
     folder = Path(directory) if directory is not None else briefings_dir()
     try:
         files = [p for p in folder.iterdir() if p.is_file() and DATED.match(p.name)]
     except OSError:
         return []
-    return sorted(files, key=lambda p: (p.stem, p.suffix == ".md"), reverse=True)
+    return sorted(files, key=lambda p: (p.stem[:10], p.stem.endswith("-pm"), p.suffix == ".md"), reverse=True)
 
 
 def latest(directory: Optional[Path] = None) -> Optional[Path]:
