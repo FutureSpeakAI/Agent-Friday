@@ -5097,7 +5097,7 @@ function CareerWS(){
         <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',gap:8}}>
           <div style={{minWidth:0}}>
             <div style={{fontSize:12,whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{j.title} <span style={{color:'#888'}}>@ {j.company}</span></div>
-            <div style={{fontSize:10,color:'#999'}}>{j.location}{j.remote?' · remote':''} · score {(j.score||0).toFixed(2)} · seen {jobDay(j.last_seen)}</div>
+            <div style={{fontSize:10,color:'#999'}}>{j.location}{j.remote?' · remote':''}{j.status==='applied'?' · applied':''} · score {(j.score||0).toFixed(2)} · seen {jobDay(j.last_seen)}</div>
           </div>
           {j.job_id&&<button className="btn" style={{fontSize:10,flexShrink:0}} disabled={disabled} onClick={()=>engineApply(j.job_id)}>Prepare</button>}
         </div>
@@ -5105,7 +5105,7 @@ function CareerWS(){
       {archiveJobs.length>0&&<div data-testid="career-job-archive" style={{marginTop:12}}><div className="card-title">Archive · closed or no longer listed ({archiveJobs.length})</div>
         {archiveJobs.map((j,i)=><div key={j.key||i} className="card" style={{marginBottom:4,opacity:0.75}} data-testid="career-archived-job">
           <div style={{fontSize:12,whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{j.title} <span style={{color:'#888'}}>@ {j.company}</span></div>
-          <div style={{fontSize:10,color:'#999'}}>{j.status==='applied'?'applied':'closed'} {jobDay(j.closed_at||j.last_seen)}{j.close_reason?' · '+j.close_reason:''}</div>
+          <div style={{fontSize:10,color:'#999'}}>{j.status==='expired'?'expired':'closed'} {jobDay(j.closed_at||j.last_seen)}{j.close_reason?' · '+j.close_reason:''}</div>
         </div>)}
       </div>}
     </div>}

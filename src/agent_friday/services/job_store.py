@@ -1,19 +1,22 @@
 """The job store: one record per posting, with a status, for the Career workspace's panels.
 
-Scanners (the bundled job_scanner today, the job-hunt skill after it) WRITE postings here with `upsert`; the
-panel READS `list_recent` and `list_archive`. Neither side needs the other's internals.
+Scanners (the bundled job_scanner today, the job-hunt skill after it) WRITE sightings here with `upsert_many`;
+the panel READS `list_recent` and `list_archive`. Neither side needs the other's internals.
 
-* a posting has one stable key (`make_key`): its source's id when it has one, else company, title and location
-  as words, else its URL; a repost or a second feed is the same record;
-* a posting is open until its closing date passes or it has not been seen for STALE_DAYS; the sweep then moves
-  it to the archive (status closed or expired) with the date it closed, and never deletes it;
-* a posting that expired and is seen again is open again; one the owner closed, or whose closing date passed,
-  stays closed; an applied posting is never swept;
-* "recent" is open or applied postings seen within STALE_DAYS, newest sighting first (never by score);
-* the file is one JSON document under the Friday home, written atomically; a damaged file is an error and is
-  never replaced by an empty store.
+* a posting is one record however it arrives: `make_keys` gives every key a listing can be known by (its feed's
+  id, its company, title and location as words, its URL without tracking parameters or fragment), and a sighting
+  that shares any of them with a record is that record; a second feed with its own id, the same feed with and
+  without an id, and a URL with utm_ parameters all land on one record;
+* a posting is open until its closing date passes (a date without a time closes at the end of that day) or it has
+  not been seen for STALE_DAYS; the sweep then moves it to the archive (status closed or expired) with the date it
+  closed, and never deletes it; an expired posting that is seen again is open again, a closed one stays closed;
+* "applied" is not stored: a posting whose tracker job (job_tracker_schema.JobTracker) has an active
+  ApplicationRecord shows as applied, sits in recent, and is never swept while that application is active;
+* "recent" is applied postings and open postings seen within STALE_DAYS, newest sighting first (never by score);
+* the file is one JSON document under the Friday home, written atomically once per `upsert_many` call; a damaged
+  file is an error and is never replaced by an empty store.
 
-tests/unit/test_job_store.py holds each rule.
+tests/unit/test_job_store.py holds each rule; tests/api/test_career_jobs_route.py holds them through a real scan.
 """
 from __future__ import annotations
 
@@ -23,18 +26,28 @@ import os
 import re
 import tempfile
 import threading
-from datetime import datetime, timedelta
+from datetime import date, datetime, time, timedelta
+from enum import Enum
 from pathlib import Path
-from typing import Optional
+from typing import Iterable, List, Optional, Tuple
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 FILE_NAME = "job_store.json"
 STALE_DAYS = 30
-OPEN, CLOSED, EXPIRED, APPLIED = "open", "closed", "expired", "applied"
-PUBLIC = ("key", "job_id", "title", "company", "location", "url", "source", "status", "first_seen", "last_seen", "posted_at",
-          "closes_at", "closed_at", "close_reason", "score")
 STALE = timedelta(days=STALE_DAYS)
 DEFAULT_LIMIT = 50
+PUBLIC = ("key", "job_id", "title", "company", "location", "remote", "url", "source", "status", "first_seen",
+          "last_seen", "posted_at", "closes_at", "closed_at", "close_reason", "score")
+TRACKING_PARAMS = frozenset({"fbclid", "gclid", "msclkid", "ref", "ref_src", "referrer", "trk", "trackingid"})
 _LOCK = threading.Lock()
+
+
+class Status(str, Enum):
+    """OPEN, CLOSED and EXPIRED are stored; APPLIED is derived from the tracker's applications."""
+    OPEN = "open"
+    CLOSED = "closed"
+    EXPIRED = "expired"
+    APPLIED = "applied"
 
 
 class StoreUnreadable(OSError):
@@ -52,20 +65,42 @@ def _words(text) -> str:
     return re.sub(r"[^a-z0-9]+", " ", str(text or "").lower()).strip()
 
 
-def make_key(listing: dict) -> str:
-    """The stable key of a posting. Raises ValueError when the listing names nothing to key on."""
+def _is_tracking(param: str) -> bool:
+    name = param.lower()
+    return name.startswith("utm_") or name in TRACKING_PARAMS
+
+
+def normalize_url(url) -> str:
+    """The URL without tracking parameters, fragment or trailing slash; scheme and host lower-cased."""
+    text = str(url or "").strip()
+    if not text:
+        return ""
+    parts = urlsplit(text)
+    query = sorted((name, value) for name, value in parse_qsl(parts.query, keep_blank_values=True)
+                   if not _is_tracking(name))
+    return urlunsplit((parts.scheme.lower(), parts.netloc.lower(), parts.path.rstrip("/"), urlencode(query), ""))
+
+
+def _hash(basis: str) -> str:
+    return hashlib.sha1(basis.encode("utf-8")).hexdigest()[:16]
+
+
+def make_keys(listing: dict) -> List[str]:
+    """Every key the posting can be known by, strongest first: feed id, company+title+location, URL.
+    Raises ValueError when the listing names nothing to key on."""
     source, external = _words(listing.get("source")), str(listing.get("external_id") or "").strip().lower()
     company, title, location = _words(listing.get("company")), _words(listing.get("title")), _words(listing.get("location"))
-    url = str(listing.get("url") or listing.get("source_url") or "").strip().lower()
+    url = normalize_url(listing.get("url") or listing.get("source_url"))
+    bases = []
     if source and external:
-        basis = "id|%s|%s" % (source, external)
-    elif company and title:
-        basis = "ct|%s|%s|%s" % (company, title, location)
-    elif url:
-        basis = "u|%s" % url
-    else:
+        bases.append("id|%s|%s" % (source, external))
+    if company and title:
+        bases.append("ct|%s|%s|%s" % (company, title, location))
+    if url:
+        bases.append("u|%s" % url)
+    if not bases:
         raise ValueError("a listing needs a source id, a company and title, or a URL")
-    return hashlib.sha1(basis.encode("utf-8")).hexdigest()[:16]
+    return [_hash(basis) for basis in bases]
 
 
 # -- time -------------------------------------------------------------------------------------
@@ -87,18 +122,31 @@ def _iso(value) -> Optional[str]:
     return moment.isoformat() if moment else None
 
 
+def _closing_iso(value) -> Optional[str]:
+    """A closing date; one given without a time closes at the end of that local day."""
+    if isinstance(value, date) and not isinstance(value, datetime):
+        return datetime.combine(value, time(23, 59, 59)).isoformat()
+    if isinstance(value, str) and len(value.strip()) == 10:
+        try:
+            return datetime.combine(date.fromisoformat(value.strip()), time(23, 59, 59)).isoformat()
+        except ValueError:
+            return None
+    return _iso(value)
+
+
 # -- the file ---------------------------------------------------------------------------------
 
 def _load() -> dict:
     try:
         raw = path().read_text(encoding="utf-8")
     except FileNotFoundError:
-        return {"v": 1, "jobs": {}}
+        return {"v": 1, "jobs": {}, "aliases": {}}
     try:
         data = json.loads(raw)
     except ValueError as exc:
         raise StoreUnreadable("job_store.json could not be read") from exc
-    if not isinstance(data, dict) or not isinstance(data.get("jobs"), dict):
+    if not isinstance(data, dict) or not isinstance(data.get("jobs"), dict) \
+            or not isinstance(data.setdefault("aliases", {}), dict):
         raise StoreUnreadable("job_store.json is not a store")
     return data
 
@@ -118,104 +166,147 @@ def _save(data: dict) -> None:
             os.unlink(name)
 
 
+def _find(data: dict, keys: List[str]) -> Optional[dict]:
+    for key in keys:
+        primary = data["aliases"].get(key)
+        if primary in data["jobs"]:
+            return data["jobs"][primary]
+    return None
+
+
+def _register(data: dict, keys: List[str], record: dict) -> None:
+    for key in keys:
+        data["aliases"].setdefault(key, record["key"])
+
+
+def _new_record(data: dict, keys: List[str], seen: str) -> dict:
+    record = {"key": keys[0], "status": Status.OPEN.value, "first_seen": seen, "last_seen": seen,
+              "closed_at": None, "close_reason": None, "job_ids": []}
+    data["jobs"][record["key"]] = record
+    return record
+
+
+def _note_job_id(record: dict, job_id) -> None:
+    if job_id:
+        record["job_id"] = job_id
+        known = record.setdefault("job_ids", [])
+        if job_id not in known:
+            known.append(job_id)
+
+
 # -- the rules ---------------------------------------------------------------------------------
 
-def _sweep(data: dict, now: datetime) -> bool:
-    """Close what is past its closing date and expire what has not been seen for STALE_DAYS. True when it changed."""
+def _applied_job_ids() -> frozenset:
+    """Tracker job ids with an active application (job_tracker_schema.ACTIVE_STAGES)."""
+    from agent_friday.seed.data.job_tracker_schema import JobTracker
+    return frozenset(app.job_id for app in JobTracker().load().list_applications(active_only=True))
+
+
+def _is_applied(record: dict, applied: frozenset) -> bool:
+    return any(job_id in applied for job_id in record.get("job_ids") or [record.get("job_id")])
+
+
+def _sweep(data: dict, now: datetime, applied: frozenset) -> bool:
+    """Close what is past its closing date and expire what has not been seen for STALE_DAYS, leaving postings with
+    an active application alone. True when it changed."""
     changed = False
     for record in data["jobs"].values():
-        if record["status"] != OPEN:
+        if record["status"] != Status.OPEN.value or _is_applied(record, applied):
             continue
         closes, seen = _moment(record.get("closes_at")), _moment(record.get("last_seen"))
         if closes is not None and closes <= now:
-            record.update(status=CLOSED, closed_at=closes.isoformat(), close_reason="closing date passed")
+            record.update(status=Status.CLOSED.value, closed_at=closes.isoformat(), close_reason="closing date passed")
             changed = True
         elif seen is not None and now - seen > STALE:
-            record.update(status=EXPIRED, closed_at=(seen + STALE).isoformat(),
+            record.update(status=Status.EXPIRED.value, closed_at=(seen + STALE).isoformat(),
                           close_reason="not seen for %d days" % STALE_DAYS)
             changed = True
     return changed
 
 
-def _public(record: dict) -> dict:
-    return {name: record.get(name) for name in PUBLIC}
+def _public(record: dict, applied: frozenset = frozenset()) -> dict:
+    row = {name: record.get(name) for name in PUBLIC}
+    if _is_applied(record, applied):
+        row["status"] = Status.APPLIED.value
+    return row
+
+
+def _apply_sighting(record: dict, listing: dict, seen: str) -> None:
+    record["last_seen"] = seen
+    for name, value in (("title", listing.get("title")), ("company", listing.get("company")),
+                        ("location", listing.get("location")), ("source", listing.get("source")),
+                        ("url", listing.get("url") or listing.get("source_url")),
+                        ("posted_at", _iso(listing.get("posted_at"))),
+                        ("closes_at", _closing_iso(listing.get("closes_at")))):
+        if value:
+            record[name] = value
+    if "remote" in listing:
+        record["remote"] = bool(listing["remote"])
+    _note_job_id(record, listing.get("job_id"))
+    score = listing.get("score", listing.get("relevance_score"))
+    if isinstance(score, (int, float)) and not isinstance(score, bool):
+        record["score"] = float(score)
+    if record["status"] == Status.EXPIRED.value:
+        record.update(status=Status.OPEN.value, closed_at=None, close_reason=None)
+
+
+def upsert_many(listings: Iterable[dict], now: datetime) -> List[dict]:
+    """Record one sighting of each posting with one read and one write of the file. A new posting is open; a known
+    one is refreshed (an expired one reopens, a closed one stays closed). Listings that name nothing to key on are
+    skipped. Returns the records of the listings recorded."""
+    seen = now.isoformat()
+    with _LOCK:
+        data = _load()
+        recorded = []
+        for listing in listings:
+            try:
+                keys = make_keys(listing)
+            except ValueError:
+                continue
+            record = _find(data, keys) or _new_record(data, keys, seen)
+            _register(data, keys, record)
+            _apply_sighting(record, listing, seen)
+            recorded.append(_public(record))
+        _save(data)
+        return recorded
 
 
 def upsert(listing: dict, now: datetime) -> dict:
-    """Record one sighting of a posting. A new posting is open; a known one is refreshed (and an expired one
-    reopens); one that was closed stays closed. Returns the record."""
-    key = make_key(listing)
+    """One sighting (see upsert_many). Raises ValueError when the listing names nothing to key on."""
+    make_keys(listing)
+    return upsert_many([listing], now)[0]
+
+
+def _swept(now: datetime) -> Tuple[dict, frozenset]:
+    applied = _applied_job_ids()
     with _LOCK:
         data = _load()
-        record = data["jobs"].get(key)
-        seen = now.isoformat()
-        if record is None:
-            record = {"key": key, "status": OPEN, "first_seen": seen, "closed_at": None, "close_reason": None}
-            data["jobs"][key] = record
-        record["last_seen"] = seen
-        for name, value in (("title", listing.get("title")), ("company", listing.get("company")),
-                            ("location", listing.get("location")), ("source", listing.get("source")),
-                            ("url", listing.get("url") or listing.get("source_url")),
-                            ("job_id", listing.get("job_id")),
-                            ("posted_at", _iso(listing.get("posted_at"))),
-                            ("closes_at", _iso(listing.get("closes_at")))):
-            if value:
-                record[name] = value
-        score = listing.get("score", listing.get("relevance_score"))
-        if isinstance(score, (int, float)) and not isinstance(score, bool):
-            record["score"] = float(score)
-        if record["status"] == EXPIRED:
-            record.update(status=OPEN, closed_at=None, close_reason=None)
-        _save(data)
-        return _public(record)
-
-
-def close(key: str, now: datetime, reason: str) -> None:
-    """Close a posting on purpose: it stays closed when a feed still lists it."""
-    with _LOCK:
-        data = _load()
-        record = data["jobs"].get(key)
-        if record is None:
-            raise KeyError(key)
-        record.update(status=CLOSED, closed_at=now.isoformat(), close_reason=str(reason or "closed")[:200])
-        _save(data)
-
-
-def mark_applied(key: str, now: datetime) -> None:
-    with _LOCK:
-        data = _load()
-        record = data["jobs"].get(key)
-        if record is None:
-            raise KeyError(key)
-        record.update(status=APPLIED, applied_at=now.isoformat(), closed_at=None, close_reason=None)
-        _save(data)
-
-
-def _swept(now: datetime) -> dict:
-    with _LOCK:
-        data = _load()
-        if _sweep(data, now):
+        if _sweep(data, now, applied):
             _save(data)
-        return data
+        return data, applied
 
 
-def _is_recent(record: dict, now: datetime) -> bool:
+def _is_recent(record: dict, now: datetime, applied: frozenset) -> bool:
+    if _is_applied(record, applied):
+        return True
     seen = _moment(record.get("last_seen"))
-    return record["status"] in (OPEN, APPLIED) and seen is not None and now - seen <= STALE
+    return record["status"] == Status.OPEN.value and seen is not None and now - seen <= STALE
 
 
 def list_recent(now: datetime, limit: int = DEFAULT_LIMIT) -> list:
-    """Open or applied postings seen within STALE_DAYS, newest sighting first."""
-    rows = [r for r in _swept(now)["jobs"].values() if _is_recent(r, now)]
+    """Applied postings and open postings seen within STALE_DAYS, newest sighting first."""
+    data, applied = _swept(now)
+    rows = [r for r in data["jobs"].values() if _is_recent(r, now, applied)]
     rows.sort(key=lambda r: (r.get("last_seen") or "", r.get("first_seen") or "", r.get("title") or ""), reverse=True)
-    return [_public(r) for r in rows[:max(0, int(limit))]]
+    return [_public(r, applied) for r in rows[:max(0, int(limit))]]
 
 
 def list_archive(now: datetime, limit: int = DEFAULT_LIMIT) -> list:
-    """Closed and expired postings (and applied ones no longer seen), newest closing first."""
-    rows = [r for r in _swept(now)["jobs"].values() if not _is_recent(r, now)]
+    """Closed and expired postings without an active application, newest closing first."""
+    data, applied = _swept(now)
+    rows = [r for r in data["jobs"].values() if not _is_recent(r, now, applied)]
     rows.sort(key=lambda r: (r.get("closed_at") or r.get("last_seen") or ""), reverse=True)
-    return [_public(r) for r in rows[:max(0, int(limit))]]
+    return [_public(r, applied) for r in rows[:max(0, int(limit))]]
 
 
 # -- the old tracker --------------------------------------------------------------------------------
@@ -228,7 +319,8 @@ def _tracker_rows() -> list:
 
 def import_tracker(now: datetime) -> int:
     """Bring the old tracker's listings in once, judged by the same rules (a July posting nobody has seen since
-    lands in the archive). Returns how many were imported; 0 on every later call."""
+    lands in the archive unless it has an active application). Returns how many records were added; 0 on every
+    later call."""
     with _LOCK:
         data = _load()
         if data.get("tracker_imported"):
@@ -236,19 +328,18 @@ def import_tracker(now: datetime) -> int:
         added = 0
         for row in _tracker_rows():
             try:
-                key = make_key(row)
+                keys = make_keys(row)
             except ValueError:
                 continue
-            if key in data["jobs"]:
-                continue
-            seen = _iso(row.get("discovered_at")) or now.isoformat()
-            data["jobs"][key] = {"key": key, "status": OPEN, "first_seen": seen, "last_seen": seen,
-                                 "closed_at": None, "close_reason": None, "job_id": row.get("job_id"), "title": row.get("title"),
-                                 "company": row.get("company"), "location": row.get("location"),
-                                 "source": row.get("source"), "url": row.get("source_url") or row.get("url"),
-                                 "posted_at": _iso(row.get("posted_at")), "closes_at": None,
-                                 "score": row.get("relevance_score")}
-            added += 1
+            record = _find(data, keys)
+            if record is None:
+                seen = _iso(row.get("discovered_at")) or now.isoformat()
+                record = _new_record(data, keys, seen)
+                _apply_sighting(record, row, seen)
+                added += 1
+            else:
+                _note_job_id(record, row.get("job_id"))
+            _register(data, keys, record)
         data["tracker_imported"] = True
         _save(data)
         return added

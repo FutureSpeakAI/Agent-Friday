@@ -51,6 +51,7 @@ test('recent lists only open jobs and the archive keeps the closed ones with the
   const closedOn = new Date('2026-07-20T00:00:00').toLocaleDateString();
   await expect(archived.first()).toContainText('closed');
   await expect(archived.first()).toContainText(closedOn);
+  await expect(archived.nth(1)).toContainText('expired');
 
   const clipped = await page.evaluate(() => Array.from(document.querySelectorAll(
     '[data-testid="career-recent-job"], [data-testid="career-archived-job"]'))

@@ -19931,7 +19931,7 @@ function CareerWS() {
       fontSize: 10,
       color: '#999'
     }
-  }, j.location, j.remote ? ' · remote' : '', " \xB7 score ", (j.score || 0).toFixed(2), " \xB7 seen ", jobDay(j.last_seen))), j.job_id && /*#__PURE__*/React.createElement("button", {
+  }, j.location, j.remote ? ' · remote' : '', j.status === 'applied' ? ' · applied' : '', " \xB7 score ", (j.score || 0).toFixed(2), " \xB7 seen ", jobDay(j.last_seen))), j.job_id && /*#__PURE__*/React.createElement("button", {
     className: "btn",
     style: {
       fontSize: 10,
@@ -19970,7 +19970,7 @@ function CareerWS() {
       fontSize: 10,
       color: '#999'
     }
-  }, j.status === 'applied' ? 'applied' : 'closed', " ", jobDay(j.closed_at || j.last_seen), j.close_reason ? ' · ' + j.close_reason : ''))))), view === 'overview' && /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
+  }, j.status === 'expired' ? 'expired' : 'closed', " ", jobDay(j.closed_at || j.last_seen), j.close_reason ? ' · ' + j.close_reason : ''))))), view === 'overview' && /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
     className: "fr-comp-career-stages",
     style: {
       display: 'flex',
