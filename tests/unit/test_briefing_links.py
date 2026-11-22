@@ -209,10 +209,21 @@ TARGETS = ["https://evil.example.test/p", "HTTPS://EVIL.EXAMPLE.TEST/p", "<https
 @pytest.mark.parametrize("target", TARGETS)
 def test_no_link_shape_carries_an_address_the_tools_did_not_return(label, target):
     known = {"https://gazette.example.test/budget"}
-    for text in ("[%s](%s)" % (label, target), "![%s](%s)" % (label, target), "see %s now" % target,
-                 "[ref]: %s" % target, "<%s>" % target.strip().strip("<>")):
+    bare = target.strip()
+    glued = ["See%s now" % bare, "_%s_" % bare, "a.%s" % bare, "a/%s" % bare, "1%s" % bare, "x%s" % bare,
+             "[web:x%s]" % bare, "(see%s)" % bare]                    # round 4: an address glued to a word
+    for text in ["[%s](%s)" % (label, target), "![%s](%s)" % (label, target), "see %s now" % target,
+                 "[ref]: %s" % target, "<%s>" % bare.strip("<>")] + glued:
         out = bl.strip_unknown_links(text, known)
         assert EVIL not in out.lower(), (text, out)
+
+
+@pytest.mark.parametrize("text", ["write to someone@evil.example.test", "a/someone@evil.example.test",
+                                  "x.someone@evil.example.test", "_someone@evil.example.test_"])
+def test_no_typed_mail_address_becomes_a_mailto_link_however_it_is_glued(text):
+    gmail = "https://mail.google.com/mail/u/owner@example.test/#all/18f3a1b2c3d4e5f6"
+    out = bl.strip_unknown_links("%s [Open email](%s)" % (text, gmail), {gmail})
+    assert out.count("@") == 1 and "](%s)" % gmail in out                # the only @ left is in the known link
 
 
 @pytest.mark.parametrize("label", LABELS_)
@@ -273,6 +284,14 @@ def test_a_typed_email_address_shows_but_is_no_mailto_link_and_the_gmail_link_ke
     gmail = "https://mail.google.com/mail/u/owner@example.test/#all/18f3a1b2c3d4e5f6"
     out = bl.strip_unknown_links("Write to someone@evil.example.test. [Open email](%s)" % gmail, {gmail})
     assert "someone&#64;evil.example.test" in out and "](%s)" % gmail in out
+
+
+@pytest.mark.parametrize("suffix", ["'@evil.example.test", '"x@evil.example.test', "#evil.example.test",
+                                    "/../evil.example.test", "%40evil.example.test"])
+def test_a_known_address_with_anything_glued_after_it_is_not_kept_as_known(suffix):
+    out = bl.strip_unknown_links("see %s%s now" % (GCAL, suffix), {GCAL})
+    assert GCAL not in out and "@" not in out
+    assert bl.strip_unknown_links("see %s. Then %s, now" % (GCAL, GCAL), {GCAL}).count(GCAL) == 2
 
 
 def test_the_final_pass_can_run_twice_without_changing_the_text_again():

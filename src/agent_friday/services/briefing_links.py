@@ -55,18 +55,15 @@ _HEADING = re.compile(r"^(#{1,6})\s+(.*\S)\s*$")
 _BULLET = re.compile(r"^(\s{0,3})(?:[-*+]|\d{1,3}[.)])\s+")
 _CITE = re.compile(r"\[\s*([A-Z]\d{1,3}(?:\s*[,;]\s*[A-Z]\d{1,3})*)\s*\]")
 _MD_LINK = re.compile(r"\[([^\]\n]{1,300})\]\((https?://[^)\s]+)\)")
-#: Any address not written as a markdown link's target: in round brackets, angle brackets or bare (markdown
-#: renderers link a bare www. address too).
-#: It starts only where an address starts: never at the "www." inside "https://www.google.com/...".
-_BARE_URL = re.compile(r"(?<!\]\()(?<![\w/.])(?:https?://|www\.)[^\s)\]>\"']+", re.I)
+#: An address run anywhere in the text, glued to a word or not (markdown renderers link "www." runs too). No rule
+#: says where one may start: the known links are set aside first (strip_unknown_links), so every run left is unknown.
+_BARE_URL = re.compile(r"(?:https?://|www\.)[^\s<>\"'\])]*", re.I)
 _ANGLE_URL = re.compile(r"<((?:https?://|www\.)[^\s>]+)>", re.I)
+_SET_ASIDE = re.compile("\x00(\\d+)\x00")
 #: The target of ANY markdown link or image, whatever its label holds: what follows "](" up to the closing ")".
 _LINK_TARGET = re.compile(r"\]\(([^)\n]*)\)")
 #: A reference-style link definition ("[r]: //host/x"): a briefing never uses one, so the line goes.
 _REF_DEF = re.compile(r"^[ \t]*\[[^\]\n]+\]:[^\n]*(?:\n|$)", re.M)       # any indent: inside a list item too
-#: An email address standing in the text (markdown renderers make it a mailto: link); never one inside an address
-#: such as the Gmail link's /u/<account>/, which is preceded by "/".
-_EMAIL = re.compile(r"(?<![\w/.+%-])([\w.+%-]+)@([A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+)")
 _HAS_WORDS = re.compile(r"[A-Za-z0-9]")
 #: A line that is only a bold label: a heading a section skill wrote, demoted (briefing_sections), so kept like one.
 _LABEL_LINE = re.compile(r"^\s*\*\*[^*\n]+\*\*\s*$")
@@ -126,20 +123,32 @@ def strip_unknown_links(text: str, known: Iterable[str]) -> str:
     bracketed or angle-bracketed address that is not known. Safe to run on a whole assembled briefing, and more than
     once.
 
-    Markdown has two ways to make a link that no address pattern sees: raw HTML (an anchor, with its address hidden
-    in entities or protocol-relative) and a reference definition. Neither is matched; both are taken away by shape:
-    a reference definition line is removed, and every "<" becomes "&lt;" once the known angle-bracketed addresses
-    are out of the way, so the model's text can hold no HTML tag at all (a briefing never needs one)."""
+    It works by what is KNOWN, not by guessing where an address starts: the known links are set aside, then
+    everything that could still make a link is taken away wherever it sits:
+      1. a reference-definition line goes (a briefing never uses one);
+      2. a typed link keeps its words; a link or image target that is exactly a known address, and a known address
+         standing in the text up to a natural end, are set aside;
+      3. every "<" becomes "&lt;" (no raw HTML: an anchor, however its address is spelled), every http(s):// or www.
+         run left goes, glued to a word or not, and every "@" left becomes "&#64;" (it shows, but is no mailto: link);
+      4. the known links are put back."""
     known = set(known)
-    text = _REF_DEF.sub("", text or "")
+    kept: list = []
+
+    def aside(link: str) -> str:
+        kept.append(link)
+        return "\x00%d\x00" % (len(kept) - 1)
+
+    text = _REF_DEF.sub("", (text or "").replace("\x00", ""))
     text = _MD_LINK.sub(lambda m: m.group(0) if m.group(2) in known else m.group(1), text)
-    # A label with brackets in it ("[[draft] plan](...)") is no _MD_LINK match; its target is caught here. Only a
-    # target that is exactly a known address (no title, no spaces) stays; otherwise the label is left as plain text.
-    text = _LINK_TARGET.sub(lambda m: m.group(0) if m.group(1) in known else "]", text)
-    text = _ANGLE_URL.sub(lambda m: m.group(0) if m.group(1) in known else "", text)
-    text = text.replace("<", "&lt;")                       # no raw HTML: an anchor, however its address is spelled
-    text = _EMAIL.sub(r"\1&#64;\2", text)                  # an address the model typed shows, but is no mailto: link
-    text = _BARE_URL.sub(lambda m: m.group(0) if m.group(0) in known else "", text)
+    # A label with brackets in it ("[[draft] plan](...)") is no _MD_LINK match; its target is caught here.
+    text = _LINK_TARGET.sub(lambda m: aside(m.group(0)) if m.group(1) in known else "]", text)
+    for link in sorted(known, key=len, reverse=True):
+        # only where it ends: closing punctuation at most, then a space, the end, or a bracket that closes it
+        text = re.sub(re.escape(link) + r"(?=[.,;:!?]*(?:\s|$|[)\]>]))", lambda m: aside(m.group(0)), text)
+    text = _ANGLE_URL.sub("", text)
+    text = _BARE_URL.sub("", text.replace("<", "&lt;"))
+    text = text.replace("@", "&#64;")
+    text = _SET_ASIDE.sub(lambda m: kept[int(m.group(1))], text)
     return re.sub(r"\(\s*\)", "", text)
 
 
