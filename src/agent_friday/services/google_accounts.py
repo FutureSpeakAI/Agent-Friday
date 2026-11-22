@@ -1604,6 +1604,7 @@ def _tasks_for_creds(creds, max_results: int) -> list:
                     "notes": (t.get("notes") or "")[:300],
                     "due": t.get("due", ""),
                     "status": t.get("status", "needsAction"),
+                    "updated": t.get("updated", ""),
                     "list": tl.get("title", ""),
                     # Required by complete_task/update_task/delete_task — the
                     # Tasks API needs the tasklist id, not just its title, to
