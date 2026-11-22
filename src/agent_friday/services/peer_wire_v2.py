@@ -254,15 +254,25 @@ class PeerEventStore:
         self._add_local_action_ids()
 
     def _add_local_action_ids(self) -> None:
-        """A store written before the mapping existed gets the column and every row its (derived, so identical) id."""
+        """A store written before the mapping existed gets the column and every row its (derived, so identical) id. Two
+        openers can both see no column: the one that loses the ALTER race finds it already there and carries on. A process
+        still running the OLD code cannot write to a migrated table (its positional INSERT names 6 values for 7 columns and
+        fails loudly), so no row is ever left without an id; a row that somehow is gets one at the next open."""
         with self._connect() as db:
-            cols = {r[1] for r in db.execute("PRAGMA table_info(peer_events_v2)")}
-            if "local_action_id" not in cols:
-                db.execute("ALTER TABLE peer_events_v2 ADD COLUMN local_action_id TEXT")
+            if not self._has_local_action_column(db):
+                try:
+                    db.execute("ALTER TABLE peer_events_v2 ADD COLUMN local_action_id TEXT")
+                except sqlite3.OperationalError as e:
+                    if "duplicate column" not in str(e).lower():
+                        raise
             for realm, actor, action_id in db.execute(
                     "SELECT realm, actor, action_id FROM peer_events_v2 WHERE local_action_id IS NULL").fetchall():
                 db.execute("UPDATE peer_events_v2 SET local_action_id=? WHERE realm=? AND actor=? AND action_id=?",
                            (local_action_id_for(realm, actor, action_id), realm, actor, action_id))
+
+    @staticmethod
+    def _has_local_action_column(db) -> bool:
+        return "local_action_id" in {r[1] for r in db.execute("PRAGMA table_info(peer_events_v2)")}
 
     def local_action_id(self, realm: str, actor: str, action_id: str):
         """The canonical local action id of a recorded logical action, or None when no event has been recorded for it."""
