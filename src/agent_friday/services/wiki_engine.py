@@ -692,16 +692,42 @@ def _without_display_tags(existing, old_val, new_val):
     return clock.strip_weekday_tags(old_val), clock.strip_weekday_tags(new_val)
 
 
+#: The nearest-text search runs under the wiki lock: it compares lines, never every window by characters, and
+#: shows at most this many characters.
+NEAREST_TEXT_MAX_CHARS = 600
+NEAREST_TEXT_MAX_LINES = 4000
+
+
 def _nearest_text(seen, old_n):
-    """The stretch of the page closest to ``old_n`` (as many lines as it has), or "" when nothing is close."""
+    """The stretch of the page closest to ``old_n`` (as many lines as it has), or "" when nothing is close.
+
+    Bounded work (it runs while the wiki is locked): the page and the edit are compared as lists of lines; the
+    window starts where the longest run of identical lines lines up, or else at the line most like the edit's first
+    line (a cheap character-count ratio). Only that one window is scored. Shown cut to NEAREST_TEXT_MAX_CHARS."""
     import difflib
     lines = seen.split("\n")
-    want = len(old_n.split("\n"))
-    if len(lines) > 4000:
+    old_lines = old_n.split("\n")
+    want = len(old_lines)
+    if len(lines) > NEAREST_TEXT_MAX_LINES or want > NEAREST_TEXT_MAX_LINES:
         return ""
-    windows = ["\n".join(lines[i:i + want]) for i in range(max(1, len(lines) - want + 1))]
-    close = difflib.get_close_matches(old_n, windows, n=1, cutoff=0.5)
-    return close[0] if close else ""
+    sm = difflib.SequenceMatcher(None, lines, old_lines, autojunk=False)
+    m = sm.find_longest_match(0, len(lines), 0, want)
+    if m.size:
+        start = m.a - m.b
+    else:
+        first = next((x for x in old_lines if x.strip()), "")
+        best, start = 0.0, -1
+        for i, line in enumerate(lines):
+            r = difflib.SequenceMatcher(None, line, first).quick_ratio() if line.strip() else 0.0
+            if r > best:
+                best, start = r, i
+        if start < 0 or best < 0.6:
+            return ""
+    start = max(0, min(start, len(lines) - want))
+    window = "\n".join(lines[start:start + want])
+    if difflib.SequenceMatcher(None, window, old_n).quick_ratio() < 0.5:
+        return ""
+    return window if len(window) <= NEAREST_TEXT_MAX_CHARS else window[:NEAREST_TEXT_MAX_CHARS] + "\u2026"
 
 
 def plan_wiki_proposal(item):
