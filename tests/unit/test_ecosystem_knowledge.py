@@ -238,6 +238,7 @@ def test_what_the_pairing_press_grants_is_said_as_the_pairing_code_grants_it(app
     first, turn, second = lines[0], lines[1], lines[2]
     assert first.startswith("Once you approve the pairing it is signed in as you") is owner
     assert turn == (eco.OWNER_TURN if owner else eco.HOUSEHOLD_TURN)
+    assert "anything that would need your approval at this PC still does" in eco.OWNER_TURN
     assert "off until you allow it" in second
     for right, note in eco.RIGHT_NOTES.items():
         assert (note in first) is (right in at_once), right
@@ -245,12 +246,26 @@ def test_what_the_pairing_press_grants_is_said_as_the_pairing_code_grants_it(app
     assert owner is (app_id in ("phone", "tablet"))
 
 
-def test_a_paired_tv_is_said_to_talk_with_this_pcs_models_because_the_gateway_answers_it():
+def test_a_paired_tv_is_said_to_talk_with_this_pcs_models_because_the_gateway_answers_it(monkeypatch):
     """tv_gateway/turn.run answers a household device's turn on the base right, with no owner context."""
-    from agent_friday.services import device_pairing
-    from agent_friday.tv_gateway import turn
+    from agent_friday.services import device_pairing, global_stop
+    from agent_friday.tv_gateway import owner_turn, turn
     assert device_pairing.BASE_RIGHT == "chat_read"
-    assert turn.tools_for({"id": "d", "kind": "tv", "rights": ["chat_read"]}, "family", [{"name": "tv_volume"}]) == []
+    tv_device = {"id": "d", "kind": "tv", "rights": ["chat_read"]}
+    assert turn.tools_for(tv_device, "family", [{"name": "tv_volume"}]) == []
+    # A turn from a TV holding only the base right is routed to a model and answered, with no
+    # tool offered. If run() ever asks for a further right first, the sentence below is false.
+    answered = []
+    monkeypatch.setattr(owner_turn, "is_owner_device", lambda dev: False)
+    monkeypatch.setattr(global_stop, "raise_if_stopped", lambda what: None)
+    monkeypatch.setattr(turn, "_route", lambda principal, plain, has_tools: {"provider": "local", "model": "m"})
+    monkeypatch.setattr(turn, "_row", lambda *a, **k: None)
+    monkeypatch.setattr(turn, "_local_round",
+                        lambda provider, model, name, system, messages, tools, max_tokens:
+                        answered.append(tools) or iter(["answer"]))
+    body = {"messages": [{"role": "user", "content": "hello"}], "tools": [{"name": "tv_volume"}]}
+    assert list(turn.run(tv_device, body, "family")) == ["answer"]
+    assert answered == [[]]
     tv = "\n".join(eco.sees(eco.app("tv")))
     assert "talk with me, answered by this PC's models" in tv
     assert "none of your memory or files" in tv and "no tool of this PC is run for it" in tv
