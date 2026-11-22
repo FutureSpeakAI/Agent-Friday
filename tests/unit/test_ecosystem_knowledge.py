@@ -452,3 +452,10 @@ def test_pairing_text_says_who_presses_and_that_the_digits_are_not_spoken():
     assert "I cannot press Approve for you" in text
     assert "Never read the six digits out to me" in text
     assert "nothing to type and nothing to scan" in text.lower()
+
+
+def test_the_tool_has_a_decided_class_at_the_action_gate():
+    """Reading shipped notes is internal: decided, not left to the outward default."""
+    from agent_friday.governance import action_gate
+    assert action_gate.known("ecosystem_info")
+    assert "ecosystem_info" in action_gate.INTERNAL_TOOLS
