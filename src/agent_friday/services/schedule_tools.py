@@ -6,6 +6,8 @@ scheduler (services/scheduler.py) the Workflows screen shows:
   list    every schedule with its model, status and next run
   create  a recurring schedule for a saved workflow, or for a prompt
   pause / resume / delete  one schedule, by id
+  update   change one schedule's timing, enabled state or prompt (a built-in's too)
+  restore_default / revert  put a built-in job back as shipped, or step it back one edit
 
 Honesty: `create` answers only after the schedule is read back from the store,
 and its result carries the schedule id and the next run. A reply that says
@@ -26,7 +28,7 @@ from __future__ import annotations
 import json
 from datetime import datetime
 
-ACTIONS = ("list", "create", "pause", "resume", "delete")
+ACTIONS = ("list", "get", "create", "pause", "resume", "delete", "update", "restore_default", "revert")
 TRIGGERS = ("daily", "weekly", "monthly", "interval", "on_idle")
 
 
@@ -53,6 +55,82 @@ def _row(rec) -> dict:
             "missed": rec.get("missed_text") or "",
             "builtin": rec.get("source") == "builtin",
             "job": (rec.get("task") or {}).get("ref") or (rec.get("task") or {}).get("kind")}
+
+
+#: A list answer is never cut: it carries whole rows up to this many characters, then says how many it left out and the
+#: offset of the next page (guarded by tests/unit/test_schedule_get_and_list.py).
+MAX_LIST_CHARS = 12000
+MAX_ROW_REASON = 90
+
+
+def _short_row(rec) -> dict:
+    """One schedule for a list: short, no prompt and no workflow body (``get`` returns the whole definition)."""
+    task = rec.get("task") or {}
+    return {"schedule_id": rec.get("id"), "name": rec.get("name"), "when": _when_text(rec),
+            "enabled": bool(rec.get("enabled", True)), "status": rec.get("status"),
+            "status_reason": str(rec.get("status_reason") or "")[:MAX_ROW_REASON],
+            "next_run_local": _local(rec.get("next_run")), "builtin": rec.get("source") == "builtin",
+            "job": task.get("ref") or task.get("kind")}
+
+
+def _list(data) -> dict:
+    """The schedules, optionally filtered by ``name_contains`` and ``builtin`` (true: Friday's own; false: the owner's),
+    paged by ``offset``. Whole rows only: when the next row would pass MAX_LIST_CHARS the list stops there and says how
+    many were left out and where to go on."""
+    from agent_friday.services import scheduler as _sched
+    needle = str(data.get("name_contains") or "").strip().lower()
+    builtin = data.get("builtin")
+    rows = []
+    for rec in _sched.list_schedules():
+        if needle and needle not in str(rec.get("name") or "").lower():
+            continue
+        if isinstance(builtin, bool) and (rec.get("source") == "builtin") != builtin:
+            continue
+        rows.append(_short_row(rec))
+    try:
+        offset = max(0, int(data.get("offset") or 0))
+    except (TypeError, ValueError):
+        offset = 0
+    kept, used = [], 2
+    for row in rows[offset:]:
+        size = len(json.dumps(row, ensure_ascii=False, default=str)) + 2
+        if kept and used + size > MAX_LIST_CHARS:
+            break
+        kept.append(row)
+        used += size
+    out = {"schedules": kept, "count": len(rows), "returned": len(kept), "offset": offset}
+    left = len(rows) - offset - len(kept)
+    if left > 0:
+        out["omitted"] = left
+        out["next_offset"] = offset + len(kept)
+        out["note"] = ("%d more schedule(s) were left out so no entry is cut; ask again with offset=%d, or narrow the "
+                       "list with name_contains or builtin." % (left, offset + len(kept)))
+    return out
+
+
+def _full(rec) -> dict:
+    """The whole definition of one schedule, enough to inspect, copy or recreate it without losing its instructions: the
+    prompt or the workflow slug, the timing, the model and whether it is pinned, the missed-run policy, and for a built-in
+    the version history of the owner's edits (services/builtin_overrides)."""
+    from agent_friday.services import builtin_overrides as _bo
+    from agent_friday.services import scheduler as _sched
+    task = dict(rec.get("task") or {})
+    out = _row(rec)
+    out.update({
+        "kind": task.get("kind"), "prompt": task.get("prompt"),
+        "workflow": task.get("ref") if task.get("kind") == "workflow" else None,
+        "task": task, "trigger": rec.get("trigger"), "spec": rec.get("spec") or {},
+        "notify": rec.get("notify"), "timeout_seconds": rec.get("timeout_seconds"), "retry": rec.get("retry"),
+        "missed_policy": rec.get("missed") if rec.get("missed") else _sched._missed_policy(rec),
+        "missed_policy_is_own": bool(rec.get("missed")),
+        "created": rec.get("created"), "updated": rec.get("updated"), "source": rec.get("source")})
+    if rec.get("source") == "builtin":
+        history = _bo.history(rec.get("id"))
+        out["versions"] = {"count": len(history), "latest": history[-1]["version"] if history else 0,
+                           "has_owner_edits": _bo.has_edits(rec.get("id")),
+                           "recent": [{k: h.get(k) for k in ("version", "kind", "by", "at")} for h in history[-5:]],
+                           "shipped_default": _sched.builtin_defaults(rec.get("id"))}
+    return out
 
 
 def _listed(sid):
@@ -100,6 +178,23 @@ def classify(args) -> tuple:
         elif action == "resume":
             from agent_friday.services import scheduler as _sched
             acts = sends_later(_record_texts(_sched.get_schedule(str(a.get("schedule_id") or ""))))
+        elif action == "update":
+            from agent_friday.services import scheduler as _sched
+            target = _sched.get_schedule(str(a.get("schedule_id") or "").strip()) or {}
+            changes_text = a.get("prompt") is not None or a.get("task") is not None
+            if changes_text and target.get("source") == "builtin":
+                return OUTWARD, ("it changes what a built-in job does (its prompt): that is an edit the owner makes, "
+                                 "so the owner is asked first")
+            acts = sends_later([str(a.get("prompt") or "")]) if changes_text else []
+            # Switching a job on, or changing the timing of one that is on, arms it: what it will send later is asked
+            # about now, exactly as `resume` does.
+            timing = a.get("trigger") is not None or a.get("spec") is not None
+            arms = a.get("enabled") is True or (timing and a.get("enabled") is not False and target.get("enabled", True))
+            if arms:
+                acts = list(dict.fromkeys(list(acts) + list(sends_later(_record_texts(target)))))
+        elif action in ("restore_default", "revert"):
+            return OUTWARD, ("it puts a job back as it was or as it shipped, which can switch on a job the owner "
+                             "switched off, so the owner is asked first")
         else:
             return INTERNAL, "it lists, pauses or removes a timetable; nothing leaves the computer"
     except Exception as e:
@@ -212,6 +307,45 @@ def _create(data) -> dict:
     return out
 
 
+def sid_is_publisher(rec) -> bool:
+    return (rec or {}).get("id") == _PUBLISHER_SCHEDULE_ID
+
+
+def _change(action, sid, data) -> dict:
+    """update / restore_default / revert on one schedule, read back from the store. A built-in's edit is a version the owner
+    can step back (services/builtin_overrides); only a built-in has a shipped default to go back to."""
+    from agent_friday.services import scheduler as _sched
+    from agent_friday.services import workflow_operations as _ops
+    rec = _sched.get_schedule(sid) or {}
+    if action in ("restore_default", "revert"):
+        done = (_sched.restore_builtin_default if action == "restore_default" else _sched.revert_builtin_edit)(sid, by="tool")
+        if done is None:
+            raise ValueError("Only a built-in job has a shipped default, and revert needs an earlier edit to step back to."
+                             if action == "restore_default" else
+                             "There is no earlier edit of %s to step back to." % sid)
+        return dict(_row(_listed(sid) or {}), **{"restored" if action == "restore_default" else "reverted": True})
+    patch = {}
+    if data.get("trigger") or data.get("spec") is not None:
+        when = _ops.validate_timing({"trigger": data.get("trigger") or rec.get("trigger"),
+                                     "spec": data.get("spec") if data.get("spec") is not None else (rec.get("spec") or {})})
+        patch.update(trigger=when["trigger"], spec=when["spec"])
+    if "enabled" in data:
+        patch["enabled"] = bool(data.get("enabled"))
+        if sid_is_publisher(rec) and not patch["enabled"] and not _caller_is_owner_chat():
+            raise ValueError("A scheduled or background job cannot pause the Content publisher; "
+                             "the owner switches it in Workflows.")
+    if data.get("prompt") is not None:
+        task = dict(rec.get("task") or {})
+        if task.get("kind") != "agent_prompt":
+            raise ValueError("This job has no prompt to change.")
+        task["prompt"] = str(data.get("prompt"))[:4000]
+        patch["task"] = task
+    if not patch:
+        raise ValueError("Say what to change: the timing (trigger and spec), enabled, or the prompt.")
+    _sched.update_schedule(sid, patch, by="tool")
+    return dict(_row(_listed(sid) or {}), updated=True)
+
+
 def schedule_job(inp):
     from agent_friday.services import scheduler as _sched
     data = dict(inp or {})
@@ -219,16 +353,22 @@ def schedule_job(inp):
     if action not in ACTIONS:
         raise ValueError("Choose one of: " + ", ".join(ACTIONS))
     if action == "list":
-        rows = [_row(r) for r in _sched.list_schedules()]
-        return json.dumps({"schedules": rows, "count": len(rows)}, ensure_ascii=False, default=str)
+        return json.dumps(_list(data), ensure_ascii=False, default=str)
     if action in ("create", "resume") and not _caller_may_schedule():
         raise ValueError("A scheduled or background job cannot set up or re-arm schedules; "
+                         "ask from the owner's chat or voice conversation.")
+    if action in ("update", "restore_default", "revert") and not (_caller_may_schedule() and _caller_is_owner_chat()):
+        raise ValueError("A scheduled or background job cannot change schedules; "
                          "ask from the owner's chat or voice conversation.")
     if action == "create":
         return json.dumps(_create(data), ensure_ascii=False, default=str)
     sid = str(data.get("schedule_id") or "").strip()
     if not sid or not _sched.get_schedule(sid):
         raise ValueError("There is no schedule %r. List the schedules for their ids." % sid)
+    if action == "get":
+        return json.dumps(_full(_listed(sid) or _sched.get_schedule(sid)), ensure_ascii=False, default=str)
+    if action in ("update", "restore_default", "revert"):
+        return json.dumps(_change(action, sid, data), ensure_ascii=False, default=str)
     if action == "delete":
         if not _sched.delete_schedule(sid):
             raise ValueError("Friday's built-in routines can be paused, not deleted.")
@@ -257,7 +397,11 @@ TOOL_SCHEMAS = [
      "Only say something is scheduled after create returns its schedule_id and next_run.",
      "input_schema": {"type": "object", "properties": {
          "action": {"type": "string", "enum": list(ACTIONS)},
-         "schedule_id": {"type": "string", "description": "For pause, resume, delete."},
+         "schedule_id": {"type": "string", "description": "For get, pause, resume, delete, update, restore_default, revert."},
+         "enabled": {"type": "boolean", "description": "update: switch the job on or off."},
+         "name_contains": {"type": "string", "description": "list: only schedules whose name contains this."},
+         "builtin": {"type": "boolean", "description": "list: true for Friday's own built-in jobs, false for the owner's."},
+         "offset": {"type": "integer", "description": "list: skip this many (the note of a cut-short list gives it)."},
          "workflow": {"type": "string", "description": "Saved workflow slug to schedule."},
          "prompt": {"type": "string", "description": "What to do each time, when not a saved workflow."},
          "name": {"type": "string"},

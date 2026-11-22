@@ -40,6 +40,7 @@ from agent_friday.core import FRIDAY_DIR, _load_settings, process_log, process_r
 from agent_friday.services.visible_jobs import visible_job
 from agent_friday.services.job_prompt import Job as _JobPromptJob
 from agent_friday.services import schedule_math as _sm
+from agent_friday.services import builtin_overrides
 
 # ── Storage ──────────────────────────────────────────────────────────────────
 SCHEDULES_FILE = FRIDAY_DIR / "schedules.json"
@@ -626,7 +627,7 @@ def _schedule_fingerprint(rec) -> str:
     return hashlib.sha256(_json.dumps(_run_basis(rec), sort_keys=True, default=str).encode("utf-8")).hexdigest()[:16]
 
 
-def update_schedule(sid, patch, *, by="owner") -> dict | None:
+def update_schedule(sid, patch, *, by="owner", versioned=True) -> dict | None:
     """Patch an existing schedule (name/trigger/spec/task/enabled/notify/...).
 
     `by` says who switched it when the patch carries `enabled` (SWITCHED_BY):
@@ -643,6 +644,7 @@ def update_schedule(sid, patch, *, by="owner") -> dict | None:
         allowed = {"name", "trigger", "spec", "task", "enabled", "notify",
                    "retry", "timeout_seconds", "finish_notice", "missed", "on_held", "email_send", "tz"}
         before = _run_basis(cur)
+        builtin_before = builtin_overrides.fields_of(cur) if cur.get("source") == "builtin" else None
         for k, v in (patch or {}).items():
             if k in allowed:
                 if k == "tz" and (_zone(v) is None or cur.get("source") == "builtin"):
@@ -692,11 +694,76 @@ def update_schedule(sid, patch, *, by="owner") -> dict | None:
             dropped = cur.get("quiet_deferred")
             cur["quiet_deferred"] = None
         out = _upsert(cur)
+        if builtin_before is not None and versioned and by != "auto":
+            _log_builtin_edit(sid, builtin_before, cur, by)
     if dropped is not None:
         _notify_deferral_dropped(cur, dropped, bool(cur.get("enabled", True)))
     if changed_run_fields:
         _supersede_late_cards(sid)
     return out
+
+
+# ── The owner's edits to a built-in job: versioned, logged, reversible (services/builtin_overrides) ──────────────────
+def builtin_defaults(sid) -> dict | None:
+    """The shipped fields of a built-in job (its seed), or None when ``sid`` is not one."""
+    ref = str(sid)[4:] if str(sid).startswith("sch_") else ""
+    meta = BUILTIN_TASKS.get(ref)
+    return builtin_overrides.fields_of(_seed_record(ref, meta)) if meta else None
+
+
+def _log_builtin_edit(sid, before, record, by) -> None:
+    """Keep one edit of a built-in as a version, and say so in the action ledger (field names, never prompt text)."""
+    defaults = builtin_defaults(sid)
+    if defaults is None:
+        return
+    try:
+        entry = builtin_overrides.record_edit(sid, before, record, defaults, by)
+        if entry:
+            changed = sorted(k for k in entry["after"] if entry["after"].get(k) != entry["before"].get(k))
+            _ledger_builtin_edit(sid, entry["version"], "edit", by, changed)
+    except Exception:
+        _log.warning("a built-in job's edit was not recorded", exc_info=True)
+
+
+def _ledger_builtin_edit(sid, version, kind, by, fields) -> None:
+    try:
+        from agent_friday.services import action_ledger
+        action_ledger.try_append("builtin_schedule_edit", {"schedule": sid, "version": version, "kind": kind,
+                                                           "by": str(by), "fields": list(fields)}, durable=True)
+    except Exception:
+        _log.debug("built-in edit ledger entry failed", exc_info=True)
+
+
+def restore_builtin_default(sid, by="owner") -> dict | None:
+    """Put a built-in job back as shipped: its timetable, enabled state, parameters and prompt. Logged as a version and
+    undoable. None when ``sid`` is not a built-in job."""
+    with _STORE_LOCK:
+        cur = get_schedule(sid)
+        defaults = builtin_defaults(sid)
+        if not cur or cur.get("source") != "builtin" or defaults is None:
+            return None
+        shipped = builtin_overrides.restore(sid, builtin_overrides.fields_of(cur), defaults, by)
+        out = update_schedule(sid, shipped, by="owner" if by == "owner" else "tool", versioned=False)
+        history = builtin_overrides.history(sid)
+        if history and history[-1]["kind"] == "restore_default":
+            _ledger_builtin_edit(sid, history[-1]["version"], "restore_default", by, sorted(shipped))
+        return out
+
+
+def revert_builtin_edit(sid, by="owner") -> dict | None:
+    """Step a built-in job back one edit. None when there is nothing to step back to or ``sid`` is not a built-in."""
+    with _STORE_LOCK:
+        cur = get_schedule(sid)
+        defaults = builtin_defaults(sid)
+        if not cur or cur.get("source") != "builtin" or defaults is None:
+            return None
+        target = builtin_overrides.revert(sid, builtin_overrides.fields_of(cur), defaults, by)
+        if target is None:
+            return None
+        out = update_schedule(sid, target, by="owner" if by == "owner" else "tool", versioned=False)
+        history = builtin_overrides.history(sid)
+        _ledger_builtin_edit(sid, history[-1]["version"], "revert", by, sorted(target))
+        return out
 
 
 def _notify_deferral_dropped(rec, qd, still_on) -> None:
@@ -2634,9 +2701,16 @@ def _seed_and_reconcile():
         # `enabled: false`, so it never ran at all.
         # Applied only while the record still looks untouched on this point, so a
         # deliberate later choice is never overwritten.
+        adopted = 0
+        for r in recs:
+            defaults = builtin_defaults(r.get("id")) if r.get("source") == "builtin" else None
+            if defaults is not None and builtin_overrides.adopt(r["id"], r, defaults):
+                adopted += 1             # an edit made before edits were versioned is still the owner's
         for r in recs:
             if r.get("id") != "sch_daily_creation":
                 continue
+            if builtin_overrides.has_edits(r["id"]) or float(r.get("updated") or 0) - float(r.get("created") or 0) > 1.0:
+                continue                 # the owner touched it: a migration of the shipped default leaves it alone
             if r.get("trigger") == "daily" and (r.get("spec") or {}).get("hour") == 8:
                 r["trigger"] = "idle_daily"
                 r["spec"] = {"from_hour": 9, "to_hour": 23, "idle_after_s": 600}
@@ -2659,7 +2733,8 @@ def _seed_and_reconcile():
         if migrated:
             print(f"  [scheduler] {migrated} schedule(s) now default to the "
                   f"local seat (no cloud fallback).")
-        if added or migrated:
+        reapplied = builtin_overrides.reapply(recs)     # whatever seeded or migrated above, the owner's fields win
+        if added or migrated or reapplied:
             _write_store(recs)
             if added:
                 print(f"  [scheduler] seeded {added} built-in schedule(s).")
