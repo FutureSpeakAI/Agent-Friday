@@ -34150,12 +34150,10 @@ function SystemWS() {
   // surface: the notification's "Review" points at
   // {workspace:'system',tab:'approvals'}, and if nothing handles that tab every
   // gated action (Google connect, gated goal steps) waits until it expires. ──
-  const [approvals, setApprovals] = useState([]);
+  const approvals = useApprovalFeed();               // the page's one list of waiting cards
   const [apBusy, setApBusy] = useState('');
   const apRef = useRef(null);
-  const refreshApprovals = () => fetch('/api/approvals?status=pending').then(r => r.json()).then(d => setApprovals(Array.isArray(d?.approvals) ? d.approvals : [])).catch(() => {});
-  // The list follows the page's approval feed, so a card decided anywhere leaves it at once.
-  useEffect(() => fridayApprovalFeed.subscribe(setApprovals), []);
+  const refreshApprovals = () => fridayApprovalFeed.reload();
   const decideApproval = async (id, decision) => {
     await fridayDecideApproval(id, decision);
     refreshApprovals();
@@ -69215,6 +69213,8 @@ const fridayApprovalFeed = (() => {
     leader = false,
     heard = Date.now(),
     release = null;
+  // When each card was last decided or raised here: a reload's older answer must not undo either.
+  const settled = new Map(), raised = new Map();
   const listeners = new Set();
   // Cards judged "may not interrupt" (quiet hours, over budget, Focus Assist): listed, not popped open.
   const quiet = window.__fridayQuietApprovals = new Set();
@@ -69249,8 +69249,10 @@ const fridayApprovalFeed = (() => {
       emit();
     } else if (d.type === 'pending' && d.approval && d.approval.status === 'pending') {
       cards.set(d.approval.approval_id, d.approval);
+      raised.set(d.approval.approval_id, Date.now());
       emit();
     } else if (d.type === 'resolved') {
+      settled.set(d.approval_id, Date.now());
       if (cards.delete(d.approval_id)) emit();
     } else if (d.type === 'presence') {
       presenceListeners.forEach(fn => {
@@ -69378,7 +69380,22 @@ const fridayApprovalFeed = (() => {
       };
     },
     drop(id) {
+      settled.set(id, Date.now());
       if (cards.delete(id)) emit();
+    },
+    // Ask the server for the pending list again (a page that missed frames, or opened late). A card decided, or
+    // newly raised, after the request left is not undone by its older answer.
+    reload() {
+      const sent = Date.now();
+      return fetch('/api/approvals?status=pending').then(r => r.json()).then(d => {
+        const fresh = d && Array.isArray(d.approvals) ? d.approvals : null;
+        if (!fresh) return;
+        const next = new Map(fresh.filter(a => (settled.get(a.approval_id) || 0) < sent).map(a => [a.approval_id, a]));
+        cards.forEach((a, id) => { if (!next.has(id) && (raised.get(id) || 0) >= sent) next.set(id, a); });
+        cards = next;
+        settled.forEach((at, id) => { if (sent - at > 600000) settled.delete(id); });
+        emit();
+      }).catch(() => {});
     },
     onPresence(fn) {
       presenceListeners.add(fn);
