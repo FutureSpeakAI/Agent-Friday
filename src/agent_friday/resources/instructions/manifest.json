@@ -45,8 +45,8 @@
       "slot": "always_on",
       "order": 4,
       "version": 1,
-      "sha256": "8ac655be45d36880dff8f8d862f54192e6fdcf92100412058f7e23afda31d633",
-      "chars": 729,
+      "sha256": "87bd27ddf3bd9c79ecf1123646f735ad84d833bcc2b1e6eb380da496a758fb51",
+      "chars": 815,
       "locked": false,
       "owner": "shipped"
     },

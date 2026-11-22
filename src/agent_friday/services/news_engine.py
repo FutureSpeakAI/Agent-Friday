@@ -1289,10 +1289,12 @@ def _gather_live_briefing_context():
     except Exception as _ci_err:
         print(f"  [briefing] connector intelligence skipped: {_ci_err}")
 
+    from agent_friday.services import briefing_google
     header = (
         f"=== LIVE DATA fetched {today_str} ===\n"
         "Base the briefing on THIS live data, not on any cached/remembered context. "
-        "If a section says data is unavailable, note that honestly rather than inventing it.\n\n"
+        "If a section says data is unavailable, note that honestly rather than inventing it.\n"
+        + briefing_google.live_line() + "\n\n"
     )
     return header + "\n\n".join(sections)
 

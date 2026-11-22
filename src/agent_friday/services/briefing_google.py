@@ -27,14 +27,26 @@ def state(service: str) -> str:
     except Exception:
         pass
     try:
-        from agent_friday.services import google_accounts
-        if google_accounts._accounts_with(service):
-            return CONNECTED
-        if google_accounts.has_accounts():
+        from agent_friday.services import capability_state as cap
+        google = cap.google_accounts_state()
+        if google.state == cap.WORKING or (google.state == cap.PRESENT_FAILING and google.health == "degraded"):
+            return CONNECTED                    # at least one account works
+        if google.state in (cap.PRESENT_FAILING, cap.PRESENT_UNVERIFIED):
             return NEEDS_SIGN_IN
     except Exception:
         pass
     return NOT_CONNECTED
+
+
+def live_line() -> str:
+    """The line the briefing prompt carries about Google, read now: the capability state the system prompt's own
+    CAPABILITY STATE block uses, so a briefing is told what is true when it is generated and an earlier briefing's
+    "not connected" is not repeated."""
+    calendar, gmail = state("calendar"), state("gmail")
+    words = {CONNECTED: "connected and working", NEEDS_SIGN_IN: "needs the owner to sign in again",
+             HELD: "not read until a route is chosen", NOT_CONNECTED: "not connected"}
+    return ("Connected services, read live now (this outranks anything an earlier briefing or memory says): "
+            "Google Calendar %s; Gmail %s." % (words[calendar], words[gmail]))
 
 
 def sentence(service: str, current: str) -> str:
