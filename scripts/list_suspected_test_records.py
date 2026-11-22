@@ -108,6 +108,21 @@ def _inside(path: Path, root: Path) -> bool:
         return False
 
 
+def _out_refusal(out: Path, root: Path) -> str:
+    """Why the report may not be written at `out`, or "" when it may. Never inside the scanned root, never inside the owner's
+    data root (FRIDAY_HOME or ~/.friday) whatever root is scanned, and never through a second name for an existing file (a
+    hard link would write through to it)."""
+    for guarded in (root, default_root()):
+        if _inside(out, guarded):
+            return "is inside the data root %s; this script never writes there" % guarded
+    try:
+        if out.exists() and (not out.is_file() or out.stat().st_nlink > 1):
+            return "is not a plain file of its own (a link or a folder); name a new file"
+    except OSError:
+        return "cannot be checked"
+    return ""
+
+
 def render(records: list[dict], root: Path) -> str:
     if not records:
         return "No suspected test records under %s. Nothing was changed.\n" % root
@@ -126,9 +141,11 @@ def main(argv=None) -> int:
     ap.add_argument("--out", type=Path, default=None, help="also write the report here (must be outside the data root)")
     args = ap.parse_args(argv)
     root = args.root or default_root()
-    if args.out is not None and _inside(args.out, root):
-        print("refused: --out %s is inside the data root; this script never writes there" % args.out, file=sys.stderr)
-        return 2
+    if args.out is not None:
+        refusal = _out_refusal(args.out, root)
+        if refusal:
+            print("refused: --out %s %s" % (args.out, refusal), file=sys.stderr)
+            return 2
     records = scan(root)
     text = json.dumps(records, indent=2) + "\n" if args.json else render(records, root)
     print(text, end="")
