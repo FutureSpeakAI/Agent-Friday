@@ -26,6 +26,7 @@ def store(tmp_path, monkeypatch):
                                "default_spec": {"hour": 18, "minute": 0}, "notify": "on_complete", "weekday_only": None,
                                "default_enabled": True}})
     monkeypatch.setattr(schedule_tools, "_caller_may_schedule", lambda: True)
+    monkeypatch.setattr(schedule_tools, "_caller_is_owner_chat", lambda: True)
     scheduler._seed_and_reconcile()
     return tmp_path
 
