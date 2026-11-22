@@ -6,6 +6,8 @@ scheduler (services/scheduler.py) the Workflows screen shows:
   list    every schedule with its model, status and next run
   create  a recurring schedule for a saved workflow, or for a prompt
   pause / resume / delete  one schedule, by id
+  edit     change one schedule's timing, enabled state or prompt (a built-in's too)
+  restore_default / revert  put a built-in job back as shipped, or step it back one edit
 
 Honesty: `create` answers only after the schedule is read back from the store,
 and its result carries the schedule id and the next run. A reply that says
@@ -26,7 +28,7 @@ from __future__ import annotations
 import json
 from datetime import datetime
 
-ACTIONS = ("list", "create", "pause", "resume", "delete")
+ACTIONS = ("list", "create", "pause", "resume", "delete", "edit", "restore_default", "revert")
 TRIGGERS = ("daily", "weekly", "monthly", "interval")
 
 
@@ -100,6 +102,14 @@ def classify(args) -> tuple:
         elif action == "resume":
             from agent_friday.services import scheduler as _sched
             acts = sends_later(_record_texts(_sched.get_schedule(str(a.get("schedule_id") or ""))))
+        elif action == "edit":
+            from agent_friday.services import scheduler as _sched
+            target = _sched.get_schedule(str(a.get("schedule_id") or "")) or {}
+            changes_text = a.get("prompt") is not None or a.get("task") is not None
+            if changes_text and target.get("source") == "builtin":
+                return OUTWARD, ("it changes what a built-in job does (its prompt): that is an edit the owner makes, "
+                                 "so the owner is asked first")
+            acts = sends_later([str(a.get("prompt") or "")]) if changes_text else []
         else:
             return INTERNAL, "it lists, pauses or removes a timetable; nothing leaves the computer"
     except Exception as e:
@@ -212,6 +222,38 @@ def _create(data) -> dict:
     return out
 
 
+def _change(action, sid, data) -> dict:
+    """edit / restore_default / revert on one schedule, read back from the store. A built-in's edit is a version the owner
+    can step back (services/builtin_overrides); only a built-in has a shipped default to go back to."""
+    from agent_friday.services import scheduler as _sched
+    from agent_friday.services import workflow_operations as _ops
+    rec = _sched.get_schedule(sid) or {}
+    if action in ("restore_default", "revert"):
+        done = (_sched.restore_builtin_default if action == "restore_default" else _sched.revert_builtin_edit)(sid, by="tool")
+        if done is None:
+            raise ValueError("Only a built-in job has a shipped default, and revert needs an earlier edit to step back to."
+                             if action == "restore_default" else
+                             "There is no earlier edit of %s to step back to." % sid)
+        return dict(_row(_listed(sid) or {}), **{"restored" if action == "restore_default" else "reverted": True})
+    patch = {}
+    if data.get("trigger") or data.get("spec") is not None:
+        when = _ops.validate_timing({"trigger": data.get("trigger") or rec.get("trigger"),
+                                     "spec": data.get("spec") if data.get("spec") is not None else (rec.get("spec") or {})})
+        patch.update(trigger=when["trigger"], spec=when["spec"])
+    if "enabled" in data:
+        patch["enabled"] = bool(data.get("enabled"))
+    if data.get("prompt") is not None:
+        task = dict(rec.get("task") or {})
+        if task.get("kind") != "agent_prompt":
+            raise ValueError("This job has no prompt to change.")
+        task["prompt"] = str(data.get("prompt"))[:4000]
+        patch["task"] = task
+    if not patch:
+        raise ValueError("Say what to change: the timing (trigger and spec), enabled, or the prompt.")
+    _sched.update_schedule(sid, patch, by="tool")
+    return dict(_row(_listed(sid) or {}), edited=True)
+
+
 def schedule_job(inp):
     from agent_friday.services import scheduler as _sched
     data = dict(inp or {})
@@ -224,11 +266,16 @@ def schedule_job(inp):
     if action in ("create", "resume") and not _caller_may_schedule():
         raise ValueError("A scheduled or background job cannot set up or re-arm schedules; "
                          "ask from the owner's chat or voice conversation.")
+    if action in ("edit", "restore_default", "revert") and not _caller_may_schedule():
+        raise ValueError("A scheduled or background job cannot change schedules; "
+                         "ask from the owner's chat or voice conversation.")
     if action == "create":
         return json.dumps(_create(data), ensure_ascii=False, default=str)
     sid = str(data.get("schedule_id") or "").strip()
     if not sid or not _sched.get_schedule(sid):
         raise ValueError("There is no schedule %r. List the schedules for their ids." % sid)
+    if action in ("edit", "restore_default", "revert"):
+        return json.dumps(_change(action, sid, data), ensure_ascii=False, default=str)
     if action == "delete":
         if not _sched.delete_schedule(sid):
             raise ValueError("Friday's built-in routines can be paused, not deleted.")
@@ -257,7 +304,8 @@ TOOL_SCHEMAS = [
      "Only say something is scheduled after create returns its schedule_id and next_run.",
      "input_schema": {"type": "object", "properties": {
          "action": {"type": "string", "enum": list(ACTIONS)},
-         "schedule_id": {"type": "string", "description": "For pause, resume, delete."},
+         "schedule_id": {"type": "string", "description": "For pause, resume, delete, edit, restore_default, revert."},
+         "enabled": {"type": "boolean", "description": "edit: switch the job on or off."},
          "workflow": {"type": "string", "description": "Saved workflow slug to schedule."},
          "prompt": {"type": "string", "description": "What to do each time, when not a saved workflow."},
          "name": {"type": "string"},

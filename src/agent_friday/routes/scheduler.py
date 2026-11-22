@@ -80,6 +80,33 @@ def delete_schedule(sid):
     return jsonify({"status": "ok", "deleted": sid})
 
 
+@scheduler_bp.route('/api/schedules/<sid>/history', methods=['GET'])
+def schedule_edit_history(sid):
+    """The versions of the owner's edits to a built-in job (newest last)."""
+    from agent_friday.services import builtin_overrides
+    return jsonify({"status": "ok", "schedule_id": sid, "history": builtin_overrides.history(sid)})
+
+
+@scheduler_bp.route('/api/schedules/<sid>/restore-default', methods=['POST'])
+@login_required
+def schedule_restore_default(sid):
+    """Put a built-in job back as shipped (timing, enabled state, parameters, prompt). Logged; undo with /revert."""
+    rec = _sched.restore_builtin_default(sid, by="owner")
+    if rec is None:
+        return jsonify({"status": "error", "message": "Only a built-in job has a shipped default."}), 404
+    return jsonify({"status": "ok", "schedule": rec})
+
+
+@scheduler_bp.route('/api/schedules/<sid>/revert', methods=['POST'])
+@login_required
+def schedule_revert_edit(sid):
+    """Step a built-in job back one edit."""
+    rec = _sched.revert_builtin_edit(sid, by="owner")
+    if rec is None:
+        return jsonify({"status": "error", "message": "There is no earlier edit to step back to."}), 404
+    return jsonify({"status": "ok", "schedule": rec})
+
+
 @scheduler_bp.route('/api/schedules/<sid>/run-now', methods=['POST'])
 @scheduler_bp.route('/api/schedules/<sid>/run', methods=['POST'])
 @login_required
