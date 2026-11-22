@@ -4041,8 +4041,8 @@ def _load_vault_summary():
 
     # Trust graph — names and scores only (lightweight). One loader (people_graph.circle), by display name.
     try:
-        from agent_friday.people_graph import get_people_graph
-        circle = get_people_graph(friday_dir=FRIDAY_DIR).circle()
+        from agent_friday.people_graph import graph_at
+        circle = graph_at(FRIDAY_DIR).circle()
         if circle:
             ctx['trust_people'] = {p['name']: {'overall': p['overall'], 'relationship': p['relationship']} for p in circle}
     except Exception:
@@ -4480,8 +4480,8 @@ def _build_context_prompt(message, workspace='', vision_description=None, provid
         # Check if message references a specific person
         trust_data_raw = None
         try:
-            from agent_friday.people_graph import get_people_graph
-            trust_data_raw = get_people_graph(friday_dir=FRIDAY_DIR).load()
+            from agent_friday.people_graph import graph_at
+            trust_data_raw = graph_at(FRIDAY_DIR).load()
         except Exception:
             pass
 
@@ -4850,17 +4850,24 @@ def _load_smart_context(user_message, workspace=None, include_people=True):
 
     # Person-name detection — pull the trust-graph entry for anyone named.
     # Never for a cloud model: people trust stays home (trust/people.py).
-    trust_path = FRIDAY_DIR / "trust_graph.json"
-    if include_people and trust_path.exists():
+    # One store and one naming rule (people_graph.graph_at().load(), as the trust circle and query_trust_graph): a
+    # person is found by display name, alias or key, and headed by the display name.
+    if include_people:
         try:
-            trust = json.loads(trust_path.read_text(encoding='utf-8'))
-            people = trust.get('people', {})
-            if isinstance(people, dict):
-                for name, entry in people.items():
-                    if name and name.lower() in msg_lower:
-                        context_parts.append(
-                            f"== TRUST GRAPH: {name} ==\n{json.dumps(entry, indent=2, default=str)[:1500]}"
-                        )
+            from agent_friday.people_graph import graph_at
+            people = graph_at(FRIDAY_DIR).load().get('people') or {}
+            entries = people.items() if isinstance(people, dict) else ((None, p) for p in people)
+            for key, entry in entries:
+                if not isinstance(entry, dict):
+                    continue
+                shown = str(entry.get('name') or key or '').strip()
+                names = [shown, str(key or '')] + [str(a) for a in (entry.get('aliases') or [])]
+                # whole words only: a short alias ("Mo") must not match inside "more"
+                if shown and any(n.strip() and re.search(r"(?<!\w)" + re.escape(n.strip().lower()) + r"(?!\w)", msg_lower)
+                                 for n in names):
+                    context_parts.append(
+                        f"== TRUST GRAPH: {shown} ==\n{json.dumps(entry, indent=2, default=str)[:1500]}"
+                    )
         except Exception:
             pass
 

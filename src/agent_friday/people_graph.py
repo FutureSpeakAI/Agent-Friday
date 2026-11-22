@@ -391,3 +391,13 @@ def get_people_graph(friday_dir=None):
             if _instance is None:
                 _instance = PeopleGraph(friday_dir=friday_dir)
     return _instance
+
+
+def graph_at(friday_dir=None):
+    """The people graph for `friday_dir`: the shared instance when it serves that folder, else one for that folder.
+    get_people_graph() ignores `friday_dir` once the shared instance exists; a reader that names its folder gets that
+    folder's file. Every trust-circle reader goes through this (tests/unit/test_trust_circle_one_source.py)."""
+    shared = get_people_graph(friday_dir)
+    if friday_dir is not None and Path(friday_dir) != shared.friday_dir:
+        return PeopleGraph(friday_dir=friday_dir)
+    return shared

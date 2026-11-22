@@ -3218,8 +3218,8 @@ def _build_live_context() -> str:
     # Trust graph — top names
     try:
         # One loader (people_graph.circle), by display name: a name listed here is a name query_trust_graph finds.
-        from agent_friday.people_graph import get_people_graph
-        top = get_people_graph(friday_dir=FRIDAY_DIR).circle(limit=8)
+        from agent_friday.people_graph import graph_at
+        top = graph_at(FRIDAY_DIR).circle(limit=8)
         if top:
             lines = [f"- {p['name']}" + (f" ({p['relationship']})" if p['relationship'] else '') for p in top]
             parts.append("TRUST CIRCLE (top 8):\n" + "\n".join(lines))
