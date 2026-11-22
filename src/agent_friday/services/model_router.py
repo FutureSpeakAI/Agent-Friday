@@ -3687,10 +3687,20 @@ def memory_head_blocks(workspace='', freeze_key=None, *, provider='local',
         pass
     out = "\n\n" + _kk.KINDS_SECTION + "\n"
 
+    # ONE rule (core_memory.user_lines_visible) says whether this reader sees the lines about the owner; the
+    # update_core_memory tool asks the same function, so the prompt and the tool cannot disagree. Not visible: the lines
+    # are gated as TIER_2 when a vault control is at hand, and withheld outright when none is (never raw).
     gate_fn, gate_key = None, "ungated"
-    if vault_control is not None:
-        try:
-            if not vault_control.can_access(provider, model):
+    try:
+        from agent_friday.services import core_memory as _cm
+        _visible = _cm.user_lines_visible(provider, model)
+    except Exception:
+        _visible = False
+    if not _visible:
+        gate_key = "cloud-gated"
+        gate_fn = (lambda text: "")
+        if vault_control is not None:
+            try:
                 from agent_friday.privacy.vault_access import Tier as _Tier
 
                 def gate_fn(text):
@@ -3698,11 +3708,8 @@ def memory_head_blocks(workspace='', freeze_key=None, *, provider='local',
                     return vault_control.gate_content(
                         text, provider, tier=_Tier.PRIVATE, fallback=vault_fallback,
                         detail="core-memory", model=model)
-                gate_key = "cloud-gated"
-        except Exception:
-            def gate_fn(text):
-                return ""
-            gate_key = "cloud-gated"
+            except Exception:
+                gate_fn = (lambda text: "")
 
     def _core():
         from agent_friday.services import core_memory
