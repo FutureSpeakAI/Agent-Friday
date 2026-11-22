@@ -98,3 +98,15 @@ def test_the_folder_name_as_a_prefix_of_another_folder_does_not_open_it():
     other.mkdir(parents=True, exist_ok=True)
     (other / "x.txt").write_text("synthetic", encoding="utf-8")
     assert DENIED in agent._tool_read_file({"path": str(other / "x.txt")})
+
+
+@pytest.mark.parametrize("tool", ["run_command", "search_web", "browse_web"])
+def test_the_path_the_cut_off_notice_names_is_absolute_inside_the_folder_and_readable(tool):
+    out = to.clip_result(tool, _lines(3000), max_lines=100)
+    match = re.search(r"Full output saved at (.+?); read it with read_file\.", out)
+    assert match, "the cut-off notice does not name where the rest is: " + out[-300:]
+    named = Path(match.group(1))
+    assert named.is_absolute(), "the notice names a path read_file cannot resolve: %s" % named
+    assert named.resolve().parent.parent == to.output_dir().resolve(), "the notice names a path outside the folder"
+    first = agent._tool_read_file({"path": str(named)})
+    assert DENIED not in first and "line 00001" in first, first[:200]
