@@ -4026,18 +4026,10 @@ def _load_vault_summary():
     ctx = {}
 
     # Personality state
-    pfile = FRIDAY_DIR / "personality.json"
-    if pfile.exists():
-        try:
-            data = json.loads(pfile.read_text(encoding='utf-8'))
-            ctx['personality'] = {
-                'maturity': data.get('maturity', 0.5),
-                'session_count': data.get('session_count', 0),
-                'top_traits': {k: round(v, 2) for k, v in list(data.get('traits', {}).items())[:5]},
-                'temperature': data.get('temperature', 0.7),
-            }
-        except Exception:
-            pass
+    from agent_friday.services import personality_state
+    state = personality_state.summary()
+    if state is not None:
+        ctx['personality'] = state
 
     # Trust graph — names and scores only (lightweight)
     tfile = FRIDAY_DIR / "trust_graph.json"

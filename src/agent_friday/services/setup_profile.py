@@ -499,8 +499,19 @@ def apply_style(style: dict, name: str = "") -> dict:
         _save_settings(delta)
     except Exception:
         pass
+    _align_user_model(s)
     return {"ok": bool(res.get("ok")), "block": block,
             "communication_style": comm, "response_length": length}
+
+
+def _align_user_model(sliders: dict) -> None:
+    """The stated sliders ARE the user model's style: set, so what is inferred later cannot out-rank them."""
+    try:
+        from agent_friday.services import user_model
+        user_model.set_trait("comm.formality", round(sliders["formality"] / 100, 2), confidence=1.0)
+        user_model.set_trait("comm.verbosity", round(sliders["verbosity"] / 100, 2), confidence=1.0)
+    except Exception:
+        pass
 
 
 def remove_style_block() -> bool:

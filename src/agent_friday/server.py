@@ -1377,6 +1377,15 @@ if __name__ == '__main__':
     except Exception as _sm_err:
         print(f"  Session memory: skipped ({_sm_err})")
 
+    # One more session, and maturity from experience (services/personality_state).
+    try:
+        from agent_friday.services import personality_state
+        _ps = personality_state.begin_session()
+        if _ps:
+            print(f"  Personality: session {_ps['session_count']}, maturity {_ps['maturity']:.0%}")
+    except Exception as _ps_err:
+        print(f"  Personality: skipped ({_ps_err})")
+
     # Behavioral anomaly monitor — initialise the singleton before first request.
     if _HAS_BEHAVIORAL_MONITOR:
         try:
