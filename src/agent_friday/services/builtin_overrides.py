@@ -30,7 +30,7 @@ MAX_HISTORY = 50
 
 
 def _file() -> Path:
-    from agent_friday.paths import FRIDAY_DIR
+    from agent_friday.core import FRIDAY_DIR
     return Path(FRIDAY_DIR) / "builtin_schedule_overrides.json"
 
 
