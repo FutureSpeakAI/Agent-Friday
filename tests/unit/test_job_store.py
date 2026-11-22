@@ -98,7 +98,9 @@ def test_a_feed_id_holds_a_posting_together_when_it_is_renamed_after_a_repost(_h
 def test_different_postings_stay_different_records(_home):
     js.upsert(listing("Staff Engineer", external_id="A-1"), NOW)
     js.upsert(listing("Data Engineer", external_id="A-2"), NOW)
-    js.upsert(listing("Staff Engineer", company="Beta Labs", external_id="A-3"), NOW)
+    # Another company's posting lives at its own URL (the helper builds URLs from the title alone).
+    js.upsert(listing("Staff Engineer", company="Beta Labs", external_id="A-3",
+                      url="https://jobs.example.test/beta-labs/staff-engineer"), NOW)
     assert len(stored(_home)) == 3
 
 
