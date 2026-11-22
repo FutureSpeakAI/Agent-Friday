@@ -24,9 +24,11 @@ async function open(page: Page) {
     return r.fulfill(sse([{ started: true, turn_id: 'zz-turn-' + state.turns },
       { done: true, payload: { response: 'zz-desk reply ' + state.turns, vision_events: [], actions: [] } }], 300000));
   });
-  // the desktop bus: quiet until the device's turn lands, then one conversation_changed (no content, as the gateway sends it)
+  // the desktop bus: quiet until the device's turn lands, then one conversation_changed (no content, as the gateway sends
+  // it) to the docked chat's own stream (client=chat-...); the page's other listeners on this route get nothing
   await page.route('**/api/desktop/events*', r => {
-    if (state.landed && !state.served) {
+    const client = new URL(r.request().url()).searchParams.get('client') || '';
+    if (state.landed && !state.served && client.startsWith('chat-')) {
       state.served = true;
       return r.fulfill(sse([{ type: 'conversation_changed', domain: 'conversations', via: 'device' }], 300));
     }
