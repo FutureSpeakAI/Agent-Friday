@@ -133,3 +133,30 @@ def test_a_not_run_result_never_comes_with_the_action_having_run_and_the_reverse
         assert not any(did for _out, did in seen), flow
     if flow == "approved once":
         assert [did for _out, did in seen] == [False, True]
+
+def test_after_ask_which_the_owner_names_one_and_only_that_one_runs(_isolate):
+    """Asking which must be answerable in chat: the owner names one, the model asks it again, and the next yes binds
+    that one alone. The other card stays waiting in the tray and no longer blocks a yes in this conversation."""
+    nav = ("navigate", {"workspace": "code"})
+    cal = ("create_calendar_event", {"title": "Synthetic", "start": "2026-11-25T12:00"})
+    _call(*cal, _turn("book it"))
+    _call(*nav, _turn("switch to code"))
+    yes = _turn("approved")
+    assert "WHICH ONE" in _call(*nav, yes)
+    named = _turn("the code switch one")                 # the owner answers the which-question
+    again = _call(*nav, named)                            # the model asks about that one again
+    assert _said_not_run(again) and _isolate == [], again
+    out = _call(*nav, _turn("yes"))
+    assert _isolate == [nav], "the named question did not run once, or the other one ran: %r / %s" % (_isolate, out)
+    assert not _said_not_run(out), out
+    waiting = [c for c in _cards() if c["status"] == "pending"]
+    assert [c["payload"]["tool"] for c in waiting] == ["create_calendar_event"], "the other card was decided by the answer"
+    assert "WHICH ONE" not in _call(*cal, _turn("approved")), "the card the owner did not pick still blocks every yes"
+
+
+def test_whitespace_in_a_body_is_part_of_the_question():
+    a = agent._action_fingerprint("write_file", {"path": "x.md", "content": "x"})
+    b = agent._action_fingerprint("write_file", {"path": "x.md", "content": "x\n"})
+    assert a != b, "a grant for one body could be spent on a different body"
+    assert agent._action_fingerprint("navigate", {"workspace": "code"}) == agent._action_fingerprint(
+        "navigate", {"workspace": " code ", "tab": ""})
