@@ -101,7 +101,7 @@ def describe_when(when) -> str:
         return "Once a day, while you're away from the computer"
     if trig == "on_idle":
         minutes = max(1, int(spec.get("idle_minutes", 10)))
-        gap = max(0, int(spec.get("min_gap_minutes", 60)))
+        gap = max(1, int(spec.get("min_gap_minutes", 60)))
         return ("Whenever you have been away from the computer for %d minute%s, at most once every %s"
                 % (minutes, "" if minutes == 1 else "s", "%d minutes" % gap if gap % 60 else "%d hour%s" % (gap // 60, "" if gap == 60 else "s")))
     return trig

@@ -1331,12 +1331,12 @@ def on_idle_blocked_reason(rec=None, spec=None, now=None) -> str:
     """Why an ``on_idle`` job cannot start right now, or "" when it can. Every reason is "wait", never "fail".
 
     Idle means no input from the owner for ``idle_minutes`` (the same signal all background work uses). On top of the
-    shared checks (the Settings switch, a stood-down Friday, an answer being given, another run, the GPU lease) it never
-    starts during an open voice session, and it waits while Battery Saver is on or the computer runs on its battery.
-    Guarded by tests/unit/test_on_idle_trigger.py."""
+    shared checks (the Settings switch and idle window, a stood-down Friday, an answer being given, another run, the GPU
+    lease) it never starts during an open voice session, and it waits while Battery Saver is on or the computer runs on
+    its battery. The owner's Settings idle window (09:00-23:00 by default, so a PC left on overnight does nothing) applies
+    unless the job's own ``from_hour``/``to_hour`` say otherwise. Every check that cannot be read fails open, as the
+    shared idle checks do. Guarded by tests/unit/test_on_idle_trigger.py."""
     spec = dict(spec or {})
-    spec.setdefault("from_hour", 0)
-    spec.setdefault("to_hour", 24)
     spec["idle_after_s"] = on_idle_minutes(spec) * 60.0
     reason = idle_work_blocked_reason(rec, spec, now)
     if reason:
@@ -1624,7 +1624,7 @@ def _is_due_on_schedule(rec, now) -> bool:
 
     if trig == "on_idle":
         # Not once a day: each time the owner has been away long enough, then a quiet gap before the next.
-        gap = max(0, int(spec.get("min_gap_minutes", ON_IDLE_DEFAULT_GAP_MINUTES))) * 60
+        gap = max(1, int(spec.get("min_gap_minutes", ON_IDLE_DEFAULT_GAP_MINUTES))) * 60       # never every tick
         if now.timestamp() - (rec.get("last_run_ts") or 0) < gap:
             return False
         return not on_idle_blocked_reason(rec, spec, owner_now)
