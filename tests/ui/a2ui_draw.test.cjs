@@ -65,3 +65,14 @@ test('an accent that is not #rrggbb is dropped, a refused view draws the standar
   assert.ok(!html.includes('data-accent'));
   assert.match(A.refusedHtml(), /could not be shown/);
 });
+
+test('a nav link opens only an internal workspace tab, never a URL', () => {
+  const A = load();
+  assert.equal(A.navTarget('knowledge.pages'), '/w/knowledge');
+  assert.equal(A.navTarget('knowledge'), '/w/knowledge');
+  for (const bad of ['https://x.test', '//x.test', '../etc', 'javascript:alert(1)', 'Knowledge.pages', '', null]) {
+    assert.equal(A.navTarget(bad), null, String(bad));
+  }
+  const c = suite.cases.find((x) => x.name === 'knowledge rendered with live data');
+  assert.match(A.toHtml(c.expect.tree, null), /<button type="button" data-a2ui="nav_link" data-nav="knowledge.pages">Browse all pages<\/button>/);
+});

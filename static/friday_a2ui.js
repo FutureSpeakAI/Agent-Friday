@@ -88,5 +88,21 @@
     }
   }
 
-  window.FridayA2ui = { toHtml: toHtml, refusedHtml: refusedHtml, mount: mount };
+  // A nav_link names an internal destination "<ws>.<section>" (V8: never a URL); on the desktop it opens that
+  // workspace's own tab. Anything else is ignored. tests/ui/a2ui_draw.test.cjs: navTarget.
+  var NAV = /^([a-z0-9][a-z0-9_-]{0,47})(?:\.[a-z0-9_]{1,48})?$/;
+  function navTarget(destination) {
+    var m = NAV.exec(String(destination || ''));
+    return m ? '/w/' + m[1] : null;
+  }
+
+  function wireNav(el, go) {
+    el.addEventListener('click', function (ev) {
+      var b = ev.target && ev.target.closest ? ev.target.closest('button[data-nav]') : null;
+      var to = b ? navTarget(b.getAttribute('data-nav')) : null;
+      if (to) go(to);
+    });
+  }
+
+  window.FridayA2ui = { toHtml: toHtml, refusedHtml: refusedHtml, mount: mount, navTarget: navTarget, wireNav: wireNav };
 }());

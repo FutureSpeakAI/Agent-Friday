@@ -20,6 +20,8 @@
   [data-density="compact"] section[data-a2ui="status_block"] { padding: 8px 12px; margin: 8px 0; }
   [data-density="compact"] td { padding: 4px 8px; }
   #meta { color: var(--muted); font-size: 12px; margin-top: 20px; }
+  button[data-a2ui="nav_link"] { background: none; border: 1px solid var(--a2ui-accent); color: var(--a2ui-accent); border-radius: 999px;
+    padding: 6px 14px; font: inherit; cursor: pointer; margin: 4px 0 2px; }
 </style>
 </head>
 <body>
@@ -42,6 +44,7 @@
       })
       .catch(function () { window.FridayA2ui.mount(document.getElementById('view'), null); });
   }
+  window.FridayA2ui.wireNav(document.getElementById('view'), function (to) { location.href = to; });
   load();
   setInterval(load, 30000);
 }());

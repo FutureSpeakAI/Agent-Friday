@@ -30,8 +30,10 @@ def _surface(components: list, bindings: dict) -> list:
 def _knowledge() -> list:
     """Knowledge, the first workspace in the single format: his sections and what changed lately, live from the PC."""
     return _surface([
-        {"id": "root", "component": "column", "children": ["title", "sections", "recent"]},
+        {"id": "root", "component": "column", "children": ["title", "browse", "sections", "recent"]},
         {"id": "title", "component": "text_block", "style": "heading", "text": "Knowledge"},
+        # the shell's own page browser (list, reader, editor) by internal id: "<ws>.<section>", never a URL (V8)
+        {"id": "browse", "component": "nav_link", "label": "Browse all pages", "destination": "knowledge.pages"},
         {"id": "sections", "component": "status_block", "title": "Sections", "children": ["sections_table"]},
         {"id": "sections_table", "component": "record_table", "rows": {"@path": "/knowledge/sections"},
          "columns": ["name", "count"], "@accessibility": {"label": "Sections of your wiki and how many pages each has"}},

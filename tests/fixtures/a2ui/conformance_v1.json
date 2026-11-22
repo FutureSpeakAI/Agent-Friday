@@ -3989,6 +3989,7 @@
        {
         "children": [
          "title",
+         "browse",
          "sections",
          "recent"
         ],
@@ -4000,6 +4001,12 @@
         "id": "title",
         "style": "heading",
         "text": "Knowledge"
+       },
+       {
+        "component": "nav_link",
+        "destination": "knowledge.pages",
+        "id": "browse",
+        "label": "Browse all pages"
        },
        {
         "children": [
@@ -4115,6 +4122,7 @@
        {
         "children": [
          "title",
+         "browse",
          "sections",
          "recent"
         ],
@@ -4126,6 +4134,12 @@
         "id": "title",
         "style": "heading",
         "text": "Knowledge"
+       },
+       {
+        "component": "nav_link",
+        "destination": "knowledge.pages",
+        "id": "browse",
+        "label": "Browse all pages"
        },
        {
         "children": [
@@ -4207,6 +4221,12 @@
         "style": "heading",
         "text": "Knowledge",
         "type": "text_block"
+       },
+       {
+        "destination": "knowledge.pages",
+        "id": "browse",
+        "label": "Browse all pages",
+        "type": "nav_link"
        },
        {
         "children": [
@@ -4289,6 +4309,7 @@
        {
         "children": [
          "title",
+         "browse",
          "sections",
          "recent"
         ],
@@ -4300,6 +4321,12 @@
         "id": "title",
         "style": "heading",
         "text": "Knowledge"
+       },
+       {
+        "component": "nav_link",
+        "destination": "knowledge.pages",
+        "id": "browse",
+        "label": "Browse all pages"
        },
        {
         "children": [
@@ -4381,6 +4408,12 @@
         "style": "heading",
         "text": "Knowledge",
         "type": "text_block"
+       },
+       {
+        "destination": "knowledge.pages",
+        "id": "browse",
+        "label": "Browse all pages",
+        "type": "nav_link"
        },
        {
         "children": [
@@ -4476,6 +4509,7 @@
        {
         "children": [
          "title",
+         "browse",
          "sections",
          "recent"
         ],
@@ -4487,6 +4521,12 @@
         "id": "title",
         "style": "heading",
         "text": "Knowledge"
+       },
+       {
+        "component": "nav_link",
+        "destination": "knowledge.pages",
+        "id": "browse",
+        "label": "Browse all pages"
        },
        {
         "children": [
@@ -4575,6 +4615,12 @@
         "type": "text_block"
        },
        {
+        "destination": "knowledge.pages",
+        "id": "browse",
+        "label": "Browse all pages",
+        "type": "nav_link"
+       },
+       {
         "children": [
          {
           "a11y": {
@@ -4655,6 +4701,7 @@
        {
         "children": [
          "title",
+         "browse",
          "sections",
          "recent"
         ],
@@ -4666,6 +4713,12 @@
         "id": "title",
         "style": "heading",
         "text": "Knowledge"
+       },
+       {
+        "component": "nav_link",
+        "destination": "knowledge.pages",
+        "id": "browse",
+        "label": "Browse all pages"
        },
        {
         "children": [
@@ -4752,6 +4805,12 @@
         "style": "heading",
         "text": "Knowledge",
         "type": "text_block"
+       },
+       {
+        "destination": "knowledge.pages",
+        "id": "browse",
+        "label": "Browse all pages",
+        "type": "nav_link"
        },
        {
         "children": [
