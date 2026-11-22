@@ -9,10 +9,12 @@ it impossible instead of unlikely:
   `~/.friday` and a `FRIDAY_HOME` set in the shell. They travel to xdist workers and child pytest runs in the environment
   (`_FRIDAY_REAL_ROOTS`), so a worker that inherits a redirected home still guards the real one.
 * A `sys.addaudithook` hook refuses every write-class operation (open for writing, remove, rename, rmdir, mkdir, truncate,
-  symlink, link, copy, move, rmtree, sqlite3.connect) whose path is under a real root, whatever code issued it, and records it.
-  Reads are allowed.
-* The refusal is an exception, which code written as "best effort" can swallow. So every refusal is also recorded and the test
-  that was running when it happened FAILS in teardown, naming the path. A leak cannot pass silently.
+  symlink, link, copy, move, rmtree, utime, chmod, chown, sqlite3.connect) whose path is under a real root, issued by Python
+  code in this process, and records it. Reads are allowed. Not seen: writes made by native code that bypasses Python's I/O (a
+  C extension opening its own files) and by child processes that are not pytest runs of this suite.
+* The refusal is an exception, which code written as "best effort" can swallow. So every refusal is also recorded and
+  reported: by the test that was running (it FAILS in teardown), by the next test's setup when it happened between tests
+  (import, collection, a background thread), or by the session when it happened after the last test.
 * `snapshot(root)` is a digest of a tree (relative path, size, mtime) for tests and for a before/after check of a root.
 
 Off only when FRIDAY_ALLOW_REAL_ROOT_WRITES=1 is in the environment (a deliberate, visible choice for a live run).
@@ -37,6 +39,7 @@ _PATH_EVENTS = {
     "os.remove": (0,), "os.rmdir": (0,), "os.mkdir": (0,), "os.truncate": (0,), "os.rename": (0, 1), "os.symlink": (1,),
     "os.link": (1,), "shutil.copyfile": (1,), "shutil.copymode": (1,), "shutil.copystat": (1,), "shutil.copytree": (1,),
     "shutil.rmtree": (0,), "shutil.move": (0, 1), "sqlite3.connect": (0,),
+    "os.utime": (0,), "os.chmod": (0,), "os.chown": (0,),
 }
 
 
@@ -143,16 +146,41 @@ def snapshot(root) -> str:
 install()
 
 
+def _unreported() -> list:
+    """Refusals recorded since the last check. Nothing is ever dropped unreported: setup, teardown and session finish each
+    report what is new and move the mark (clamped, since a test of the guard may remove its own records)."""
+    start = min(_baseline[0], len(VIOLATIONS))
+    new = VIOLATIONS[start:]
+    _baseline[0] = len(VIOLATIONS)
+    return new
+
+
+def _listed(new) -> str:
+    return "%d refused: %s" % (len(new), "; ".join("%s %s" % pair for pair in new[:5]))
+
+
 @pytest.hookimpl(tryfirst=True)
 def pytest_runtest_setup(item):
-    _baseline[0] = len(VIOLATIONS)
+    new = _unreported()
+    if new:
+        raise pytest.fail.Exception(
+            "a write under the owner's real data root was refused BEFORE this test ran (at import, collection, in an "
+            "earlier test's leftovers or a background thread): " + _listed(new), pytrace=False)
 
 
 @pytest.hookimpl(trylast=True)
 def pytest_runtest_teardown(item):
-    new = VIOLATIONS[_baseline[0]:]
-    _baseline[0] = len(VIOLATIONS)
+    new = _unreported()
     if new:
-        raise pytest.fail.Exception(
-            "this test wrote under the owner's real data root (%d refused): %s"
-            % (len(new), "; ".join("%s %s" % pair for pair in new[:5])), pytrace=False)
+        raise pytest.fail.Exception("this test wrote under the owner's real data root (" + _listed(new) + ")",
+                                    pytrace=False)
+
+
+@pytest.hookimpl(trylast=True)
+def pytest_sessionfinish(session, exitstatus):
+    """What was refused after the last test belongs to no test: the run fails and says so."""
+    new = _unreported()
+    if new:
+        sys.stderr.write("\nREAL DATA ROOT: a write was refused after the last test (%s)\n" % _listed(new))
+        if not session.exitstatus:
+            session.exitstatus = 1
