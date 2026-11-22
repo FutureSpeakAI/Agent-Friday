@@ -280,6 +280,18 @@ def test_raw_html_and_reference_definitions_make_no_link(shape):
     assert "<" not in got.text and "]:" not in got.text and "calendar.example.test" in got.text
 
 
+@pytest.mark.parametrize("definition", ["> [q]: //evil.example.test/quote", "- [l]: //evil.example.test/list",
+                                        "1. [o]: //evil.example.test/ordered", "> - [n]: //evil.example.test/nest",
+                                        "[two\nlines]: //evil.example.test/split", "   [i]:  //evil.example.test/in"])
+def test_no_reference_definition_forms_in_any_container(definition):
+    text = "## Calendar\n- Planning at ten. [C1] See [agenda][q].\n\n%s\n" % definition
+    out = bl.strip_unknown_links(bl.validate(text, sources()).text, bl.known_links(sources()))
+    assert "]:" not in out and "calendar.example.test" in out
+    assert bl.strip_unknown_links(out, bl.known_links(sources())) == out              # and it stays that way
+    alone = bl.strip_unknown_links("See [agenda][q].\n\n%s\n" % definition, set())
+    assert "]:" not in alone and "]\\:" in alone                                    # the colon still shows
+
+
 def test_a_typed_email_address_shows_but_is_no_mailto_link_and_the_gmail_link_keeps_its_account():
     gmail = "https://mail.google.com/mail/u/owner@example.test/#all/18f3a1b2c3d4e5f6"
     out = bl.strip_unknown_links("Write to someone@evil.example.test. [Open email](%s)" % gmail, {gmail})
@@ -287,7 +299,8 @@ def test_a_typed_email_address_shows_but_is_no_mailto_link_and_the_gmail_link_ke
 
 
 @pytest.mark.parametrize("suffix", ["'@evil.example.test", '"x@evil.example.test', "#evil.example.test",
-                                    "/../evil.example.test", "%40evil.example.test"])
+                                    "/../evil.example.test", "%40evil.example.test",
+                                    "\x85.evil.example.test", "\x1c.evil.example.test", "​.evil.example.test"])
 def test_a_known_address_with_anything_glued_after_it_is_not_kept_as_known(suffix):
     out = bl.strip_unknown_links("see %s%s now" % (GCAL, suffix), {GCAL})
     assert GCAL not in out and "@" not in out
