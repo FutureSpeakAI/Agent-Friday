@@ -630,7 +630,7 @@ def _schedule_fingerprint(rec) -> str:
     return hashlib.sha256(_json.dumps(_run_basis(rec), sort_keys=True, default=str).encode("utf-8")).hexdigest()[:16]
 
 
-def update_schedule(sid, patch, *, by="owner", _record=True) -> dict | None:
+def update_schedule(sid, patch, *, by="owner", versioned=True) -> dict | None:
     """Patch an existing schedule (name/trigger/spec/task/enabled/notify/...).
 
     `by` says who switched it when the patch carries `enabled` (SWITCHED_BY):
@@ -699,7 +699,7 @@ def update_schedule(sid, patch, *, by="owner", _record=True) -> dict | None:
         if cur.get("trigger") == "after":
             schedule_after.validate(cur.get("id"), cur.get("spec"), _read_store())
         out = _upsert(cur)
-        if builtin_before is not None and _record and by != "auto":
+        if builtin_before is not None and versioned and by != "auto":
             _log_builtin_edit(sid, builtin_before, cur, by)
     if dropped is not None:
         _notify_deferral_dropped(cur, dropped, bool(cur.get("enabled", True)))
@@ -748,7 +748,7 @@ def restore_builtin_default(sid, by="owner") -> dict | None:
         if not cur or cur.get("source") != "builtin" or defaults is None:
             return None
         shipped = builtin_overrides.restore(sid, builtin_overrides.fields_of(cur), defaults, by)
-        out = update_schedule(sid, shipped, by="owner" if by == "owner" else "tool", _record=False)
+        out = update_schedule(sid, shipped, by="owner" if by == "owner" else "tool", versioned=False)
         history = builtin_overrides.history(sid)
         if history and history[-1]["kind"] == "restore_default":
             _ledger_builtin_edit(sid, history[-1]["version"], "restore_default", by, sorted(shipped))
@@ -765,7 +765,7 @@ def revert_builtin_edit(sid, by="owner") -> dict | None:
         target = builtin_overrides.revert(sid, builtin_overrides.fields_of(cur), defaults, by)
         if target is None:
             return None
-        out = update_schedule(sid, target, by="owner" if by == "owner" else "tool", _record=False)
+        out = update_schedule(sid, target, by="owner" if by == "owner" else "tool", versioned=False)
         history = builtin_overrides.history(sid)
         _ledger_builtin_edit(sid, history[-1]["version"], "revert", by, sorted(target))
         return out

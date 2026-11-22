@@ -164,6 +164,7 @@ def test_an_automatic_switch_is_not_an_owner_edit(sched):
 @pytest.fixture
 def owner_chat(monkeypatch):
     monkeypatch.setattr(schedule_tools, "_caller_may_schedule", lambda: True)
+    monkeypatch.setattr(schedule_tools, "_caller_is_owner_chat", lambda: True)
 
 
 def test_a_model_may_change_a_built_ins_schedule_without_a_card_and_it_is_a_version(sched, owner_chat):
@@ -207,3 +208,77 @@ def test_a_model_can_restore_and_revert_a_built_in_but_a_background_run_cannot_e
     monkeypatch.setattr(schedule_tools, "_caller_may_schedule", lambda: False)
     with pytest.raises(ValueError, match="cannot change schedules"):
         schedule_tools.schedule_job({"action": "update", "schedule_id": "sch_sample_job", "spec": {"hour": 3}})
+
+
+def _sender(sid="sch_sends"):
+    scheduler.register_schedule({"id": sid, "name": "Sends mail", "trigger": "daily", "spec": {"hour": 8, "minute": 0},
+                                 "task": {"kind": "agent_prompt", "prompt": "Send an email to Bob with the summary"},
+                                 "enabled": False})
+    return sid
+
+
+def test_switching_a_sending_job_on_through_update_asks_exactly_as_resume_does(sched, owner_chat):
+    sid = _sender()
+    assert schedule_tools.classify({"action": "resume", "schedule_id": sid})[0] == "outward"
+    assert schedule_tools.classify({"action": "update", "schedule_id": sid, "enabled": True})[0] == "outward"
+    assert schedule_tools.classify({"action": "update", "schedule_id": " %s " % sid, "enabled": True})[0] == "outward"
+    assert schedule_tools.classify({"action": "update", "schedule_id": sid, "enabled": False})[0] == "internal"
+
+
+def test_changing_the_timing_of_a_sending_job_that_is_on_asks_but_a_job_that_is_off_does_not(sched, owner_chat):
+    sid = _sender()
+    spec = {"spec": {"hour": 9, "minute": 0}}
+    assert schedule_tools.classify(dict({"action": "update", "schedule_id": sid}, **spec))[0] == "internal"          # off
+    scheduler.update_schedule(sid, {"enabled": True})
+    assert schedule_tools.classify(dict({"action": "update", "schedule_id": sid}, **spec))[0] == "outward"         # on
+
+
+def test_restoring_or_reverting_a_built_in_asks_the_owner_first(sched, owner_chat):
+    for action in ("restore_default", "revert"):
+        cls, why = schedule_tools.classify({"action": action, "schedule_id": "sch_sample_job"})
+        assert cls == "outward" and "switched off" in why
+
+
+def test_a_leading_space_in_the_id_does_not_hide_a_built_ins_prompt_edit(sched, owner_chat):
+    assert schedule_tools.classify({"action": "update", "schedule_id": " sch_sample_job", "prompt": "x"})[0] == "outward"
+
+
+def test_only_the_owners_own_chat_may_update_restore_or_revert(sched, monkeypatch):
+    monkeypatch.setattr(schedule_tools, "_caller_may_schedule", lambda: True)
+    monkeypatch.setattr(schedule_tools, "_caller_is_owner_chat", lambda: False)
+    for action in ("update", "restore_default", "revert"):
+        with pytest.raises(ValueError, match="cannot change schedules"):
+            schedule_tools.schedule_job({"action": action, "schedule_id": "sch_sample_job", "spec": {"hour": 3}})
+
+
+def test_a_background_run_cannot_pause_the_content_publisher_through_update(sched, owner_chat, monkeypatch):
+    scheduler.register_schedule({"id": "sch_content_publisher", "name": "Content publisher", "trigger": "interval",
+                                 "spec": {"every_minutes": 60}, "task": {"kind": "agent_prompt", "prompt": "x"}, "enabled": True})
+    calls = iter([True, False])               # the gate for update passes; the publisher guard then sees a non-owner chat
+    monkeypatch.setattr(schedule_tools, "_caller_is_owner_chat", lambda: next(calls))
+    with pytest.raises(ValueError, match="Content publisher"):
+        schedule_tools.schedule_job({"action": "update", "schedule_id": "sch_content_publisher", "enabled": False})
+
+
+def test_the_prompt_or_action_of_a_built_in_is_versioned_too(tmp_path):
+    path = tmp_path / "o.json"
+    edited = _rec(task={"kind": "builtin", "ref": "x", "local_only": False})
+    assert "task" in bo.EDITABLE
+    entry = bo.record_edit("sch_x", _rec(), edited, DEFAULTS, "owner", path)
+    assert entry["after"]["task"]["local_only"] is False and bo.owner_fields("sch_x", path) == {"task": edited["task"]}
+    assert bo.restore("sch_x", edited, DEFAULTS, "owner", path)["task"] == DEFAULTS["task"]
+
+
+def test_an_older_shipped_default_in_notify_retry_or_timeout_is_not_adopted_as_the_owners_edit(tmp_path):
+    path = tmp_path / "o.json"
+    assert bo.adopt("sch_x", _rec(notify="silent", timeout_seconds=900, retry={"max": 0, "backoff_seconds": 1}), DEFAULTS, path) is False
+    assert bo.adopt("sch_x", _rec(spec={"hour": 4, "minute": 0}), DEFAULTS, path) is True
+    assert set(bo.owner_fields("sch_x", path)) == {"spec"}
+
+
+def test_an_unversioned_update_is_not_an_owner_edit_and_is_not_pinned(sched):
+    """authority.revoke-all pauses every schedule: not the owner's edit of a built-in, so nothing is pinned."""
+    scheduler.update_schedule("sch_sample_job", {"enabled": False}, versioned=False)
+    assert bo.history("sch_sample_job") == [] and not bo.has_edits("sch_sample_job")
+    scheduler._seed_and_reconcile()
+    assert scheduler.get_schedule("sch_sample_job")["enabled"] is False          # not pinned back, not pinned off

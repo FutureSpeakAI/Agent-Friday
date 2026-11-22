@@ -180,12 +180,21 @@ def classify(args) -> tuple:
             acts = sends_later(_record_texts(_sched.get_schedule(str(a.get("schedule_id") or ""))))
         elif action == "update":
             from agent_friday.services import scheduler as _sched
-            target = _sched.get_schedule(str(a.get("schedule_id") or "")) or {}
+            target = _sched.get_schedule(str(a.get("schedule_id") or "").strip()) or {}
             changes_text = a.get("prompt") is not None or a.get("task") is not None
             if changes_text and target.get("source") == "builtin":
                 return OUTWARD, ("it changes what a built-in job does (its prompt): that is an edit the owner makes, "
                                  "so the owner is asked first")
             acts = sends_later([str(a.get("prompt") or "")]) if changes_text else []
+            # Switching a job on, or changing the timing of one that is on, arms it: what it will send later is asked
+            # about now, exactly as `resume` does.
+            timing = a.get("trigger") is not None or a.get("spec") is not None
+            arms = a.get("enabled") is True or (timing and a.get("enabled") is not False and target.get("enabled", True))
+            if arms:
+                acts = list(dict.fromkeys(list(acts) + list(sends_later(_record_texts(target)))))
+        elif action in ("restore_default", "revert"):
+            return OUTWARD, ("it puts a job back as it was or as it shipped, which can switch on a job the owner "
+                             "switched off, so the owner is asked first")
         else:
             return INTERNAL, "it lists, pauses or removes a timetable; nothing leaves the computer"
     except Exception as e:
@@ -298,6 +307,10 @@ def _create(data) -> dict:
     return out
 
 
+def sid_is_publisher(rec) -> bool:
+    return (rec or {}).get("id") == _PUBLISHER_SCHEDULE_ID
+
+
 def _change(action, sid, data) -> dict:
     """update / restore_default / revert on one schedule, read back from the store. A built-in's edit is a version the owner
     can step back (services/builtin_overrides); only a built-in has a shipped default to go back to."""
@@ -318,6 +331,9 @@ def _change(action, sid, data) -> dict:
         patch.update(trigger=when["trigger"], spec=when["spec"])
     if "enabled" in data:
         patch["enabled"] = bool(data.get("enabled"))
+        if sid_is_publisher(rec) and not patch["enabled"] and not _caller_is_owner_chat():
+            raise ValueError("A scheduled or background job cannot pause the Content publisher; "
+                             "the owner switches it in Workflows.")
     if data.get("prompt") is not None:
         task = dict(rec.get("task") or {})
         if task.get("kind") != "agent_prompt":
@@ -341,7 +357,7 @@ def schedule_job(inp):
     if action in ("create", "resume") and not _caller_may_schedule():
         raise ValueError("A scheduled or background job cannot set up or re-arm schedules; "
                          "ask from the owner's chat or voice conversation.")
-    if action in ("update", "restore_default", "revert") and not _caller_may_schedule():
+    if action in ("update", "restore_default", "revert") and not (_caller_may_schedule() and _caller_is_owner_chat()):
         raise ValueError("A scheduled or background job cannot change schedules; "
                          "ask from the owner's chat or voice conversation.")
     if action == "create":
