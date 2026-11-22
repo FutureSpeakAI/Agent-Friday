@@ -1,6 +1,7 @@
 import os
 import io
 import json
+import math
 import glob
 import subprocess
 import base64
@@ -1666,6 +1667,7 @@ def _check_dismissed_countdowns(new_settings):
     val = new_settings["dismissed_countdowns"]
     ok = isinstance(val, dict) and len(val) <= 500 and all(
         isinstance(k, str) and 0 < len(k) <= 300 and isinstance(v, (int, float)) and not isinstance(v, bool)
+        and math.isfinite(v) and v >= 0                 # Infinity/NaN would make the settings answer unparseable
         for k, v in val.items())
     if ok:
         return None

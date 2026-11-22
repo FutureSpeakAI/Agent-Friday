@@ -343,6 +343,7 @@ window.addEventListener('DOMContentLoaded',function(){
         body.fr-big .dock .items, body.fr-big .dock-items { gap: 10px; }
         body.fr-big .landing-cluster .landing-countdowns > * { font-size: 1.25em; padding: 10px 14px; }
         body.fr-big .landing-cluster button, body.fr-big .landing-cluster .btn { min-height: 72px; min-width: 96px; font-size: 1.15em; padding: 0 26px; }
+        body.fr-big .landing-cluster .cd-hide { min-width: 56px; min-height: 56px; padding: 0; font-size: 24px; }
         body.fr-big .landing-cluster input, body.fr-big .landing-cluster textarea { min-height: 72px; font-size: 1.25em; padding: 0 22px; border-radius: 36px; }
         body.fr-big .chat-panel .btn, body.fr-big .chat-panel button, body.fr-big .chat-win button { min-height: 72px; min-width: 72px; font-size: 1.1em; }
         body.fr-big .chat-panel textarea[data-chat-input], body.fr-big .chat-win textarea[data-chat-input] { min-height: 72px; font-size: 1.2em; line-height: 1.5; }
@@ -1205,11 +1206,14 @@ window.addEventListener('DOMContentLoaded',function(){
         .greeting-ticker-item .cd-what { display: flex; flex-direction: column; align-items: flex-end; line-height: 1.25; }
         .cd-why { font-size: var(--fr-text-xs); color: var(--fr-label); letter-spacing: 0.02em; }
         .cd-hide {
-            pointer-events: auto; align-self: center; margin-left: 2px; padding: 0 5px; min-width: 22px; min-height: 22px;
+            pointer-events: auto; align-self: center; margin-left: 2px; padding: 0 5px; min-width: 24px; min-height: 24px;
             line-height: 1; font-size: 15px; color: rgba(255,255,255,0.55); background: transparent;
             border: 1px solid transparent; border-radius: 50%; cursor: pointer;
         }
         .cd-hide:hover, .cd-hide:focus-visible { color: #fff; border-color: rgba(255,255,255,0.45); outline: none; }
+        .cd-unhide { pointer-events: auto; position: relative; z-index: 1; margin: -8px 0 12px; padding: 2px 10px; min-height: 24px;
+            font-size: var(--fr-text-xs); color: rgba(255,255,255,0.6); background: transparent; border: 0; cursor: pointer; text-decoration: underline; }
+        .cd-unhide:hover, .cd-unhide:focus-visible { color: #fff; }
         .greeting-ticker-sep {
             width: 3px; height: 3px; border-radius: 50%; background: rgba(255,255,255,0.45);
         }
@@ -13419,7 +13423,7 @@ window.fridayTitleName = fridayTitleName;
 // When a countdown passes, in epoch seconds: its time, else the end of its day. A hidden countdown stays hidden
 // until then; the entry is dropped after that, so a yearly one comes back next year.
 function fridayCountdownPasses(c) {
-  if (c.at) return c.at;
+  if (c.at) return c.at + 60;   // the list still shows a timed one for a minute after it starts
   const end = c.date ? new Date(c.date + 'T23:59:59').getTime() / 1000 : 0;
   return end > 0 ? end : Date.now() / 1000 + 86400;
 }
@@ -13431,6 +13435,11 @@ function fridayCountdownsHiding(hidden, c, nowMs) {
   for (const k of Object.keys(hidden || {})) if (hidden[k] > nowMs / 1000) kept[k] = hidden[k];
   kept[c.id] = fridayCountdownPasses(c);
   return kept;
+}
+// The countdowns that are not hidden: what the list draws AND what the smart start-screen rule may act on,
+// so a hidden countdown never brings the start screen up (tests/ui/start_countdowns_hide.test.cjs).
+function fridayCountdownsShown(items, hidden, nowMs) {
+  return (items || []).filter(c => !fridayCountdownHidden(c, hidden, nowMs));
 }
 /* fridayCountdownHide:end */
 function FridayCountdowns({
@@ -75167,6 +75176,11 @@ function App() {
   const hideCountdown = c => saveAgentSettings({
     dismissed_countdowns: fridayCountdownsHiding(agentSettings.dismissed_countdowns, c, Date.now())
   });
+  const visibleCountdowns = fridayCountdownsShown(countdowns, agentSettings.dismissed_countdowns, Date.now());
+  const hiddenCountdowns = countdowns.length - visibleCountdowns.length;
+  const unhideCountdowns = () => saveAgentSettings({
+    dismissed_countdowns: {}
+  });
   const landingClock = useRef(null);
   if (!landingClock.current) landingClock.current = fridayLandingClock(Date.now());
   const landingSees = useRef({});
@@ -75176,12 +75190,12 @@ function App() {
     front: !experienceDesktop && focusWin && openWins.has(focusWin) ? (WS.find(w => w.id === focusWin) || {}).label || '' : '',
     voice: !!voiceOn,
     chat: !!chatOpen,
-    items: countdowns
+    items: visibleCountdowns
   };
   const landingJudge = useRef(() => {});
   useEffect(() => {
     landingJudge.current();
-  }, [landingMode, openWins, experienceDesktop, focusWin, voiceOn, chatOpen, countdowns]);
+  }, [landingMode, openWins, experienceDesktop, focusWin, voiceOn, chatOpen, visibleCountdowns.length, countdowns, agentSettings.dismissed_countdowns]);
   // Hidden, the cluster takes no focus and no screen reader's attention.
   useEffect(() => {
     const el = landingElRef.current;
@@ -76983,7 +76997,12 @@ function App() {
     items: countdowns,
     hidden: agentSettings.dismissed_countdowns,
     onHide: hideCountdown
-  }), countdowns.length === 0 && /*#__PURE__*/React.createElement("div", {
+  }), hiddenCountdowns > 0 && /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    className: "cd-unhide",
+    "data-testid": "countdowns-unhide",
+    onClick: unhideCountdowns
+  }, "Show ", hiddenCountdowns, " hidden ", hiddenCountdowns === 1 ? 'countdown' : 'countdowns'), countdowns.length === 0 && /*#__PURE__*/React.createElement("div", {
     style: {
       position: 'relative',
       zIndex: 1,

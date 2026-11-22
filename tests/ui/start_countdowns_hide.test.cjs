@@ -19,7 +19,7 @@ function hideBlock(file) {
 
 function rules(file) {
   const context = vm.createContext({Date, Object});
-  vm.runInContext(hideBlock(file) + ';this.out={fridayCountdownPasses,fridayCountdownHidden,fridayCountdownsHiding}', context);
+  vm.runInContext(hideBlock(file) + ';this.out={fridayCountdownPasses,fridayCountdownHidden,fridayCountdownsHiding,fridayCountdownsShown}', context);
   return context.out;
 }
 
@@ -28,7 +28,7 @@ for (const file of PAGES) {
 
   test(`${file}: a countdown passes at its time, else at the end of its day`, () => {
     const {fridayCountdownPasses} = rules(file);
-    assert.equal(fridayCountdownPasses({id: 'a', at: FUTURE}), FUTURE);
+    assert.equal(fridayCountdownPasses({id: 'a', at: FUTURE}), FUTURE + 60);   // through its minute of "now"
     const endOfDay = new Date('2100-06-15T23:59:59').getTime() / 1000;
     assert.equal(fridayCountdownPasses({id: 'b', date: '2100-06-15'}), endOfDay);
     const soon = fridayCountdownPasses({id: 'c'});
@@ -48,7 +48,7 @@ for (const file of PAGES) {
     const {fridayCountdownsHiding} = rules(file);
     const before = {'todo:old': PAST, 'todo:keep': FUTURE};
     const after = fridayCountdownsHiding(before, {id: 'todo:new', at: FUTURE + 1}, Date.now());
-    assert.equal(JSON.stringify(after), JSON.stringify({'todo:keep': FUTURE, 'todo:new': FUTURE + 1}));
+    assert.equal(JSON.stringify(after), JSON.stringify({'todo:keep': FUTURE, 'todo:new': FUTURE + 61}));
     assert.deepEqual(before, {'todo:old': PAST, 'todo:keep': FUTURE}, 'the saved map is not changed in place');
   });
 }
@@ -122,4 +122,34 @@ test('the cluster sits in the space the chat tray leaves, in both pages', () => 
   const served = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
   assert.ok(mirror.includes("left:'var(--fr-chat-dock-left,0px)',right:'var(--fr-chat-dock,0px)'"));
   assert.ok(served.includes("left: 'var(--fr-chat-dock-left,0px)'") && served.includes("right: 'var(--fr-chat-dock,0px)'"));
+});
+
+// Review round 1 of #1108.
+for (const file of PAGES) {
+  const source = fs.readFileSync(path.join(root, file), 'utf8').replace(/\r\n/g, '\n');
+
+  test(`${file}: a hidden countdown is not among those shown, and the start-screen rule reads only those`, () => {
+    const {fridayCountdownsShown, fridayCountdownPasses} = rules(file);
+    const soon = Math.floor(Date.now() / 1000) + 59 * 60;          // "Dentist in 59 min" would bring the screen up
+    const items = [{id: 'todo:dentist', label: 'Dentist', at: soon}, {id: 'todo:other', label: 'Other', at: soon + 600}];
+    const hidden = {'todo:dentist': fridayCountdownPasses(items[0])};
+    assert.deepEqual(fridayCountdownsShown(items, hidden, Date.now()).map(c => c.id), ['todo:other']);
+    assert.deepEqual(fridayCountdownsShown(items, hidden, (soon + 30) * 1000).map(c => c.id), ['todo:other'],
+      'still hidden during its minute of "now"');
+    assert.match(source, /items: visibleCountdowns\n\s*\};/, 'the landing rule must see only the countdowns shown');
+    assert.match(source, /visibleCountdowns = fridayCountdownsShown\(countdowns, agentSettings\.dismissed_countdowns, Date\.now\(\)\)/);
+  });
+
+  test(`${file}: hidden countdowns can be shown again, and the hide control is at least 24px`, () => {
+    assert.match(source, /countdowns-unhide/);
+    assert.match(source, /unhideCountdowns = \(\) => saveAgentSettings\(\{\s*dismissed_countdowns: \{\}\s*\}\)/);
+  });
+}
+
+test('the hide control is at least 24px, and a round 56px target in big mode', () => {
+  for (const file of ['index.html', 'ui_parts/head.html']) {
+    const css = fs.readFileSync(path.join(root, file), 'utf8');
+    assert.match(css, /\.cd-hide \{[^}]*min-width: 24px; min-height: 24px;/, file);
+    assert.match(css, /body\.fr-big \.landing-cluster \.cd-hide \{ min-width: 56px; min-height: 56px; padding: 0;/, file);
+  }
 });

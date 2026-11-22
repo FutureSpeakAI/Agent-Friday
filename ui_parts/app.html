@@ -1706,7 +1706,7 @@ window.fridayTitleName = fridayTitleName;
 // When a countdown passes, in epoch seconds: its time, else the end of its day. A hidden countdown stays hidden
 // until then; the entry is dropped after that, so a yearly one comes back next year.
 function fridayCountdownPasses(c) {
-  if (c.at) return c.at;
+  if (c.at) return c.at + 60;   // the list still shows a timed one for a minute after it starts
   const end = c.date ? new Date(c.date + 'T23:59:59').getTime() / 1000 : 0;
   return end > 0 ? end : Date.now() / 1000 + 86400;
 }
@@ -1718,6 +1718,11 @@ function fridayCountdownsHiding(hidden, c, nowMs) {
   for (const k of Object.keys(hidden || {})) if (hidden[k] > nowMs / 1000) kept[k] = hidden[k];
   kept[c.id] = fridayCountdownPasses(c);
   return kept;
+}
+// The countdowns that are not hidden: what the list draws AND what the smart start-screen rule may act on,
+// so a hidden countdown never brings the start screen up (tests/ui/start_countdowns_hide.test.cjs).
+function fridayCountdownsShown(items, hidden, nowMs) {
+  return (items || []).filter(c => !fridayCountdownHidden(c, hidden, nowMs));
 }
 /* fridayCountdownHide:end */
 function FridayCountdowns({items,hidden,onHide}){
@@ -31294,6 +31299,9 @@ const fridayBundleBody=id=>(window.FridayBundleFrame&&WS_BY_ID[id]&&WS_BY_ID[id]
   // state this page reports, one line in the server's log.
   const landingMode = FRIDAY_LANDING_MODES.indexOf(agentSettings.landing_mode) >= 0 ? agentSettings.landing_mode : 'smart';
   const hideCountdown = c => saveAgentSettings({dismissed_countdowns: fridayCountdownsHiding(agentSettings.dismissed_countdowns, c, Date.now())});
+  const visibleCountdowns = fridayCountdownsShown(countdowns, agentSettings.dismissed_countdowns, Date.now());
+  const hiddenCountdowns = countdowns.length - visibleCountdowns.length;
+  const unhideCountdowns = () => saveAgentSettings({dismissed_countdowns: {}});
   const landingClock = useRef(null);
   if (!landingClock.current) landingClock.current = fridayLandingClock(Date.now());
   const landingSees = useRef({});
@@ -31303,12 +31311,12 @@ const fridayBundleBody=id=>(window.FridayBundleFrame&&WS_BY_ID[id]&&WS_BY_ID[id]
     front: !experienceDesktop && focusWin && openWins.has(focusWin) ? (WS.find(w => w.id === focusWin) || {}).label || '' : '',
     voice: !!voiceOn,
     chat: !!chatOpen,
-    items: countdowns
+    items: visibleCountdowns
   };
   const landingJudge = useRef(() => {});
   useEffect(() => {
     landingJudge.current();
-  }, [landingMode, openWins, experienceDesktop, focusWin, voiceOn, chatOpen, countdowns]);
+  }, [landingMode, openWins, experienceDesktop, focusWin, voiceOn, chatOpen, visibleCountdowns.length, countdowns, agentSettings.dismissed_countdowns]);
   // Hidden, the cluster takes no focus and no screen reader's attention.
   useEffect(() => {
     const el = landingElRef.current;
@@ -32191,6 +32199,7 @@ const fridayBundleBody=id=>(window.FridayBundleFrame&&WS_BY_ID[id]&&WS_BY_ID[id]
       <div style={{position:'relative',zIndex:1,fontFamily:'Orbitron, sans-serif',fontSize:26,color:'rgba(0,212,255,0.98)',marginBottom:12,animation:'fadeIn 1s ease',letterSpacing:'0.06em',textShadow:'0 0 12px rgba(0,0,0,0.95), 0 0 32px rgba(0,212,255,0.35), 0 2px 4px rgba(0,0,0,0.85)'}}>{getGreeting()}, boss.</div>
       <div style={{position:'relative',zIndex:1,marginBottom:10}}><FridayLockup size={11}/></div>
       <FridayCountdowns items={countdowns} hidden={agentSettings.dismissed_countdowns} onHide={hideCountdown}/>
+      {hiddenCountdowns>0&&<button type="button" className="cd-unhide" data-testid="countdowns-unhide" onClick={unhideCountdowns}>Show {hiddenCountdowns} hidden {hiddenCountdowns===1?'countdown':'countdowns'}</button>}
       {countdowns.length===0&&<div style={{position:'relative',zIndex:1,fontFamily:'JetBrains Mono',fontSize:12,color:'rgba(255,255,255,0.78)',marginBottom:16,textShadow:'0 1px 3px rgba(0,0,0,0.85)'}}>All systems nominal.</div>}
       <div style={{position:'relative',zIndex:1,pointerEvents:'auto',display:'flex',gap:8,alignItems:'center'}}>
         <FridayChatInput value={promptText} onChange={setPromptText} onSend={sendPrompt} maxHeight={120}
