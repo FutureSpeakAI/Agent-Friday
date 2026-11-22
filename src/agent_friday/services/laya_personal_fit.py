@@ -395,6 +395,10 @@ def on_ac_power() -> bool:
 
 
 PRESENT_WITHIN_S = 30 * 60.0
+#: The refit's own trigger: the owner idle for this long (and, by the rule below, not for more than PRESENT_WITHIN_S).
+#: A trigger that asks for more quiet than the rule allows can never fire (tests/unit/test_refit_can_run.py).
+IDLE_AFTER_S = 180
+OLD_IDLE_AFTER_S = 600
 presence_override = None
 
 
@@ -414,20 +418,32 @@ def session_unlocked() -> bool:
         return False                                        # cannot tell: treat as locked
 
 
-def owner_present() -> bool:
-    """Decision 10: training only while the owner is signed in. The cached vault key alone proves nothing
-    (it is held for the life of the process, overnight too), so a run needs the Windows session
-    unlocked AND the owner at the PC within the last 30 minutes. Idle but present is allowed; overnight
-    is not."""
+def presence_reason() -> str:
+    """Why the owner does not count as present, naming the rule, or "" when they do.
+
+    Decision 10: training only while the owner is signed in. The cached vault key alone proves nothing (it is held for
+    the life of the process, overnight too), so a run needs the Windows session unlocked AND the owner at the PC within
+    the last 30 minutes. Idle but present is allowed; overnight is not. The rule is the owner's, not a technical need of
+    the key store; relaxing it is the owner's decision."""
     if presence_override is not None:
-        return bool(presence_override())
+        return "" if presence_override() else "you are not here (Decision 10: the refit runs only while you are signed in and at the PC)"
     if not session_unlocked():
-        return False
+        return ("the Windows session is locked (Decision 10: the refit runs only while you are signed in and at the PC, "
+                "within %d minutes of your last input)" % int(PRESENT_WITHIN_S // 60))
     try:
         from agent_friday.services import background_gate
-        return float(background_gate.idle_state()["idle_s"]) <= PRESENT_WITHIN_S
+        idle = float(background_gate.idle_state()["idle_s"])
     except Exception:
-        return False
+        return "could not tell whether you are at the PC (Decision 10: the refit runs only while you are)"
+    if idle > PRESENT_WITHIN_S:
+        return ("you have been away from the PC for %d minutes (Decision 10: the refit runs only within %d minutes of "
+                "your last input, while the session is unlocked)" % (int(idle // 60), int(PRESENT_WITHIN_S // 60)))
+    return ""
+
+
+def owner_present() -> bool:
+    """True when the presence rule is met (``presence_reason``)."""
+    return not presence_reason()
 
 
 def blocked_reason(profile: Optional[str] = None) -> str:
@@ -444,8 +460,9 @@ def blocked_reason(profile: Optional[str] = None) -> str:
     hot, why = thermal.too_hot()
     if hot:
         return why
-    if not owner_present():
-        return "you are not signed in and here (the Windows session is locked, or you have not been at the PC in the last 30 minutes)"
+    gone = presence_reason()
+    if gone:
+        return gone
     try:
         from agent_friday.services import off_record
         if off_record.active():
@@ -516,7 +533,7 @@ def register() -> None:
     from agent_friday.services import scheduler
     scheduler.register_builtin_task(
         JOB_REF, run_scheduled, label=SCHEDULE_LABEL, default_trigger="idle_daily",
-        default_spec={"idle_after_s": 600}, notify="silent")
+        default_spec={"idle_after_s": IDLE_AFTER_S}, notify="silent")
 
 
 # ---------------------------------------------------------------------------
