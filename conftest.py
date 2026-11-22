@@ -26,6 +26,8 @@ the one below it.
 It has one other job, for the same reason (it must run for every invocation,
 before xdist starts workers): it loads pytest_resource_guard, which caps
 workers at two and refuses a full run without enough free memory and disk.
+It also loads pytest_real_root_guard, captured here so the owner's real data root is
+known before tests/conftest.py redirects the home: no test may write under it.
 
 Deliberately nothing else lives here. The hermetic-environment setup stays in
 tests/conftest.py where it belongs; a rootdir conftest applies to anything
@@ -37,7 +39,7 @@ import os
 import sys
 from pathlib import Path
 
-pytest_plugins = ["pytest_resource_guard"]
+pytest_plugins = ["pytest_resource_guard", "pytest_real_root_guard"]
 
 _SRC = Path(__file__).resolve().parent / "src"
 if str(_SRC) not in sys.path:
