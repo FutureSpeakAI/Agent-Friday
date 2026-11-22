@@ -84,3 +84,25 @@ def test_the_first_seen_record_keeps_the_first_day_and_forgets_closed_tasks_only
     again = tr.note_seen([_task("a", id="a")], day9, path, complete=False)          # a bad read: b is kept
     assert again["a"] == day1.isoformat() and "b" in again
     assert "b" not in tr.note_seen([_task("a", id="a")], day9, path, complete=True)  # a complete read: b closed
+
+
+def test_the_briefing_context_leads_with_the_ranked_priority_tasks(monkeypatch, tmp_path):
+    """Through the real briefing context builder: a PRIORITY task open 56 days is the first section, with its age, above
+    the ordinary task the model would otherwise lead with."""
+    from agent_friday.services import google_accounts, news_engine
+    now = datetime.now(timezone.utc)
+    tasks = [{"id": "t1", "title": "Water the plants", "due": (now - timedelta(days=30)).isoformat(), "updated": ""},
+             {"id": "t2", "title": "PRIORITY: call the clinic", "due": "", "updated": (now - timedelta(days=56)).isoformat()}]
+    monkeypatch.setattr(google_accounts, "merged_tasks", lambda max_results=50: {"accounts": [{"id": "a"}], "tasks": tasks,
+                                                                                   "errors": [], "incomplete": []})
+    monkeypatch.setattr(tr, "_file", lambda: tmp_path / "first_seen.json")
+    monkeypatch.setattr(news_engine, "_load_briefing_prefs", lambda: {
+        "sections_enabled": {"Calendar": False, "News": False, "Email": False}, "section_order": []})
+    monkeypatch.setattr(news_engine, "_load_banned_sources", lambda: [])
+    monkeypatch.setattr(news_engine, "_load_boosted_sources", lambda: [])
+    import agent_friday.services.connectors as connectors
+    monkeypatch.setattr(connectors, "connector_intelligence", lambda: {}, raising=False)
+    text = news_engine._gather_live_briefing_context()
+    assert text.index("PRIORITY (open 56 days): call the clinic") < text.index("Water the plants")
+    assert "## Open Tasks (ranked" in text
+    assert text.index("## Open Tasks") < text.index("(open 56 days)")

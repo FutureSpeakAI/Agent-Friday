@@ -100,7 +100,7 @@ def section(tasks: Iterable[Dict[str, Any]], first_seen: Dict[str, str], now: da
 # ── the first-seen record ────────────────────────────────────────────────────
 
 def _file() -> Path:
-    from agent_friday.paths import FRIDAY_DIR
+    from agent_friday.core import FRIDAY_DIR
     return Path(FRIDAY_DIR) / "task_first_seen.json"
 
 
