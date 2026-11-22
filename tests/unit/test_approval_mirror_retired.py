@@ -117,3 +117,15 @@ def test_an_approval_is_never_for_your_information():
 def test_no_part_of_the_mirror_still_posts_an_item_or_a_notice():
     assert not hasattr(ti, "_bring_to_desk") and not hasattr(ti, "_post_one") and not hasattr(ti, "_post_group")
     assert set(ti.RETIRED_NOTICE_KINDS) == {"tasks_inbox_tick", "tasks_inbox_change"}
+
+
+def test_the_settings_section_says_it_is_retired_and_offers_only_turning_it_off():
+    from pathlib import Path
+    repo = Path(__file__).resolve().parents[2]
+    for f in ("index.html", "ui_parts/app.html"):
+        text = (repo / f).read_text(encoding="utf-8")
+        at = text.index("function TasksInboxPanel(")
+        panel = text[at:text.index("\nfunction ", at + 10)]
+        early = panel[:panel.index("const levelButtons")]
+        assert "if (d.retired)" in early, f + ": the section still offers to turn the mirror on"
+        assert "no longer mirrors approvals" in early and "/api/tasks-inbox/disable" in early, f
