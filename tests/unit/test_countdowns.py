@@ -299,7 +299,7 @@ def test_nothing_here_calls_a_model():
             names.update("%s.%s" % (node.module, a.name) for a in node.names)
         elif isinstance(node, ast.Import):
             names.update(a.name for a in node.names)
-    allowed = {"__future__.annotations", "logging", "re", "datetime.date", "datetime.datetime",
+    allowed = {"__future__.annotations", "hashlib", "logging", "re", "datetime.date", "datetime.datetime",
                "datetime.timedelta", "pathlib.Path", "agent_friday.core",
                "agent_friday.services.calendar_engine", "agent_friday.services.misc_engine",
                "agent_friday.services.relationship_memory", "agent_friday.services.goals",
