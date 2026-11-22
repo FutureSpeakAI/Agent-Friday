@@ -135,17 +135,17 @@ LAST_MAX = 140
 
 
 def _last_message(cid: str) -> Optional[dict]:
-    """The chat's newest message as a short preview (who, a line of words, when), from the desktop's own
-    messages route; None when it has none or cannot say. A row without it is still a row."""
+    """The chat's newest message as a short preview (who, a line of words, when), read from the end of the desktop's
+    own store (conversations.last_message: the tail of the file, never the whole transcript); None when it has none or
+    cannot say. A row without it is still a row."""
     if not ID_PATTERN.match(str(cid or "")):
         return None
     try:
-        status, body, _ = _desk("/api/conversations/%s/messages" % cid, {"limit": 1})
-        msgs = json.loads(body).get("messages") if status == 200 else None
+        from agent_friday.services import conversations
+        m = conversations.last_message(cid)
     except Exception:
         return None
-    m = msgs[-1] if isinstance(msgs, list) and msgs and isinstance(msgs[-1], dict) else None
-    if m is None:
+    if not isinstance(m, dict):
         return None
     text = hide_host_paths(" ".join(str(m.get("text") or "").split())) or ""
     return {"role": "friday" if m.get("role") == "friday" else ("user" if m.get("role") == "user" else "system"),

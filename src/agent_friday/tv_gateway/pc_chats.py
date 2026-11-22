@@ -1,13 +1,14 @@
 """Chats run both ways through ONE store on this PC: a chat started on the owner's phone, tablet or watch is a real
 PC conversation, in the desktop's own list, and every PC chat can be opened and continued from those devices.
 
-* ``POST /tv/v1/chats {title?, project?}`` starts a chat through the desktop's own create route (the same one its
+* ``POST /tv/v1/chats {project?}`` starts a chat through the desktop's own create route (the same one its
   "+ New chat" calls), optionally inside a project, and returns its id. A device never holds a chat of its own:
-  the id it continues is always one this PC made. Titled "New chat" unless the device sends a title, so the
-  desktop's first-message titling names it like any other chat.
-* Who: an owner-bound phone or tablet holding ``pc_read`` (the same door as reading the list; a watch reaches it
-  through the phone). The body is data: at most ``MAX_BODY`` bytes, a fixed shape, a project id checked against
-  ID_PATTERN and against the desktop's own project list before it is used.
+  the id it continues is always one this PC made. Always titled "New chat", so the desktop's first-message titling
+  names it from what was said, like any other chat; a device never writes words into the desktop's sidebar.
+* Who: the same as an owner turn (an owner-bound phone or tablet, pc_common.allowed), because starting an empty chat
+  is what the owner's first turn already does (owner_turn.bind_seat); it is a write, so it is NOT behind ``pc_read``,
+  whose card promises the device cannot change anything. The body is data: at most ``MAX_BODY`` bytes, a fixed
+  shape, a project id checked against ID_PATTERN and against the desktop's own project list before it is used.
 
 * ``GET /tv/v1/projects`` and ``GET /tv/v1/projects/<id>``: the desktop's projects as its sidebar shows them, a project's
   chats (rows like /tv/v1/chats) and its files by name and size. Read from the desktop's own /api/projects routes; no
@@ -24,12 +25,11 @@ from typing import Optional, Tuple
 from flask import Flask, Response, g, jsonify, request
 
 from agent_friday.tv_gateway import pc_read
-from agent_friday.tv_gateway.pc_common import ID_PATTERN, refuse as _refuse
+from agent_friday.tv_gateway.pc_common import ID_PATTERN, allowed, refuse as _refuse
 
 _log = logging.getLogger(__name__)
 
 MAX_BODY = 4 * 1024
-TITLE_MAX = 120
 NEW_TITLE = "New chat"
 
 
@@ -56,9 +56,9 @@ def _body() -> Tuple[Optional[dict], Optional[Response]]:
     return data, None
 
 
-def start_chat(title: str = "", project: Optional[str] = None) -> Tuple[int, dict]:
+def start_chat(project: Optional[str] = None) -> Tuple[int, dict]:
     """Create one PC chat through the desktop's own route. (status, answer) as the device should see it."""
-    body = {"title": " ".join(str(title or "").split())[:TITLE_MAX] or NEW_TITLE}
+    body = {"title": NEW_TITLE}
     if project:
         body["project"] = project
     try:
@@ -149,16 +149,15 @@ def register(app: Flask) -> None:
 
     @app.post("/tv/v1/chats")
     def pc_chat_start():
-        denied = pc_read._guard("chats")
-        if denied is not None:
-            return denied
+        """Held by test_starting_a_chat_is_an_owner_turns_power_not_a_readers."""
+        if not allowed(getattr(g, "device", None)):
+            return _refuse(403, "this device cannot start chats on the PC", code="not_for_this_device")
         data, bad = _body()
         if bad is not None:
             return bad
-        title = data.get("title")
+        if set(data) - {"project"}:
+            return _refuse(400, "a new chat takes a project and nothing else", code="bad_request")
         project = data.get("project")
-        if title is not None and not isinstance(title, str):
-            return _refuse(400, "a chat title is words", code="bad_request")
         if project is not None:
             if not isinstance(project, str) or not ID_PATTERN.match(project):
                 return _refuse(400, "not a project id", code="bad_id")
@@ -167,7 +166,7 @@ def register(app: Flask) -> None:
                 return _refuse(503, "the PC could not check that project right now", code="pc_unavailable")
             if not known:
                 return _refuse(404, "this PC has no such project", code="unknown_project")
-        status, answer = start_chat(title or "", project)
+        status, answer = start_chat(project)
         if status == 201:
             from agent_friday.services import device_pairing
             dev = getattr(g, "device", None) or {}

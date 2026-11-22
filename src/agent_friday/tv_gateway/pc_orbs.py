@@ -78,10 +78,12 @@ def _stage(row: dict, task: dict) -> str:
 
 def _state(row: dict, task: dict) -> str:
     """running, stalled, waiting_on_you, stopping, or how it ended (done, failed, stopped) while the desktop shows it."""
-    if row.get("orb_failed"):
-        return FAILED
     status = str(row.get("status") or "").lower()
     ended = _OUTCOME.get(status)
+    if ended == STOPPED:                       # the desktop marks a cancel orb_failed too (its warning icon stays)
+        return STOPPED
+    if row.get("orb_failed"):
+        return FAILED
     if ended:
         return ended
     from agent_friday.routes.tasks import ORB_TERMINAL_STATES
@@ -242,12 +244,15 @@ def stop(orb_id: str) -> tuple[int, dict]:
     if _state(row, {}) in (DONE, FAILED, STOPPED):
         return 409, {"ok": False, "error": "that has already finished", "code": "not_running"}
     tid = row.get("task_id")
-    if tid and pc_read.ID_PATTERN.match(str(tid)):
-        status, body = _desk_post("/api/tasks/%s/stop-after-step" % tid)
-        how = "after_this_step"
-    else:
-        status, body = _desk_post("/api/processes/%s/cancel" % orb_id)
-        how = "cancelled"
+    how = "after_this_step" if tid and pc_read.ID_PATTERN.match(str(tid)) else "cancelled"
+    try:
+        if how == "after_this_step":
+            status, body = _desk_post("/api/tasks/%s/stop-after-step" % tid)
+        else:
+            status, body = _desk_post("/api/processes/%s/cancel" % orb_id)
+    except Exception as e:
+        _log.warning("pc_orbs stop failed: %s", type(e).__name__)
+        return 503, {"ok": False, "error": "the PC could not stop it right now", "code": "pc_unavailable"}
     if status == 409:
         return 409, {"ok": False, "error": "it was not running, so nothing was stopped", "code": "not_running",
                      "status": plain((body or {}).get("status"), 30) or None}
@@ -287,9 +292,10 @@ def register(app: Flask) -> None:
         if not pc_read.ID_PATTERN.match(orb_id):
             return pc_read._refuse(400, "not an orb id", code="bad_id")
         status, answer = stop(orb_id)
-        if status == 200:
-            from agent_friday.services import device_pairing
-            device_pairing._receipt("device_orb_stop", getattr(g, "device", None) or {}, orb=orb_id, how=answer["how"])
+        from agent_friday.services import device_pairing
+        # every attempt, with what came of it (as pc_act does): a refused or failed stop is in the receipts too
+        device_pairing._receipt("device_orb_stop", getattr(g, "device", None) or {}, orb=orb_id,
+                                how=answer.get("how"), outcome="stopped" if status == 200 else answer.get("code"))
         resp = jsonify(answer)
         resp.status_code = status
         return resp

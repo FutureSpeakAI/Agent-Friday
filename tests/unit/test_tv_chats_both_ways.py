@@ -4,8 +4,9 @@ PC, and vice versa. Watch needs them too.").
 What is guarded here:
 
 * a chat a device starts (``POST /tv/v1/chats``) is a real PC conversation made by the desktop's own create route, in
-  the desktop's own list, optionally inside a project; a project id is checked before it is used; only an owner
-  phone or tablet holding ``pc_read`` may start one; a body is capped and shaped;
+  the desktop's own list, optionally inside a project; a project id is checked before it is used; starting one is an
+  owner turn's power (an owner phone or tablet), never a reader's: ``pc_read`` promises the device changes nothing;
+  a body is capped and shaped, and carries no words for the desktop's sidebar;
 * a device chat is titled "New chat", so the desktop's first-message titling names it like every other chat;
 * a turn sent with no chat id lands in Main, and the device is TOLD it landed there (it never learns a chat that
   does not exist on the PC);
@@ -96,13 +97,13 @@ def test_a_device_starts_a_chat_through_the_desktops_own_create_route(client, de
     assert got["ok"] and got["conversation_id"] == "conv-0001"
     assert desk.created == [("/api/conversations", {"title": "New chat"})]
     # the desktop's open pages hear about it, by id only
-    assert bus == [("E74", {"type": "conversation_changed", "conversation_id": "conv-0001", "via": "device"}, "chat")]
+    assert bus == [("E74", {"type": "conversation_changed", "domain": "conversations", "conversation_id": "conv-0001", "via": "device"}, "chat")]
 
 
 def test_a_chat_can_be_started_inside_a_project_the_pc_has(client, desk, bus):
-    r = post(client, paired("tablet"), "/tv/v1/chats", {"title": "  quarterly   numbers ", "project": "proj-1"})
+    r = post(client, paired("tablet"), "/tv/v1/chats", {"project": "proj-1"})
     assert r.status_code == 201
-    assert desk.created == [("/api/conversations", {"title": "quarterly numbers", "project": "proj-1"})]
+    assert desk.created == [("/api/conversations", {"title": "New chat", "project": "proj-1"})]
 
 
 @pytest.mark.parametrize("project,status,code", [("proj-nope", 404, "unknown_project"), ("../etc", 400, "bad_id"),
@@ -117,25 +118,34 @@ def test_a_body_is_capped_and_shaped(client, desk, bus):
     assert post(client, dev, "/tv/v1/chats", raw="{" + " " * MAX_BODY + "}").status_code == 413
     assert post(client, dev, "/tv/v1/chats", raw="[1,2]").status_code == 400
     assert post(client, dev, "/tv/v1/chats", {"title": {"x": 1}}).status_code == 400
+    # a device never writes words into the desktop's sidebar: a title is refused, not stored
+    assert post(client, dev, "/tv/v1/chats", {"title": "\u202eevil"}).status_code == 400
     assert desk.created == []
 
 
-@pytest.mark.parametrize("kind,member,right", [("watch", "stephen", True), ("tv", "family", True),
-                                               ("phone", "family", True), ("phone", "stephen", False)])
-def test_only_an_owner_phone_or_tablet_with_pc_read_may_start_one(client, desk, bus, kind, member, right):
+@pytest.mark.parametrize("kind,member", [("watch", "stephen"), ("tv", "family"), ("tv", "stephen"), ("phone", "family"),
+                                         ("tablet", None)])
+def test_starting_a_chat_is_an_owner_turns_power_not_a_readers(client, desk, bus, kind, member):
     dev = paired(kind, member, right=False)
-    if right:
-        device_pairing.set_right(dev.id, "pc_read", True)
+    device_pairing.set_right(dev.id, "pc_read", True)          # reading is no licence to write
     assert post(client, dev, "/tv/v1/chats", {}).status_code == 403 and desk.created == []
+
+
+def test_an_owner_phone_starts_a_chat_without_the_read_right_as_its_first_turn_would(client, desk, bus):
+    from agent_friday.tv_gateway import pairing
+    r = post(client, paired("phone", "stephen", right=False), "/tv/v1/chats", {})
+    assert r.status_code == 201 and pairing._OFFERED == {}       # and no read card is raised for it
 
 
 # ── the list a device reads ─────────────────────────────────────────────────────────────────────────────────
 
-def test_a_chat_row_carries_its_last_message_and_project_name(client, desk):
+def test_a_chat_row_carries_its_last_message_and_project_name(client, desk, monkeypatch):
     desk.chats = [{"id": "conv-a", "title": "Taxes 2026", "project": "proj-1", "last_active_at": 5.0},
                   {"id": "conv-b", "title": "Loose", "project": None, "last_active_at": 4.0}]
     desk.msgs = {"conv-a": [{"id": "m1", "role": "user", "text": "hi", "ts": 1.0},
                             {"id": "m2", "role": "friday", "text": "Filed it  under\n C:\\Users\\x\\taxes.pdf", "ts": 2.0}]}
+    from agent_friday.services import conversations
+    monkeypatch.setattr(conversations, "last_message", lambda cid: (desk.msgs.get(cid) or [None])[-1])
     rows = get(client, paired(), "/tv/v1/chats").get_json()["conversations"]
     a, b = rows
     assert a["project_name"] == "Taxes" and a["last"]["role"] == "friday" and a["last"]["at"] == 2.0
@@ -175,7 +185,7 @@ def test_a_device_turn_tells_open_desktop_chats_to_reread(monkeypatch, bus):
             break
         import time
         time.sleep(0.01)
-    assert bus == [("E74", {"type": "conversation_changed", "conversation_id": "conv-main", "via": "device"}, "chat")]
+    assert bus == [("E74", {"type": "conversation_changed", "domain": "conversations", "conversation_id": "conv-main", "via": "device"}, "chat")]
 
 
 def test_a_failed_turn_announces_nothing(monkeypatch, bus):
@@ -246,3 +256,33 @@ def test_a_desktop_chat_resumes_on_the_phone_with_full_history(client, real_stor
     assert row["title"] == "Desk thread" and row["last"]["text"] == "line 7"
     msgs = get(client, dev, "/tv/v1/chats/%s/messages" % conv["id"]).get_json()["messages"]
     assert [m["text"] for m in msgs] == ["line %d" % i for i in range(1, 8)]
+
+
+def test_the_last_message_is_read_from_the_tail(real_store, monkeypatch):
+    conv = real_store.create(title="Long")
+    for i in range(400):
+        real_store.append(conv["id"], {"id": "m%d" % i, "role": "user", "text": "x" * 500 + str(i), "meta": {"kind": "turn"}})
+    calls, whole = [], real_store._stored_messages
+    monkeypatch.setattr(real_store, "_stored_messages", lambda cid: calls.append(cid) or [])
+    assert real_store.last_message(conv["id"])["id"] == "m399" and calls == []       # the tail only, never the transcript
+    huge = {"id": "big", "role": "friday", "text": "y" * (real_store.TAIL_BYTES * 2), "meta": {"kind": "turn"}}
+    monkeypatch.setattr(real_store, "_stored_messages", whole)
+    real_store.append(conv["id"], huge)
+    assert real_store.last_message(conv["id"])["id"] == "big"                         # a last line longer than the tail
+    assert real_store.last_message(real_store.create(title="Empty")["id"]) is None
+
+
+def test_a_device_turn_never_rereads_under_a_desktop_stream():
+    page = (ROOT / "index.html").read_text(encoding="utf-8")
+    # undocked window: held while its own turn loads, re-read when it ends
+    assert "if (m.type === 'conversation_changed' && loadingRef.current) { rereadAfterTurn.current = true; return; }" in page
+    assert "if (!loading && rereadAfterTurn.current && cid) { rereadAfterTurn.current = false; openConvQuiet(cid); }" in page
+    # docked chat: held while a turn is in flight, re-read when chatLoad clears
+    assert "if (ev.type === 'conversation_changed' && inFlightTurn.current) { dockRereadAfterTurn.current = convId; return; }" in page
+    assert "if (!chatLoad && dockRereadAfterTurn.current && dockRereadAfterTurn.current === convId) {" in page
+
+
+def test_the_read_card_names_projects():
+    from agent_friday.tv_gateway import pairing
+    title, text = pairing.RIGHT_CARDS["pc_read"]
+    assert "projects" in text and "cannot change anything" in text

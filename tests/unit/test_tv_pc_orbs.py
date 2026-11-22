@@ -85,6 +85,10 @@ def test_the_phone_gets_exactly_the_rows_the_desktop_draws(client, desk):
     for s in finished:
         assert got["end-" + s]["state"] in ("done", "failed", "stopped") and not got["end-" + s]["can_stop"]
     assert got["end-completed"]["state"] == "done" and got["end-cancelled"]["state"] == "stopped"
+    # the desktop marks a cancel orb_failed too (its warning stays): still "stopped", never "failed"
+    desk.processes = [proc("x", "cancelled", orb_failed=True), proc("y", "interrupted", orb_failed=True), proc("z", "error", orb_failed=True)]
+    got = {o["id"]: o for o in orbs(client)}
+    assert [got[k]["state"] for k in "xyz"] == ["stopped", "stopped", "failed"] and got["x"]["icon"] == "\u26a0"
 
 
 def test_the_orb_carries_what_the_desktop_draws_it_from(client, desk):
@@ -345,3 +349,28 @@ def test_stop_needs_the_right_to_control_the_pc(client, desk, posts):
     assert stop(client, paired(), "a").status_code == 403          # pc_read alone reads orbs; it never stops one
     assert stop(client, paired("tv"), "a").status_code == 403
     assert posts.calls == []
+
+
+def test_stop_refuses_a_bad_id_and_never_answers_with_a_bare_500(client, desk, posts, monkeypatch):
+    desk.processes = [proc("a")]
+    dev = controller()
+    assert stop(client, dev, ".hidden").status_code in (400, 404) and posts.calls == []
+
+    def boom(path, body=None):
+        raise RuntimeError("desktop fell over")
+    from agent_friday.tv_gateway import pc_act
+    monkeypatch.setattr(pc_act, "_desk_post", boom)
+    r = stop(client, dev, "a")
+    assert r.status_code == 503 and r.get_json()["code"] == "pc_unavailable"
+
+
+def test_every_stop_attempt_leaves_a_receipt_with_its_outcome(client, desk, posts, monkeypatch):
+    from agent_friday.services import device_pairing
+    seen = []
+    monkeypatch.setattr(device_pairing, "_receipt", lambda kind, dev, **kw: seen.append((kind, kw)))
+    desk.processes = [proc("a"), proc("done-1", "completed")]
+    dev = controller()
+    stop(client, dev, "a")
+    stop(client, dev, "done-1")
+    stops = [kw for kind, kw in seen if kind == "device_orb_stop"]
+    assert [(s["orb"], s["outcome"]) for s in stops] == [("a", "stopped"), ("done-1", "not_running")]

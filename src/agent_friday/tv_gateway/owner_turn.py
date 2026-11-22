@@ -189,7 +189,7 @@ def announce_changed(cid: Optional[str]) -> None:
         return
     try:
         from agent_friday.services import notice_registry as _nr
-        _nr.bus_broadcast("E74", {"type": "conversation_changed", "conversation_id": cid, "via": "device"},
+        _nr.bus_broadcast("E74", {"type": "conversation_changed", "domain": "conversations", "conversation_id": cid, "via": "device"},
                           kind="chat")
     except Exception as e:  # never touches the turn
         _log.info("conversation_changed not sent: %s", type(e).__name__)

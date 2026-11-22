@@ -17528,6 +17528,11 @@ function ConversationWindow({
      The event carries no content: it says which conversation moved, and the
      transcript is re-read from the store, so what renders is always what was
      actually written. */
+  // A device turn that lands while this window's own turn streams is re-read when that turn ends, never under
+  // its stream (test_a_device_turn_never_rereads_under_a_desktop_stream).
+  const loadingRef = useRef(false);
+  loadingRef.current = loading;
+  const rereadAfterTurn = useRef(false);
   useEffect(() => {
     if (!cid) return;
     let es = null, stopped = false;
@@ -17543,10 +17548,14 @@ function ConversationWindow({
       // (tv_gateway/owner_turn.announce_changed); test_open_desktop_chats_reread_on_conversation_changed.
       if (!m || (m.type !== 'approval_result' && m.type !== 'codebase_run' && m.type !== 'conversation_changed')) return;
       if (m.conversation_id && m.conversation_id !== cid) return;
+      if (m.type === 'conversation_changed' && loadingRef.current) { rereadAfterTurn.current = true; return; }
       openConvQuiet(cid);
     };
     return () => { stopped = true; try { es && es.close(); } catch (_) {} };
   }, [cid]);
+  useEffect(() => {
+    if (!loading && rereadAfterTurn.current && cid) { rereadAfterTurn.current = false; openConvQuiet(cid); }
+  }, [loading, cid]);
   const openConvQuiet = id => apiFetch('/api/conversations/' + encodeURIComponent(id) + '/messages')
     .then(r => r.json())
     .then(d => {
@@ -70529,6 +70538,8 @@ function App() {
      default -- patching only the other one left the common case unfixed.
      The event carries no content: it says which conversation moved, and the
      transcript is re-read, so what renders is what was actually written. */
+  const dockReread = useRef(null);
+  const dockRereadAfterTurn = useRef(null);
   useEffect(() => {
     if (!convId) return;
     let es = null, stopped = false;
@@ -70567,6 +70578,12 @@ function App() {
       // the list moves too: a chat a device started or continued rises to the top of the sidebar
       if (ev.type === 'conversation_changed') refreshConvs();
       if (ev.conversation_id && ev.conversation_id !== convId) return;
+      // a desktop turn streaming here: re-read when it ends, never under its stream
+      // (test_a_device_turn_never_rereads_under_a_desktop_stream)
+      if (ev.type === 'conversation_changed' && inFlightTurn.current) { dockRereadAfterTurn.current = convId; return; }
+      dockReread.current && dockReread.current();
+    };
+    dockReread.current = () => {
       const refreshEpoch = chatEpoch.current;
       apiFetch('/api/conversations/' + encodeURIComponent(convId) + '/messages')
         .then(r => r.json()).then(d => {
@@ -70583,8 +70600,14 @@ function App() {
           })));
         }).catch(() => {});
     };
-    return () => { stopped = true; try { es && es.close(); } catch (_) {} };
+    return () => { stopped = true; dockReread.current = null; try { es && es.close(); } catch (_) {} };
   }, [convId]);
+  useEffect(() => {
+    if (!chatLoad && dockRereadAfterTurn.current && dockRereadAfterTurn.current === convId) {
+      dockRereadAfterTurn.current = null;
+      dockReread.current && dockReread.current();
+    }
+  }, [chatLoad, convId]);
 
   const convIdRef = useRef(null);
   useEffect(() => {
