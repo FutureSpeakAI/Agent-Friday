@@ -14252,7 +14252,11 @@ def _action_fingerprint(name, tool_input) -> str:
     while `x.md` and `~/Friday Creations/x.md` stay two - they are two
     different files, and the user has approved only the one they were shown.
     """
-    inp = dict(tool_input or {})
+    # An argument that says nothing (missing, None, "", [] or {}) is not part of the question: a model that
+    # re-issues the call with `tab: ""` added is asking the same thing the owner just answered.
+    inp = {k: (v.strip() if isinstance(v, str) else v) for k, v in dict(tool_input or {}).items()
+           if not (v is None or (isinstance(v, (str, list, dict, tuple)) and len(v) == 0)
+                   or (isinstance(v, str) and not v.strip()))}
     for key in ("path", "target", "url", "workspace"):
         v = inp.get(key)
         if not isinstance(v, str) or not v.strip():
@@ -14459,8 +14463,12 @@ def prepare_confirmation_ctx(session_id, message, base_ctx=None):
                     if entry.get("awaiting_reply")]
         if not eligible:
             return ctx
-        newest = max(eligible, key=lambda kv: kv[1].get("seq") or 0)
-        fp, entry = newest
+        if len(eligible) > 1:
+            # More than one question is waiting and a bare yes does not say which. Never guess and never
+            # approve them all: nothing is granted, and the gate tells the model to ask the owner which.
+            ctx["confirm_which"] = sorted(fp for fp, _entry in eligible)
+            return ctx
+        fp, entry = eligible[0]
         if entry.get("approval_id") and ctx.get("owner_surface") is not True:
             # The question has a card, and this yes did not come from the
             # owner's own page on this PC (a phone, a relay, voice, a script,
@@ -15565,6 +15573,13 @@ def _hook_confirmation_gate(ctx):
             if isinstance(getattr(ctx, "meta", None), dict):
                 ctx.meta["owner_decided"] = f"chat:{_fp}"
             return _hooks.ALLOW
+
+        if _fp in ((session_ctx or {}).get("confirm_which") or ()):
+            return _hooks.DENY(
+                f"[CONFIRMATION WHICH ONE] '{name}' was NOT executed and nothing was approved: the owner "
+                "said yes, but more than one action is waiting for a decision and a bare yes does not say "
+                "which. Do not retry any of them. Ask the owner which one they mean, naming each in plain "
+                "words, or tell them each can be decided on its own card in the tray.")
 
         if _off_page:
             return _hooks.DENY(
