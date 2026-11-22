@@ -3839,7 +3839,7 @@ def _get_friday_system_prompt(keywords='', workspace='', *, provider,
     # (tests/unit/test_ecosystem_knowledge.py).
     try:
         from agent_friday.services import ecosystem as _eco
-        prefix += "\n== " + _eco.SECTION_TITLE + " ==\n" + _eco.prompt_block() + "\n"
+        prefix += _eco.prompt_section()
     except Exception:
         pass
     # A local seat is told, in one line, which model it is, its window, what it

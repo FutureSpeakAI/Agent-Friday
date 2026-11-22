@@ -30,7 +30,8 @@ android {
         versionCode = 7
         versionName = "1.2.3"
         val form = "phone"
-        ndk { abiFilters += "arm64-v8a" }
+        ndk { abiFilters += listOf("arm64-v8a", "x86_64") }
+        buildConfigField("String", "HELP", "\"https://example.org/help\"")
     }
     buildTypes {
         debug { applicationIdSuffix = ".debug" }
@@ -89,7 +90,7 @@ def world(tmp_path):
            json.dumps({"capability": "talk", "version": 2, "owner_only": False}))
     _write(repo, "app/src/main/assets/capabilities/actions.json",
            json.dumps({"capability": "actions", "version": 1, "owner_only": True,
-                       "verbs": [{"id": "timer.start"}, {"id": "call.place"}]}))
+                       "verbs": [{"verb": "timer.start", "gate": "A0"}, {"verb": "call.place", "gate": "A2"}]}))
     _write(repo, "app/src/main/java/org/example/Pairing.java", PAIRING_SOURCE)
     _write(repo, "app/src/test/java/org/example/Fake.java", 'String s = "/v1/pair/complete";')
     _write(repo, "README.md", "Install: adb connect 192.168.50.7:5555 on the living room device.")
@@ -110,7 +111,7 @@ def test_the_extractor_reads_identity_permissions_capabilities_and_pairing(world
     repos, source, _ = world
     got = facts.extract(source, repos)["facts"]
     assert (got["application_id"], got["version_name"], got["version_code"]) == ("org.example.companion", "1.2.3", 7)
-    assert (got["min_sdk"], got["target_sdk"], got["abis"], got["form"]) == (31, 35, ["arm64-v8a"], "phone")
+    assert (got["min_sdk"], got["target_sdk"], got["abis"], got["form"]) == (31, 35, ["arm64-v8a", "x86_64"], "phone")
     assert got["debug_suffix"] == ".debug" and got["release_signing"] == "none"
     assert got["permissions"] == ["android.permission.INTERNET", "android.permission.RECORD_AUDIO"]
     assert got["features_required"] == ["android.hardware.type.watch"]
@@ -126,6 +127,19 @@ def test_groovy_build_files_and_debug_key_releases_are_read():
     assert (got["application_id"], got["version_name"], got["version_code"], got["min_sdk"]) == (
         "org.example.tv", "0.4", 3, 28)
     assert got["release_signing"] == "debug_key" and got["abis"] == [] and got["form"] is None
+
+
+def test_a_verb_with_no_name_is_refused_rather_than_recorded_blank(world):
+    repos, source, _ = world
+    file = repos / source.repo / "app/src/main/assets/capabilities/actions.json"
+    file.write_text(json.dumps({"capability": "actions", "verbs": [{"id": "timer.start"}]}), encoding="utf-8")
+    with pytest.raises(facts.MissingRepo, match="verb with no name"):
+        facts.extract(source, repos)
+
+
+def test_a_url_in_the_build_file_is_not_mistaken_for_a_comment():
+    assert "example.org/help" in facts._strip_comments(KOTLIN_GRADLE)
+    assert "versionCode = 999" not in facts._strip_comments(KOTLIN_GRADLE)
 
 
 def test_a_build_file_with_no_version_is_refused():
@@ -150,6 +164,7 @@ def test_current_facts_report_no_difference(world):
     ("app/build.gradle.kts", "minSdk = 31", "minSdk = 33", "min_sdk"),
     ("app/src/main/AndroidManifest.xml", "RECORD_AUDIO", "READ_CONTACTS", "permissions"),
     ("app/src/main/assets/capabilities/talk.json", '"version": 2', '"version": 3', "capabilities"),
+    ("app/src/main/assets/capabilities/actions.json", "call.place", "door.unlock", "capabilities"),
     ("app/src/main/java/org/example/Pairing.java", "/tv/v1/pair/start", "/v1/pair/complete", "pairing"),
 ])
 def test_an_app_that_changed_since_its_snapshot_is_reported_by_name(world, path, old, new, field):
