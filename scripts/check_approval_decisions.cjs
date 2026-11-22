@@ -270,6 +270,53 @@ check('index.html and ui_parts/app.html carry the same tracker, decide function 
   }
 });
 
+// ── System > Approvals has one source: the page's approval feed ────────────────────────────────────────────────
+// It used to keep its own copy, filled by a fetch as well as by the feed, so a fetch that left before a card was
+// decided (the mount fetch, the 30 second poll) came back after the feed had dropped it and put it back: a card
+// approved in chat stayed in the list and answered "already decided" when clicked.
+function feedWorld(file) {
+  const src = between(file, 'const fridayApprovalFeed = (() => {', NL + 'window.fridayApprovalFeed = fridayApprovalFeed;');
+  let answer = null, onmessage = null;
+  const win = {};
+  class FakeSource { constructor() { Object.defineProperty(this, 'onmessage', { set: f => { onmessage = f; } }); } close() {} }
+  const feed = new Function('window', 'document', 'navigator', 'BroadcastChannel', 'EventSource', 'fetch', 'FEED_SILENT_MS',
+    'setInterval', 'setTimeout', src + NL + 'return fridayApprovalFeed;')(
+    win, { addEventListener() {} }, {}, undefined, FakeSource,
+    () => new Promise(res => { answer = body => res({ json: () => Promise.resolve(body) }); }), 60000, () => 0, () => 0);
+  const ids = () => { let out = []; feed.subscribe(l => { out = l.map(a => a.approval_id); })(); return out; };
+  return { feed, ids, server: d => onmessage({ data: JSON.stringify(d) }), answer: body => answer(body) };
+}
+const card = id => ({ approval_id: id, title: 'Card ' + id, status: 'pending', created_at: id.charCodeAt(0) });
+for (const file of FILES) {
+  check(file + ': a card decided while the pending list was being fetched is not put back by the older answer', async () => {
+    const w = feedWorld(file);
+    w.feed.subscribe(() => {});
+    w.server({ type: 'snapshot', pending: [card('A'), card('B')] });
+    const reloading = w.feed.reload();                    // the request leaves while A is still waiting
+    w.server({ type: 'resolved', approval_id: 'A', status: 'approved' });   // A is approved in chat
+    w.answer({ ok: true, approvals: [card('A'), card('B')] });             // the older answer still lists A
+    await reloading;
+    assert.deepEqual(w.ids(), ['B'], 'a card decided after the request left came back');
+  });
+  check(file + ': a reload drops a card whose resolved frame this page missed, and keeps one raised while it ran', async () => {
+    const w = feedWorld(file);
+    w.feed.subscribe(() => {});
+    w.server({ type: 'snapshot', pending: [card('A'), card('B')] });
+    const reloading = w.feed.reload();
+    w.server({ type: 'pending', approval: card('C') });                     // raised after the request left
+    w.answer({ ok: true, approvals: [card('A')] });                         // B was decided while this page was away
+    await reloading;
+    assert.deepEqual(w.ids().sort(), ['A', 'C'], 'the reload did not follow the server, or lost a new card');
+  });
+  check(file + ': System > Approvals reads the feed and nothing else, and its refresh is the feed\'s reload', () => {
+    const t = text[file];
+    assert.match(t, /const approvals ?= ?useApprovalFeed\(\);/, 'System > Approvals keeps its own copy of the list');
+    assert.match(t, /const refreshApprovals ?= ?\(\) ?=> ?fridayApprovalFeed\.reload\(\);/);
+    assert.doesNotMatch(t, /fridayApprovalFeed\.subscribe\(setApprovals\)/);
+    assert.doesNotMatch(t, /then\(d ?=> ?setApprovals\(/, 'a fetch fills a private list again');
+  });
+}
+
 (async () => {
   let failed = 0;
   for (const [name, body] of checks) {
