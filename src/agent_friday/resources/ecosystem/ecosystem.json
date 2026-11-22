@@ -39,7 +39,7 @@
         },
         {
           "id": "approve",
-          "text": "approve what I ask, confirmed with your fingerprint or face, once you allow approvals from it on this PC's screen",
+          "text": "approve what I ask, signed on the unlocked device, once you allow approvals from it on this PC's screen",
           "status": "shipped",
           "evidence": [
             "capability:needs_you",
@@ -180,7 +180,7 @@
         "It is not in the Play Store yet. A first install needs a computer and Android's developer tools.",
         "Today's builds are test builds, not a store release.",
         "A phone I pair is signed in as you. I cannot yet give another person their own space on their own phone, so if it belongs to someone else in the house it is safer to wait.",
-        "Pairing only works at home, on the same network as this PC. Away from home it needs Tailscale on both, which you set up yourself."
+        "Pairing only works at home, on the same network as this PC. Using it away from home needs Tailscale on both, which you set up yourself."
       ]
     },
     {
@@ -218,7 +218,7 @@
         },
         {
           "id": "approve",
-          "text": "approve what I ask, confirmed with your fingerprint or face, once you allow approvals from it on this PC's screen",
+          "text": "approve what I ask, signed on the unlocked device, once you allow approvals from it on this PC's screen",
           "status": "shipped",
           "evidence": [
             "capability:needs_you",
@@ -361,7 +361,7 @@
       },
       "adds": [
         "A big-screen home for the household.",
-        "After pairing, the TV can read the chat you send to it from this PC."
+        "After pairing, the TV can talk with me, answered by this PC's models."
       ],
       "capabilities": [
         {
@@ -375,9 +375,17 @@
         },
         {
           "id": "pc_answers",
-          "text": "Getting answers from this PC",
+          "text": "get its answers from this PC's models once it is paired",
+          "status": "shipped",
+          "evidence": [
+            "pairing:gateway"
+          ]
+        },
+        {
+          "id": "tv_actions",
+          "text": "Having me propose actions on the TV",
           "status": "built_off",
-          "until": "you allow it on this PC's screen, one request card at a time",
+          "until": "you allow it on this PC's screen",
           "evidence": []
         },
         {
@@ -455,7 +463,7 @@
             "text": "Both screens now show six digits. If they are the same, press Approve on this PC's screen. If they differ, do not approve."
           },
           {
-            "text": "The TV is paired. It can read the chat you send it. Anything more, such as using my brain, asks you on this PC's screen first."
+            "text": "The TV is paired. It can talk with me, answered by this PC's models, with none of your memory. Anything more asks you on this PC's screen first."
           }
         ]
       },
@@ -463,7 +471,7 @@
         "On a new install the PC's side of pairing is switched off, and there is no switch for it in the app yet.",
         "It is not in the Play Store yet. Installing needs a computer and Android's developer tools.",
         "The build is signed with a development key, not a store release.",
-        "A TV is a household device: it never signs in as you, and it starts with one permission only.",
+        "A TV is a household device: it never signs in as you and gets none of your memory.",
         "Kids mode on the TV starts and ends only on the TV itself, with the remote and your grown-up PIN. I cannot change it from here, and neither can a voice.",
         "Pairing and use are home-network only."
       ]

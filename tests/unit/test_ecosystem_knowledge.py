@@ -234,13 +234,30 @@ def test_what_the_pairing_press_grants_is_said_as_the_pairing_code_grants_it(app
     owner = pairing.owner_grant(app_id, household.member_for_kind(app_id))
     at_once = set(device_pairing.RIGHTS) if owner else {device_pairing.BASE_RIGHT}
     later = set(device_pairing.ALL_RIGHTS) - at_once if owner else set(device_pairing.RIGHTS) - at_once
-    first, second = eco.sees(eco.app(app_id))[:2]
+    lines = eco.sees(eco.app(app_id))
+    first, turn, second = lines[0], lines[1], lines[2]
     assert first.startswith("Once you approve the pairing it is signed in as you") is owner
+    assert turn == (eco.OWNER_TURN if owner else eco.HOUSEHOLD_TURN)
     assert "off until you allow it" in second
     for right, note in eco.RIGHT_NOTES.items():
         assert (note in first) is (right in at_once), right
         assert (note in second) is (right in later), right
     assert owner is (app_id in ("phone", "tablet"))
+
+
+def test_a_paired_tv_is_said_to_talk_with_this_pcs_models_because_the_gateway_answers_it():
+    """tv_gateway/turn.run answers a household device's turn on the base right, with no owner context."""
+    from agent_friday.services import device_pairing
+    from agent_friday.tv_gateway import turn
+    assert device_pairing.BASE_RIGHT == "chat_read"
+    assert turn.tools_for({"id": "d", "kind": "tv", "rights": ["chat_read"]}, "family", [{"name": "tv_volume"}]) == []
+    tv = "\n".join(eco.sees(eco.app("tv")))
+    assert "talk with me, answered by this PC's models" in tv
+    assert "none of your memory or files" in tv and "no tool of this PC is run for it" in tv
+    assert "nothing else" not in tv and "read the chat" not in tv
+    cap = next(c for c in eco.app("tv").capabilities if c.id == "pc_answers")
+    assert cap.status == "shipped"
+    assert "built but switched off" not in eco.capability_sentence("TV", cap)
 
 
 def test_what_a_device_sees_follows_its_permissions():
