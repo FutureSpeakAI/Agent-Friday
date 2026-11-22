@@ -19,7 +19,7 @@ def quiet(monkeypatch):
     state = {"idle_s": 15 * MINUTE, "voice": False, "interactive": "", "lease": None, "saver": False, "battery": False,
              "switch_on": True}
     monkeypatch.setattr(scheduler, "_idle_settings", lambda: {"enabled": state["switch_on"], "after_s": 600.0,
-                                                              "from_hour": 9, "to_hour": 23})
+                                                              "from_hour": 0, "to_hour": 24})
     monkeypatch.setattr(background_gate, "idle_state", lambda: {"idle": True, "idle_s": state["idle_s"],
                                                                 "os_readable": True})
     monkeypatch.setattr(background_gate, "interactive_kinds",
@@ -117,7 +117,8 @@ def test_a_job_switched_off_or_already_running_does_not_fire(quiet):
 def test_the_timing_check_accepts_on_idle_with_defaults_and_refuses_nonsense():
     got = workflow_operations.validate_timing({"trigger": "on_idle", "spec": {}})
     assert got == {"trigger": "on_idle", "spec": {"idle_minutes": 10, "min_gap_minutes": 60}}
-    for bad in ({"idle_minutes": 0}, {"idle_minutes": 5000}, {"idle_minutes": "ten"}, {"min_gap_minutes": -1}):
+    for bad in ({"idle_minutes": 0}, {"idle_minutes": 5000}, {"idle_minutes": "ten"}, {"min_gap_minutes": -1},
+                {"min_gap_minutes": 0}, {"from_hour": 25}, {"to_hour": -1}):
         with pytest.raises(Exception):
             workflow_operations.validate_timing({"trigger": "on_idle", "spec": bad})
 
@@ -144,3 +145,39 @@ def test_power_state_counts_an_unreadable_machine_as_plugged_in(monkeypatch):
     fake.sensors_battery = lambda: None
     monkeypatch.setitem(sys.modules, "psutil", fake)
     assert power_state.on_battery() is False and power_state.blocked_reason() == ""
+
+
+def test_a_zero_gap_cannot_make_it_fire_on_every_tick(quiet):
+    """The timing check refuses a gap of 0, and a stored 0 is still held to a minute."""
+    import time
+    rec = _job(min_gap_minutes=0)
+    rec["last_run_ts"] = time.time() - 5
+    assert _due(rec) is False
+
+
+def test_a_job_that_never_ran_is_due_the_first_quiet_moment(quiet):
+    rec = _job()
+    assert "last_run_ts" not in rec and _due(rec) is True
+
+
+def test_when_the_idle_time_cannot_be_read_it_does_not_fire(quiet, monkeypatch):
+    monkeypatch.setattr(background_gate, "idle_state", lambda: {"idle": False, "idle_s": 99 * HOUR, "os_readable": False})
+    assert _due(_job()) is False
+
+
+def test_the_owners_settings_window_applies_unless_the_job_names_its_own(quiet, monkeypatch):
+    """The Settings idle window (09:00-23:00 by default) keeps a PC left on overnight quiet; a job can ask for its own."""
+    from datetime import datetime
+    monkeypatch.setattr(scheduler, "_idle_settings", lambda: {"enabled": True, "after_s": 600.0, "from_hour": 9, "to_hour": 23})
+    night = datetime(2026, 11, 22, 3, 30, tzinfo=scheduler._now_central().tzinfo)
+    noon = datetime(2026, 11, 22, 12, 0, tzinfo=scheduler._now_central().tzinfo)
+    assert scheduler._is_due_on_schedule(_job(), night) is False
+    assert "outside the idle window" in scheduler.on_idle_blocked_reason(_job(), _job()["spec"], night)
+    assert scheduler._is_due_on_schedule(_job(), noon) is True
+    assert scheduler._is_due_on_schedule(_job(from_hour=0, to_hour=24), night) is True
+
+
+def test_the_workflow_tool_can_ask_for_it_too():
+    from agent_friday.services import workflow_tools
+    text = repr(workflow_tools.TOOL_SCHEMAS if hasattr(workflow_tools, "TOOL_SCHEMAS") else workflow_tools.__dict__)
+    assert "on_idle" in text and "idle_minutes" in text
