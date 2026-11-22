@@ -692,6 +692,18 @@ def _without_display_tags(existing, old_val, new_val):
     return clock.strip_weekday_tags(old_val), clock.strip_weekday_tags(new_val)
 
 
+def _nearest_text(seen, old_n):
+    """The stretch of the page closest to ``old_n`` (as many lines as it has), or "" when nothing is close."""
+    import difflib
+    lines = seen.split("\n")
+    want = len(old_n.split("\n"))
+    if len(lines) > 4000:
+        return ""
+    windows = ["\n".join(lines[i:i + want]) for i in range(max(1, len(lines) - want + 1))]
+    close = difflib.get_close_matches(old_n, windows, n=1, cutoff=0.5)
+    return close[0] if close else ""
+
+
 def plan_wiki_proposal(item):
     """What applying ``item`` would do, without writing anything.
 
@@ -757,9 +769,11 @@ def plan_wiki_proposal(item):
                         message=f"{rel} already has this change; nothing was written.")
             return plan
         else:
+            near = _nearest_text(seen, old_n)
             plan.update(status="stale", message=(
-                f"The text this edit replaces is no longer in {rel} (the page changed "
-                "since it was proposed); nothing was written. Read the page and propose again."))
+                f"The text this edit replaces was not found as written in {rel}; nothing was written. "
+                + (f"The closest text on the page is:\n{near}\n" if near else "")
+                + "Read the page and propose again with the text exactly as it stands."))
             return plan
     elif mode == "replace_file":
         plan["after"] = new_val if new_val.endswith("\n") else new_val + "\n"
