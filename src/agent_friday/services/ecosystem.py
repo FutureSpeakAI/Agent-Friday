@@ -402,7 +402,8 @@ def prompt_block() -> str:
     lines.append("Pairing is a six-digit match on both screens plus Approve on this PC's screen; "
                  "no QR code, nothing to type.")
     lines.append("For installing, pairing, or what a device can do or see, call ecosystem_info and give "
-                 "its steps as written. State nothing about these apps from memory.")
+                 "its steps as written. For which devices are paired or connected, call devices_status. "
+                 "State nothing about these from memory.")
     return "\n".join(lines)
 
 
