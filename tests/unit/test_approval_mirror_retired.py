@@ -55,9 +55,17 @@ def _already_on():
 
 
 def _legacy_notice(approval_id):
-    return ne.push(title="Brought to your desk from Google Tasks: Friday needs your approval for an add-on",
-                   body="A tick was seen in Google Tasks at 23:33.", priority="high", source="tasks_inbox",
-                   kind="tasks_inbox_tick", emitter="TI1", dedupe_key="tasks-inbox-tick:%s" % approval_id)
+    """A notice as an older build stored it. Nothing can push one any more (its emitter is retired), so it is written
+    into the store the way that build left it, not through push (whose routing for an unknown kind follows policy)."""
+    import uuid
+    with ne._LOCK:
+        items = ne._load()
+        items.append({"id": uuid.uuid4().hex[:12], "title": "Brought to your desk from Google Tasks: Friday needs your "
+                      "approval for an add-on", "body": "A tick was seen in Google Tasks at 23:33.",
+                      "priority": "high", "source": "tasks_inbox", "kind": "tasks_inbox_tick", "emitter": "TI1",
+                      "tier": "needs_you", "place": "needs_you", "dedupe_key": "tasks-inbox-tick:%s" % approval_id,
+                      "dismissed": False, "read": False, "created_at": ne._now_iso()})
+        ne._save(items)
 
 
 def _live(kind="tasks_inbox_tick"):
