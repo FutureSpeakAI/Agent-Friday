@@ -110,3 +110,19 @@ def test_the_path_the_cut_off_notice_names_is_absolute_inside_the_folder_and_rea
     assert named.resolve().parent.parent == to.output_dir().resolve(), "the notice names a path outside the folder"
     first = agent._tool_read_file({"path": str(named)})
     assert DENIED not in first and "line 00001" in first, first[:200]
+
+
+@pytest.mark.parametrize("tool,args", [("browse_web", {"url": "https://pages-example.test/long"}),
+                                       ("search_web", {"query": "synthetic long result"})])
+def test_a_cut_off_result_of_the_real_tool_path_names_a_path_read_file_opens(monkeypatch, tool, args):
+    """Whatever path a tool's notice offers, read_file can open it: through `_execute_tool`, the way a turn meets it."""
+    monkeypatch.setitem(agent.CLAUDE_TOOL_HANDLERS, tool, lambda inp: _lines(3000))
+    ctx = agent.prepare_confirmation_ctx("2026-11-22-tooloutput", "look at https://pages-example.test/long",
+                                         {"authenticated": True, "owner_surface": True})
+    out = agent._execute_tool(tool, dict(args), session_ctx=ctx)
+    match = re.search(r"Full output saved at (.+?); read it with read_file\.", str(out))
+    assert match, "the notice did not name where the rest is: " + str(out)[-300:]
+    named = match.group(1)
+    first = agent._tool_read_file({"path": named})
+    assert DENIED not in first and "line 00001" in first, first[:200]
+    assert DENIED not in agent._execute_tool("read_file", {"path": named}, session_ctx=ctx)
