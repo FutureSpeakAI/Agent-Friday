@@ -102,10 +102,7 @@ def test_a_junk_since_or_offset_is_ignored_not_an_error(client, desk):
 def test_archived_is_passed_on_and_nothing_else_is(client, desk):
     desk.chats = chats(2)
     get(client, paired(), "/tv/v1/chats?archived=1&path=/etc/passwd")
-    # the list call carries only `archived`; the rest are the page's own last-message previews (one each, limit 1)
-    assert desk.calls == [("/api/conversations", {"archived": "1"}),
-                          ("/api/conversations/c0/messages", {"limit": 1}),
-                          ("/api/conversations/c1/messages", {"limit": 1})]
+    assert desk.calls == [("/api/conversations", {"archived": "1"})]
 
 
 # ── search ───────────────────────────────────────────────────────────────────
