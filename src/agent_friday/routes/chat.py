@@ -2000,7 +2000,7 @@ def chat():
 
         # ── Headroom compression (compress the CONTENT of the kept turns) ──
         # The pruner just chose WHICH turns survive; Headroom now squeezes the
-        # JSON tool outputs, code, and prose INSIDE them before they hit the API.
+        # JSON tool outputs and code INSIDE them before they hit the API (never the conversation text itself).
         # Runs before PII scrubbing so the [PII:...] tags it inserts stay intact.
         # Best-effort: any failure falls back to the uncompressed messages.
         _compress_cfg = settings.get('context_compression') or {}

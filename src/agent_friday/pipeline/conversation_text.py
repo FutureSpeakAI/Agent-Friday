@@ -22,6 +22,22 @@ from typing import Any, Optional
 CONVERSATION_ROLES = ("user", "assistant")
 
 
+def has_compressible(messages: Any) -> bool:
+    """True when the list holds something compression may shorten: a message in another role (tool output) with content,
+    or a block inside a user or assistant message that is not text (a tool_result, a tool_use, a document). A list of the
+    person's and Friday's words only has nothing, and is not sent to the compressor at all."""
+    for m in messages if isinstance(messages, list) else ():
+        if not isinstance(m, dict):
+            continue
+        content = m.get("content")
+        if m.get("role") not in CONVERSATION_ROLES:
+            if content:
+                return True
+        elif isinstance(content, list) and any(isinstance(b, dict) and b.get("type") != "text" for b in content):
+            return True
+    return False
+
+
 def keep_conversation_text(original: list, compressed: Any) -> Optional[list]:
     """`compressed` with every conversation text as in `original`, or None when the two lists do not line up."""
     if not isinstance(compressed, list) or not isinstance(original, list) or len(compressed) != len(original):

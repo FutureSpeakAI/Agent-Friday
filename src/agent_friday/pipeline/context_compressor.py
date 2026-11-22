@@ -4,7 +4,7 @@ Context compression powered by Headroom
 https://github.com/chopratejas/headroom
 Created by Tejas Chopra — Apache 2.0 License
 
-Headroom compresses tool outputs, logs, files, and RAG chunks before
+Headroom compresses tool outputs, logs and files before
 they reach the LLM. 60-95% fewer tokens, same answers.
 
 ────────────────────────────────────────────────────────────────────────────
@@ -15,7 +15,8 @@ Where this sits in Friday's pipeline:
                    → Anthropic API
 
 The pruner picks the semantically relevant turns; Headroom then squeezes the
-JSON tool outputs, code, and prose inside those turns. The savings compound.
+JSON tool outputs and code inside those turns; the person's and Friday's own words are never
+compressed (pipeline/conversation_text). The savings compound.
 
 Everything here is best-effort: if the Headroom import fails or a compression
 call errors, we fall back to the original, uncompressed messages so a chat is
@@ -23,7 +24,7 @@ never blocked on compression.
 """
 
 import os
-from agent_friday.pipeline.conversation_text import keep_conversation_text
+from agent_friday.pipeline.conversation_text import has_compressible, keep_conversation_text
 from agent_friday.user_errors import ExceptionText
 
 # Rough chars-per-token estimate used only to decide whether a payload is big
@@ -87,7 +88,7 @@ class ContextCompressor:
     Uses the Headroom library (https://github.com/chopratejas/headroom)
     by Tejas Chopra — Apache 2.0 license.
 
-    Compresses tool outputs, JSON, code, and prose in the message history
+    Compresses tool outputs, JSON and code in the message history (never the conversation text)
     before sending to the LLM. 60-95% fewer tokens, same answer quality.
     """
 
@@ -151,6 +152,11 @@ class ContextCompressor:
         not as a compression. `seat` ("local" / "cloud") labels the stats.
         """
         if not self._enabled or not messages:
+            return messages
+        if not has_compressible(messages):
+            # Only the person's and Friday's words: nothing here may be compressed (pipeline/conversation_text), so
+            # Headroom is not asked and nothing is counted. Counting it would make a working Headroom read as one that
+            # compresses nothing after a few chat turns.
             return messages
 
         compress_fn = self._load_headroom()
