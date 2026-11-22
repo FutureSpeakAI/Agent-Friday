@@ -201,9 +201,11 @@ for (const file of FILES) {
     assert.match(t.slice(at, at + 500), /busy = useDeciding\(a\.approval_id\);/, 'ApprovalCardBody must read busy from useDeciding(a.approval_id)');
   });
   check(file + ': System > Approvals hands its clicks on to the page-wide decision, with no busy guard of its own', () => {
-    const decide = between(file, 'const decideApproval = async (id, decision) => {', NL + '  };');
-    assert.doesNotMatch(decide, /apBusy\) return/, 'System > Approvals still swallows a click while one card on it is busy');
-    assert.match(decide, /await fridayDecideApproval\(id, decision\);/);
+    const t = text[file], at = t.search(/const decideApproval ?= ?async ?\(id, ?decision\) ?=> ?\{/);
+    assert.ok(at >= 0, file + ' has no System > Approvals decide handler');
+    const decide = t.slice(at, t.indexOf(NL + '  };', at));
+    assert.doesNotMatch(decide, /apBusy\) ?return/, 'System > Approvals still swallows a click while one card on it is busy');
+    assert.match(decide, /await fridayDecideApproval\(id, ?decision\);/);
   });
   check(file + ': the tray popup hands its clicks on to the page-wide decision, with no busy guard of its own', () => {
     const popups = fn(file, 'ApprovalPopups', END.popups);
