@@ -139,8 +139,6 @@ def test_there_is_no_state_to_show_before_the_first_session(_home):
     assert ps.summary() is None
 
 
-# -- review round 1 ------------------------------------------------------------------------------
-
 def test_a_fresh_install_gets_no_file_before_its_first_run_is_over(_home, monkeypatch):
     # core._is_existing_install reads an existing personality.json as "setup finished": creating it at the first
     # start would skip the first-run wizard.
@@ -150,6 +148,14 @@ def test_a_fresh_install_gets_no_file_before_its_first_run_is_over(_home, monkey
     monkeypatch.setattr(core, "_load_settings", lambda: {"setup_complete": True})
     restart(monkeypatch)
     assert ps.begin_session()["session_count"] == 1
+
+
+def test_a_trait_set_before_first_run_is_over_is_refused_and_creates_no_file(_home, monkeypatch):
+    (_home / ".setup_complete").unlink()
+    monkeypatch.setattr(core, "_load_settings", lambda: {})
+    with pytest.raises(ps.SetupNotFinished):
+        ps.set_trait("humor", 0.9)
+    assert not (_home / "personality.json").exists()
 
 
 @pytest.mark.parametrize("value", ["nan", "inf", "-inf", float("nan"), float("inf"), True, False, "loud", None, [1]])
@@ -190,5 +196,5 @@ def test_the_server_counts_a_session_at_start_after_its_single_instance_lock():
     main = source.rindex("if __name__ == '__main__':")
     call = source.find("personality_state.begin_session()", main)
     assert call > main, "server.py's start-up block must count the session"
-    lock = source.find("instance", main)
+    lock = source.find("_acquire_single_instance_lock()", main)
     assert -1 < lock < call, "the session is counted after the single-instance check"

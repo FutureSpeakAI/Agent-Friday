@@ -33,6 +33,10 @@ _LOCK = threading.Lock()
 _BEGUN = False
 
 
+class SetupNotFinished(RuntimeError):
+    """A trait was set before first run finished; writing the file then would make the install look set up."""
+
+
 class Unreadable(OSError):
     """personality.json exists but cannot be read as the state; it is never overwritten."""
 
@@ -152,6 +156,8 @@ def set_trait(trait: str, value) -> float:
     if not name:
         raise ValueError("no trait")
     with _LOCK:
+        if not path().exists() and not _setup_finished():
+            raise SetupNotFinished("first-run setup is not finished")   # the file would mark it finished
         data = _load()
         if name.startswith("style."):
             data.setdefault("style", {})[name.split(".", 1)[1]] = number

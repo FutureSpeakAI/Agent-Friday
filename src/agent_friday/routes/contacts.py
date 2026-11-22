@@ -144,6 +144,8 @@ def set_personality():
         return jsonify({"status": "ok", "trait": trait, "value": number})
     except (TypeError, ValueError):
         return jsonify({"status": "error", "message": "The value must be a number."}), 400
+    except personality_state.SetupNotFinished:
+        return jsonify({"status": "error", "message": "Finish first-run setup before changing the personality."}), 409
     except Exception as e:
         return api_error(e, "Couldn't save the personality")
 
