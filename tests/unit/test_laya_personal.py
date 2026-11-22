@@ -1917,7 +1917,7 @@ def test_training_runs_only_while_the_pc_is_idle_whether_or_not_the_session_is_l
     from agent_friday.services import scheduler
     with pytest.raises(scheduler.SkippedRun):
         fit.run_scheduled()
-    assert any("used the PC" in n for n in lp.report()["notes"])
+    assert any("only while the PC is idle" in n and "amended by you" in n for n in lp.report()["notes"])      # the report card says so
 
 
 def test_the_sealed_rerun_uses_the_threshold_actually_in_force(w):
