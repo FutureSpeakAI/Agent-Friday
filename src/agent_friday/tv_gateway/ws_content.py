@@ -1,6 +1,6 @@
 """The generic workspace content routes for an owner's phone or tablet (PW-G2; contract R2, R3, R4, R7).
 
-    GET /tv/v1/workspaces/<ws>/list?section=&facet.folder=&cursor=&limit=
+    GET /tv/v1/workspaces/<ws>/list?section=&facet.<name>=&cursor=&limit=
     GET /tv/v1/workspaces/<ws>/search?q=&cursor=&limit=
     GET /tv/v1/workspaces/<ws>/item/<ref>?cursor=
     GET /tv/v1/workspaces/<ws>/changes?since=<rev>
@@ -18,7 +18,7 @@ from typing import Optional
 
 from flask import Flask, Response, jsonify, request
 
-from agent_friday.tv_gateway import pc_read, ws_device, ws_knowledge
+from agent_friday.tv_gateway import pc_read, ws_adapter, ws_calendar, ws_device, ws_knowledge
 
 _log = logging.getLogger(__name__)
 
@@ -27,7 +27,7 @@ BLOCKS_MAX = 60
 QUERY_MAX = 200
 MAX_BODY = 256 * 1024
 
-ADAPTERS = {"knowledge": ws_knowledge}
+ADAPTERS = {"knowledge": ws_knowledge, "calendar": ws_calendar}
 
 
 def _now() -> str:
@@ -66,9 +66,9 @@ def _section(adapter, block: dict) -> Optional[str]:
 
 
 def _failed(e: Exception, area: str) -> Response:
-    if isinstance(e, ws_knowledge.Missing):
+    if isinstance(e, ws_adapter.Missing):
         return _unknown()
-    if isinstance(e, ws_knowledge.Locked):
+    if isinstance(e, ws_adapter.Locked):
         return pc_read._refuse(423, "that page is locked on the PC", code="locked")
     _log.warning("pc_read %s failed: %s", area, type(e).__name__)
     return pc_read._refuse(503, "the PC could not read that right now", code="pc_unavailable")
@@ -90,8 +90,8 @@ def register(app: Flask) -> None:
             rows = adapter.pages(block["sensitivity"])
         except Exception as e:
             return _failed(e, "list")
-        folder = request.args.get("facet.folder")
-        shown = [r for r in rows if folder is None or r["line"] == folder]
+        wanted = [(name, request.args[key]) for name in adapter.FACETS if (key := "facet." + name) in request.args]
+        shown = [r for r in rows if all(adapter.FACETS[name](r) == value for name, value in wanted)]
         page = shown[start:start + limit]
         return _out({"rev": adapter.rev(rows), "next": str(start + limit) if start + limit < len(shown) else None,
                      "total": len(shown), "facets": adapter.facets(rows), "rows": page})
