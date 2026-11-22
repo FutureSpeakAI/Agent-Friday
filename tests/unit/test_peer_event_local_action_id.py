@@ -9,7 +9,10 @@ move when a different event arrives under the same identity (the first stays aut
   4. a new store object on the same file (a restart) returns the same id;
   5. a store file written before the mapping existed (no column) is opened, keeps every row, and gets the SAME ids a fresh store
      would give those events (a stored-or-derived id never changes with the schema);
-  6. the check can fail: a mapping that issues a fresh random id each time breaks 1 and 4 (the mutant below).
+  6. two separate stores that record the same event agree on its id (the id is a function of the identity, nothing random);
+     the check can fail: with local_action_id_for replaced by a random id the two stores disagree (the mutant below), and
+     test 5 (an old store against a fresh one) breaks the same way;
+  7. two processes opening one old file at once: the loser of the ALTER race must not fail (the column is already there).
 """
 import json
 import re
@@ -93,14 +96,27 @@ def test_a_store_written_before_the_mapping_existed_keeps_its_rows_and_gets_the_
     assert wire.receive(_raw("signed_offer"), TRUST, reopened)[0] == "replay", "the old row still counts"
 
 
-def test_the_check_can_fail_a_mapping_that_issues_a_fresh_id_each_time_is_not_stable(tmp_path, monkeypatch):
+def test_two_stores_that_record_the_same_event_agree_on_its_id(tmp_path):
+    a, b = wire.PeerEventStore(tmp_path / "a.db"), wire.PeerEventStore(tmp_path / "b.db")
+    wire.receive(_raw("signed_offer"), TRUST, a)
+    wire.receive(_raw("signed_offer"), TRUST, b)
+    assert a.local_action_id(*_identity("signed_offer")) == b.local_action_id(*_identity("signed_offer"))
+
+
+def test_the_check_can_fail_a_random_id_makes_two_stores_disagree(tmp_path, monkeypatch):
     import uuid
-    store = wire.PeerEventStore(tmp_path / "peer.db")
-    wire.receive(_raw("signed_offer"), TRUST, store)
-    real = store.local_action_id
-    monkeypatch.setattr(wire.PeerEventStore, "local_action_id",
-                        lambda self, realm, actor, action_id: "act_" + uuid.uuid4().hex[:20])
-    ident = _identity("signed_offer")
-    assert store.local_action_id(*ident) != store.local_action_id(*ident), "a fresh id each call is the unstable mapping"
-    monkeypatch.undo()
-    assert real(*ident) == store.local_action_id(*ident)
+    monkeypatch.setattr(wire, "local_action_id_for", lambda realm, actor, action_id: "act_" + uuid.uuid4().hex[:20])
+    a, b = wire.PeerEventStore(tmp_path / "a.db"), wire.PeerEventStore(tmp_path / "b.db")
+    wire.receive(_raw("signed_offer"), TRUST, a)
+    wire.receive(_raw("signed_offer"), TRUST, b)
+    assert a.local_action_id(*_identity("signed_offer")) != b.local_action_id(*_identity("signed_offer")), \
+        "a mapping that is not a function of the identity is what the agreement test catches"
+
+
+def test_the_loser_of_the_migration_race_does_not_fail(tmp_path, monkeypatch):
+    path = tmp_path / "peer.db"
+    wire.receive(_raw("signed_offer"), TRUST, wire.PeerEventStore(path))   # a migrated file: the column exists
+    # a second opener that read the table before the first one's ALTER still sees "no column"
+    monkeypatch.setattr(wire.PeerEventStore, "_has_local_action_column", lambda self, db: False)
+    store = wire.PeerEventStore(path)                                      # must not raise "duplicate column name"
+    assert store.local_action_id(*_identity("signed_offer")) is not None
