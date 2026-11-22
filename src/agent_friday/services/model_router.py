@@ -4039,30 +4039,14 @@ def _load_vault_summary():
         except Exception:
             pass
 
-    # Trust graph — names and scores only (lightweight)
-    tfile = FRIDAY_DIR / "trust_graph.json"
-    if tfile.exists():
-        try:
-            data = json.loads(tfile.read_text(encoding='utf-8'))
-            people = data.get('people', {})
-            if isinstance(people, dict):
-                ctx['trust_people'] = {
-                    name: {
-                        'overall': round(info.get('overall_score', info.get('score', 0.5)), 2),
-                        'relationship': info.get('relationship', ''),
-                    }
-                    for name, info in people.items()
-                }
-            elif isinstance(people, list):
-                ctx['trust_people'] = {
-                    p.get('name', 'unknown'): {
-                        'overall': round(p.get('overall_score', p.get('score', 0.5)), 2),
-                        'relationship': p.get('relationship', ''),
-                    }
-                    for p in people
-                }
-        except Exception:
-            pass
+    # Trust graph — names and scores only (lightweight). One loader (people_graph.circle), by display name.
+    try:
+        from agent_friday.people_graph import get_people_graph
+        circle = get_people_graph(friday_dir=FRIDAY_DIR).circle()
+        if circle:
+            ctx['trust_people'] = {p['name']: {'overall': p['overall'], 'relationship': p['relationship']} for p in circle}
+    except Exception:
+        pass
 
     # Memory stats
     mem_file = FRIDAY_DIR / "memory.json"
@@ -4109,7 +4093,8 @@ def _lookup_trust_person(name, trust_data):
 
     if isinstance(people, dict):
         for pname, pdata in people.items():
-            if name_lower in pname.lower():
+            shown = str(pdata.get('name') or '') if isinstance(pdata, dict) else ''
+            if name_lower in pname.lower() or (shown and name_lower in shown.lower()):
                 return {pname: pdata}
     elif isinstance(people, list):
         for p in people:
@@ -4494,12 +4479,11 @@ def _build_context_prompt(message, workspace='', vision_description=None, provid
     if 'trust' in needs and 'trust_people' in vault and _people_trust_allowed(provider):
         # Check if message references a specific person
         trust_data_raw = None
-        tfile = FRIDAY_DIR / "trust_graph.json"
-        if tfile.exists():
-            try:
-                trust_data_raw = json.loads(tfile.read_text(encoding='utf-8'))
-            except Exception:
-                pass
+        try:
+            from agent_friday.people_graph import get_people_graph
+            trust_data_raw = get_people_graph(friday_dir=FRIDAY_DIR).load()
+        except Exception:
+            pass
 
         # Try to find a specific person mentioned
         person_match = None

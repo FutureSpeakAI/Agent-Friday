@@ -3217,29 +3217,12 @@ def _build_live_context() -> str:
 
     # Trust graph — top names
     try:
-        tfile = FRIDAY_DIR / "trust_graph.json"
-        if tfile.exists():
-            data = json.loads(tfile.read_text(encoding='utf-8'))
-            people = data.get('people') or {}
-            items = []
-            for name, info in people.items():
-                score = 0
-                role = ''
-                if isinstance(info, dict):
-                    score = info.get('score') or info.get('trust_score') or 0
-                    role = info.get('role') or info.get('relation') or info.get('relationship') or ''
-                try:
-                    score = float(score)
-                except Exception:
-                    score = 0.0
-                items.append((name, score, role))
-            # By name, not by score: an order by score is a rank, and a rank
-            # of people is a judgement that stays home.
-            items.sort(key=lambda x: str(x[0]).lower())
-            top = items[:8]
-            if top:
-                lines = [f"- {n}" + (f" ({r})" if r else '') for n, _s, r in top]
-                parts.append("TRUST CIRCLE (top 8):\n" + "\n".join(lines))
+        # One loader (people_graph.circle), by display name: a name listed here is a name query_trust_graph finds.
+        from agent_friday.people_graph import get_people_graph
+        top = get_people_graph(friday_dir=FRIDAY_DIR).circle(limit=8)
+        if top:
+            lines = [f"- {p['name']}" + (f" ({p['relationship']})" if p['relationship'] else '') for p in top]
+            parts.append("TRUST CIRCLE (top 8):\n" + "\n".join(lines))
     except Exception:
         pass
 
