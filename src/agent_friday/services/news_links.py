@@ -81,11 +81,13 @@ def cited_ids(text: str) -> list[str]:
     return seen
 
 
-def attach_links(text: str, stories: list[dict], *, sources_heading: str = "Sources") -> str:
+def attach_links(text: str, stories: list[dict], *, sources_heading: str = "Sources", keep=()) -> str:
     """Turn story ids into links from the fetched URLs, and remove any link the
-    model wrote. Ends the text with the cited stories, each linked."""
+    model wrote. Ends the text with the cited stories, each linked. `keep` are
+    links code already verified from the run's own sources (the calendar and
+    email links services/briefing_links put in); they are not removed."""
     by_id = {s["id"]: s for s in stories}
-    known = {s["url"] for s in stories if s.get("url")}
+    known = {s["url"] for s in stories if s.get("url")} | set(keep)
 
     # 1. Links and addresses the model typed: keep the words, drop the address,
     #    unless it is exactly a fetched story's URL.

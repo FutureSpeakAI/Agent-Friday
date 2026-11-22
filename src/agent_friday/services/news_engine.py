@@ -1122,13 +1122,15 @@ def _finish_briefing(content):
         print(f"  [briefing] link check: {'; '.join(problems[:3])}")
     # No item is stored or shown without a link taken from the tools' own output (services/briefing_links).
     from agent_friday.services import briefing_links
-    checked = briefing_links.validate(content, briefing_links.collect(
-        news=stories, email=_LAST_BRIEFING_SOURCES.get("email"),
-        calendar=_LAST_BRIEFING_SOURCES.get("calendar")))
+    sources = briefing_links.collect(news=stories, email=_LAST_BRIEFING_SOURCES.get("email"),
+                                     calendar=_LAST_BRIEFING_SOURCES.get("calendar"))
+    checked = briefing_links.validate(content, sources)
     _LAST_BRIEFING_SOURCES["dropped"] = checked.dropped
     if checked.dropped_total:
         print(f"  [briefing] {checked.dropped_total} items dropped: no source ({checked.dropped})")
-    body = news_links.attach_links(checked.text, stories)
+    # The calendar and email links the validator just put in are verified; attach_links must not take them out.
+    verified = {link for source in sources.values() if (link := source.link())}
+    body = news_links.attach_links(checked.text, stories, keep=verified)
     try:
         extra = _briefing_sections()
     except Exception as exc:
