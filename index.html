@@ -68762,7 +68762,13 @@ function fridayDecideBatch(b, decision) {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ decision, approval_ids: b.approval_ids, decided_by: 'owner:ui' })
   }).then(r => r.json()).then(d => {
-    if (d && d.ok) (d.results || []).forEach(x => { if (x.won) fridayApprovalFeed.drop(x.approval_id); });
+    if (d && d.ok) {
+      // A card this decide did not win stays, and the owner is told: one still waiting is decided on its own card.
+      const all = d.results || [], left = all.filter(x => !x.won);
+      all.forEach(x => { if (x.won || (x.status && x.status !== 'pending')) fridayApprovalFeed.drop(x.approval_id); });
+      if (left.length) fridayToast(left.length + ' of ' + all.length + ' were not decided here: ' + (left.some(x => x.status === 'pending')
+        ? 'they are still waiting, each on its own card.' : 'they had already been decided.'));
+    }
     else if (d && d.error === 'changed') fridayToast('That batch changed while you looked. Here is the new list.');
     else fridayToast((d && d.message) || 'That did not go through. The cards are still waiting.');
     return d;
