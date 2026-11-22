@@ -137,6 +137,20 @@ def _read_outside_content(ctx: dict) -> bool:
         return True                                   # cannot tell: ask
 
 
+def _clear_of_content(ctx: dict, inp: dict, action: str) -> bool:
+    """An add or replace whose line is the owner's own and draws on nothing Friday read (taint.owner_authored):
+    reading a page earlier does not hold back a line the owner wrote about something else."""
+    if action not in ("add", "replace"):
+        return False
+    try:
+        from agent_friday.services import taint
+        key = taint.ledger_key(ctx)
+        return taint.owner_authored(key, inp.get("text") or "") and (
+            action == "add" or taint.owner_authored(key, inp.get("old") or ""))
+    except Exception:
+        return False
+
+
 def _owner_decided() -> bool:
     try:
         from agent_friday.governance import action_gate
@@ -261,7 +275,7 @@ def _tool_update_core_memory(inp=None) -> str:
                 inp["old"], words, OWNER_LINE_COVERAGE):
             return _ask_first(target, action, inp,
                               "The user did not name the line this changes in their own words.")
-        if _read_outside_content(ctx):
+        if _read_outside_content(ctx) and not _clear_of_content(ctx, inp, action):
             return _ask_first(target, action, inp,
                               "Friday read outside content in this conversation, so it may come from there.")
         if action in ("add", "replace"):

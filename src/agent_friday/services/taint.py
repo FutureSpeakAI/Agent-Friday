@@ -606,6 +606,37 @@ def origin_of(key: str, value: Any, *, free_text: bool = False,
     return _origin_in(n, s, entries, free_text)
 
 
+#: Share of a line's content words the owner's own messages must hold for the line to be the owner's.
+OWNER_LINE_COVERAGE = 0.6
+#: Share of a line's content words found in one thing Friday read, at or above which the line is that thing's.
+CONTENT_OVERLAP_LIMIT = 0.5
+
+
+def owner_authored(key: str, text: Any) -> bool:
+    """True when `text` is the owner's own line: its content words come from the owner's own messages in this
+    conversation, and it does not draw on anything Friday read (a page, a mail, a carried summary).
+
+    Provenance attaches to the content, not to the session: a web page read earlier does not taint a line the
+    owner wrote about something else. Both halves are checked. A line paraphrased from a page rests on the page's
+    words, not the owner's ("sure" backs nothing); a line the owner repeats from a page overlaps that page. Either
+    keeps the card. Cannot tell (an error): False."""
+    try:
+        from agent_friday.services.core_memory import content_words
+        want = content_words(text)
+        if not want:
+            return False
+        led = _ledger(key)
+        with _LOCK:
+            entries = list(led.carried.values()) + list(led.entries)
+        owner = set().union(*[content_words(e.raw) for e in entries if e.kind == "user"]) if entries else set()
+        if len(want & owner) / len(want) < OWNER_LINE_COVERAGE:
+            return False
+        return not any(len(want & content_words(e.raw)) / len(want) >= CONTENT_OVERLAP_LIMIT
+                       for e in entries if e.kind not in ("user", "own"))
+    except Exception:
+        return False
+
+
 def read_source_of(key: str, text: Any) -> str:
     """Plain words for the earlier tool output in this conversation that contains `text`
     (as free text), or "" when none does.
@@ -1119,7 +1150,7 @@ def evaluate(key: str, tool_name: str, tool_input: Optional[dict]) -> Decision:
             # outside content is fresh in this conversation is shown to the
             # user first, unless the user typed the words themselves.
             text = value if isinstance(value, str) else json.dumps(value, default=str)
-            if origin_of(key, text, free_text=True).kind != "user":
+            if origin_of(key, text, free_text=True).kind != "user" and not owner_authored(key, text):
                 recent = recent_content(key)
                 if recent:
                     src = recent[0] + (f" and {len(recent) - 1} other source(s)" if len(recent) > 1 else "")
