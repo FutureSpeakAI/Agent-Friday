@@ -14,10 +14,15 @@ Rules, each enforced by tests/unit/test_device_awareness.py:
   paired;
 * reach is one of three words with a stated rule (`reach_of`). The store moves
   a device's last-seen time only when it signs in, so the words say "signed in";
-* no app version is stated: devices do not report one.
+  only a phone or tablet can hold the event stream that "connected now" rests
+  on, so for any other kind she says she cannot tell whether it is in use;
+* no app version is stated: devices do not report one;
+* a device list that fails its signature is "cannot be read", never "none paired".
 """
 from __future__ import annotations
 
+import hmac
+import json
 import logging
 import time
 from dataclasses import dataclass
@@ -29,7 +34,11 @@ KINDS = ("phone", "tablet", "tv", "watch")
 NOUNS = {"phone": "phone", "tablet": "tablet", "tv": "TV", "watch": "watch"}
 #: Kinds whose app pairs with a helper this PC cannot see, so "none paired" proves nothing.
 UNSEEN_KINDS = ("watch",)
+#: Kinds that hold the event stream (tv_gateway/pc_events): the only ones seen as connected.
+STREAM_KINDS = ("phone", "tablet")
 CONNECTED, SEEN, NEVER = "connected_now", "seen", "never_seen"
+CANNOT_TELL = "I cannot tell whether it is in use right now."
+UNREADABLE = "I cannot read the list of paired devices right now, so I will not guess."
 NO_VERSIONS = "The apps do not tell me which version they are running yet."
 
 
@@ -40,7 +49,6 @@ class DeviceView:
     paired_at: Optional[float]
     last_seen: Optional[float]
     reach: str
-    reconfirm_days: Optional[int]
 
 
 def _number(value) -> Optional[float]:
@@ -49,17 +57,16 @@ def _number(value) -> Optional[float]:
     return float(value) if value > 0 else None
 
 
-def reach_of(connected: bool, last_seen: Optional[float]) -> str:
-    """Connected while the device holds an open event stream; otherwise by whether it ever signed in."""
-    if connected:
+def reach_of(kind: str, connected: bool, last_seen: Optional[float]) -> str:
+    """Connected while a phone or tablet holds an open event stream; otherwise by whether it ever signed in."""
+    if connected and kind in STREAM_KINDS:
         return CONNECTED
     return SEEN if last_seen else NEVER
 
 
 def view(devices: Iterable, *, owner_ids: Iterable = (), connected_ids: Iterable = (),
-         now: Optional[float] = None) -> tuple:
+         ) -> tuple:
     """One DeviceView per well-formed row, ordered by kind then pairing time."""
-    now = time.time() if now is None else now
     owner_ids, connected_ids = set(owner_ids), set(connected_ids)
     out = []
     for row in devices or ():
@@ -67,11 +74,9 @@ def view(devices: Iterable, *, owner_ids: Iterable = (), connected_ids: Iterable
             continue
         device_id = row.get("id")
         last_seen = _number(row.get("last_seen"))
-        due = _number(row.get("reconfirm_by"))
         out.append(DeviceView(
             kind=row["kind"], owner_device=device_id in owner_ids, paired_at=_number(row.get("paired_at")),
-            last_seen=last_seen, reach=reach_of(device_id in connected_ids, last_seen),
-            reconfirm_days=int((due - now) // 86400) if due else None))
+            last_seen=last_seen, reach=reach_of(row["kind"], device_id in connected_ids, last_seen)))
     return tuple(sorted(out, key=lambda d: (KINDS.index(d.kind), d.paired_at or 0)))
 
 
@@ -96,19 +101,11 @@ def sentence(dev: DeviceView, now: float, *, one_of_several: bool = False) -> st
     if one_of_several:
         who += f" paired {ago(dev.paired_at, now)}" if dev.paired_at else " with no pairing date"
     if dev.reach == CONNECTED:
-        text = f"{who} is connected now."
-    elif dev.reach == SEEN:
-        text = f"{who} last signed in to this PC {ago(dev.last_seen, now)}."
-    else:
-        text = f"{who} is paired but has not signed in yet."
-    if dev.reconfirm_days is not None:
-        if dev.reconfirm_days < 0:
-            text += " Its 30-day check is overdue, so it will ask you to confirm it on this PC."
-        elif dev.reconfirm_days <= 7:
-            days = "today" if dev.reconfirm_days == 0 else f"in {dev.reconfirm_days} day" + (
-                "" if dev.reconfirm_days == 1 else "s")
-            text += f" It is due for its 30-day check {days}."
-    return text
+        return f"{who} is connected now."
+    if dev.reach == NEVER:
+        return f"{who} is paired but has not signed in yet."
+    text = f"{who} last signed in to this PC {ago(dev.last_seen, now)}."
+    return text if dev.kind in STREAM_KINDS else f"{text} {CANNOT_TELL}"
 
 
 def describe(devices: tuple, *, gateway_on: bool, kind: Optional[str] = None,
@@ -141,10 +138,26 @@ def describe(devices: tuple, *, gateway_on: bool, kind: Optional[str] = None,
     return "\n".join(lines)
 
 
+def store_intact() -> bool:
+    """False when the device list exists but is not the signed file the PC wrote. The store reads
+    such a file as empty; said aloud, that would be "none paired"."""
+    from agent_friday.services import device_pairing
+    path = device_pairing._path()
+    if not path.exists():
+        return True
+    try:
+        doc = json.loads(path.read_text(encoding="utf-8"))
+        return hmac.compare_digest(device_pairing._sign(doc["body"]), str(doc["sig"]))
+    except (OSError, ValueError, KeyError, TypeError):
+        return False
+
+
 def gather() -> tuple:
-    """(views, gateway_on) from the live stores. Reads only."""
+    """(views, gateway_on) from the live stores. Reads only. Raises when the list cannot be trusted."""
     from agent_friday.services import device_pairing
     from agent_friday.tv_gateway import household, pc_events
+    if not store_intact():
+        raise ValueError("the device list failed its signature")
     rows = device_pairing.list_devices()
     owners = {row.get("id") for row in rows
               if household.member_for_device(row.get("id")) == household.OWNER_ID}
@@ -161,5 +174,5 @@ def tool_devices_status(inp) -> str:
         devices, gateway_on = gather()
         return describe(devices, gateway_on=gateway_on, kind=kind)
     except Exception as e:
-        _log.warning("devices_status could not answer: %s", e)
-        return "I cannot read the list of paired devices right now, so I will not guess."
+        _log.warning("devices_status could not answer: %s", type(e).__name__)
+        return UNREADABLE
