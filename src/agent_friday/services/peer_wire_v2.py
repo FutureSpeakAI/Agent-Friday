@@ -16,7 +16,10 @@ touched by this module.
 
 `PeerEventStore` keeps (realm, actor, action_id) unique: a retry of the same bytes is a
 replay of the recorded result, a different event under the same identity is recorded as
-equivocation and never replaces the first.
+equivocation and never replaces the first. Each logical action also has ONE canonical local
+action id (`act_` + 20 hex, the form governance/action_gate gives its own actions), derived
+from the identity, stored with the first event and never changed by a replay or an
+equivocation (tests/unit/test_peer_event_local_action_id.py).
 """
 from __future__ import annotations
 
@@ -118,6 +121,13 @@ def decode(raw: bytes) -> Any:
 
 def _digest(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
+
+
+def local_action_id_for(realm: str, actor: str, action_id: str) -> str:
+    """The canonical local action id of a peer's logical action: a function of (realm, actor, action_id) alone, so a retry,
+    a restart and a store written before the mapping existed all give the same id. Local form: `act_` + 20 hex."""
+    data = b"asimov-peer/v2/local-action\x00" + b"\x00".join(x.encode("utf-8") for x in (realm, actor, action_id))
+    return "act_" + hashlib.sha256(data).hexdigest()[:20]
 
 
 def event_id(body: dict) -> str:
@@ -233,12 +243,33 @@ class PeerEventStore:
                 CREATE TABLE IF NOT EXISTS peer_events_v2 (
                     realm TEXT NOT NULL, actor TEXT NOT NULL, action_id TEXT NOT NULL,
                     event_id TEXT NOT NULL UNIQUE, raw BLOB NOT NULL, received_at REAL NOT NULL,
+                    local_action_id TEXT,
                     PRIMARY KEY (realm, actor, action_id));
                 CREATE TABLE IF NOT EXISTS peer_equivocations_v2 (
                     realm TEXT NOT NULL, actor TEXT NOT NULL, action_id TEXT NOT NULL,
                     first_event_id TEXT NOT NULL, other_event_id TEXT NOT NULL, other_raw BLOB NOT NULL,
                     seen_at REAL NOT NULL, PRIMARY KEY (realm, actor, action_id, other_event_id));
             """)
+
+        self._add_local_action_ids()
+
+    def _add_local_action_ids(self) -> None:
+        """A store written before the mapping existed gets the column and every row its (derived, so identical) id."""
+        with self._connect() as db:
+            cols = {r[1] for r in db.execute("PRAGMA table_info(peer_events_v2)")}
+            if "local_action_id" not in cols:
+                db.execute("ALTER TABLE peer_events_v2 ADD COLUMN local_action_id TEXT")
+            for realm, actor, action_id in db.execute(
+                    "SELECT realm, actor, action_id FROM peer_events_v2 WHERE local_action_id IS NULL").fetchall():
+                db.execute("UPDATE peer_events_v2 SET local_action_id=? WHERE realm=? AND actor=? AND action_id=?",
+                           (local_action_id_for(realm, actor, action_id), realm, actor, action_id))
+
+    def local_action_id(self, realm: str, actor: str, action_id: str):
+        """The canonical local action id of a recorded logical action, or None when no event has been recorded for it."""
+        with self._connect() as db:
+            row = db.execute("SELECT local_action_id FROM peer_events_v2 WHERE realm=? AND actor=? AND action_id=?",
+                             (realm, actor, action_id)).fetchone()
+        return row[0] if row else None
 
     def _connect(self):
         return sqlite3.connect(self._path)
@@ -253,8 +284,9 @@ class PeerEventStore:
                              key).fetchone()
             if row is None:
                 try:
-                    db.execute("INSERT INTO peer_events_v2 VALUES (?,?,?,?,?,?)",
-                               (*key, verified.event_id, bytes(raw), time.time()))
+                    db.execute("INSERT INTO peer_events_v2 (realm, actor, action_id, event_id, raw, received_at, local_action_id) "
+                               "VALUES (?,?,?,?,?,?,?)",
+                               (*key, verified.event_id, bytes(raw), time.time(), local_action_id_for(*key)))
                     return "enqueued"
                 except sqlite3.IntegrityError:
                     return "replay"  # the same event ID under another identity is not new either
