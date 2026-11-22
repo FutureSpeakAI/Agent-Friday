@@ -240,12 +240,13 @@ TOOL_SCHEMAS = [
              "kind": {"type": "string", "enum": ["reply", "artifact", "file", "code"]},
              "title": {"type": "string"}, "path": {"type": "string"}}, "required": ["kind"]},
          "when": {"type": "object", "properties": {
-             "trigger": {"type": "string", "enum": ["daily", "weekly", "monthly", "interval", "once"]},
+             "trigger": {"type": "string", "enum": ["daily", "weekly", "monthly", "interval", "once", "on_idle"]},
              "spec": {"type": "object", "properties": {
                  "hour": {"type": "integer"}, "minute": {"type": "integer"},
                  "weekdays": {"type": "array", "items": {"type": "integer"}},
                  "day": {"type": "integer"},
-                 "every_minutes": {"type": "integer"}, "at": {"type": "number"}}}},
+                 "every_minutes": {"type": "integer"}, "at": {"type": "number"},
+                 "idle_minutes": {"type": "integer"}, "min_gap_minutes": {"type": "integer"}}}},
              "required": ["trigger", "spec"]},
          "notify": {"type": "string", "enum": ["on_complete", "on_change", "never"]},
          "run_id": {"type": "string"}, "revision": {"type": "integer"},

@@ -130,7 +130,10 @@ def validate_timing(when):
         spec["every_minutes"] = number("every_minutes", 60, 1, 525600)
     if trigger == "on_idle":
         spec["idle_minutes"] = number("idle_minutes", 10, 1, 1440)
-        spec["min_gap_minutes"] = number("min_gap_minutes", 60, 0, 10080)
+        spec["min_gap_minutes"] = number("min_gap_minutes", 60, 1, 10080)
+        for key in ("from_hour", "to_hour"):                  # the job's own idle window, instead of the Settings one
+            if key in spec:
+                spec[key] = number(key, 0, 0, 24)
     if trigger == "once":
         spec["at"] = number("at", 0, 0, 253402300799, integer=False)
         if spec["at"] <= time.time():
