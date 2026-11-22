@@ -98,10 +98,17 @@ def test_a_feed_id_holds_a_posting_together_when_it_is_renamed_after_a_repost(_h
 def test_different_postings_stay_different_records(_home):
     js.upsert(listing("Staff Engineer", external_id="A-1"), NOW)
     js.upsert(listing("Data Engineer", external_id="A-2"), NOW)
-    # Another company's posting lives at its own URL (the helper builds URLs from the title alone).
-    js.upsert(listing("Staff Engineer", company="Beta Labs", external_id="A-3",
-                      url="https://jobs.example.test/beta-labs/staff-engineer"), NOW)
+    js.upsert(listing("Staff Engineer", company="Beta Labs", external_id="A-3"), NOW)       # same URL as Acme's
     assert len(stored(_home)) == 3
+
+
+def test_two_postings_on_one_careers_page_url_stay_two_records_with_their_own_titles(_home):
+    page = "https://careers.example.test/gamma"
+    js.upsert(listing("Data Engineer", company="Gamma Works", url=page), NOW)
+    js.upsert(listing("Product Designer", company="Gamma Works", url=page), NOW)
+    assert sorted(j["title"] for j in js.list_recent(NOW)) == ["Data Engineer", "Product Designer"]
+    js.upsert(listing("Data Engineer", company="Gamma Works", url=page), NOW)                # seen again: no third
+    assert len(stored(_home)) == 2
 
 
 def test_every_small_combination_of_feed_id_and_url_spelling_of_one_posting_is_one_record(_home):

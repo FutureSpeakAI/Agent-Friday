@@ -166,11 +166,27 @@ def _save(data: dict) -> None:
             os.unlink(name)
 
 
-def _find(data: dict, keys: List[str]) -> Optional[dict]:
+def _contradicts(record: dict, listing: dict) -> bool:
+    """True when both name a company and a title and they differ: then a shared URL is a careers page that lists
+    several postings, not one posting."""
+    mine = (_words(record.get("company")), _words(record.get("title")))
+    theirs = (_words(listing.get("company")), _words(listing.get("title")))
+    return all(mine) and all(theirs) and mine != theirs
+
+
+def _find(data: dict, keys: List[str], listing: dict) -> Optional[dict]:
+    """The record the listing is a sighting of. A feed id or company+title+location match is enough; a URL match
+    only when the company and title do not contradict the record's."""
+    url = normalize_url(listing.get("url") or listing.get("source_url"))
+    url_key = _hash("u|%s" % url) if url else None
     for key in keys:
         primary = data["aliases"].get(key)
-        if primary in data["jobs"]:
-            return data["jobs"][primary]
+        if primary not in data["jobs"]:
+            continue
+        record = data["jobs"][primary]
+        if key == url_key and _contradicts(record, listing):
+            continue
+        return record
     return None
 
 
@@ -269,7 +285,7 @@ def upsert_many(listings: Iterable[dict], now: datetime) -> List[dict]:
                 keys = make_keys(listing)
             except ValueError:
                 continue
-            record = _find(data, keys) or _new_record(data, keys, seen)
+            record = _find(data, keys, listing) or _new_record(data, keys, seen)
             _register(data, keys, record)
             _apply_sighting(record, listing, seen)
             recorded.append(_public(record))
@@ -337,7 +353,7 @@ def import_tracker(now: datetime) -> int:
                 keys = make_keys(row)
             except ValueError:
                 continue
-            record = _find(data, keys)
+            record = _find(data, keys, row)
             if record is None:
                 seen = _iso(row.get("discovered_at")) or now.isoformat()
                 record = _new_record(data, keys, seen)
