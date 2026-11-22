@@ -94,11 +94,22 @@ def test_formality_22_and_detail_85_beat_a_formal_terse_inference(monkeypatch):
 
 
 def test_the_stated_numbers_keep_an_inference_that_agrees(monkeypatch):
-    monkeypatch.setattr(core, "_load_settings", settings())
+    # setup_profile.apply_style writes casual + detailed for formality 22 / detail 85: the state the owner is in.
+    monkeypatch.setattr(core, "_load_settings", settings("casual", "detailed"))
     monkeypatch.setattr(setup_profile, "load_profile", stated(22, 85))
     infer("casual", "detail")
     out = um.render_user_model_prompt()
     assert "casual/relaxed (inferred" in out and "prefers detail (inferred" in out
+
+
+def test_when_two_stated_things_disagree_an_inference_either_one_contradicts_is_left_out(monkeypatch):
+    # Slider 22 but the Settings word is professional (changed later, or the first-run save never landed): the
+    # inference may not side with one statement against the other, so a casual reading is not put in the prompt.
+    monkeypatch.setattr(core, "_load_settings", settings("professional", "standard"))
+    monkeypatch.setattr(setup_profile, "load_profile", stated(22, 85))
+    infer("casual", "detail")
+    out = um.render_user_model_prompt()
+    assert "casual" not in out and "prefers detail (inferred" in out
 
 
 @pytest.mark.parametrize("formality,detail", list(itertools.product((0, 22, 39, 40, 50, 59, 60, 85, 100),

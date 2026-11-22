@@ -142,6 +142,8 @@ def set_personality():
     try:
         number = personality_state.set_trait(trait, value)
         return jsonify({"status": "ok", "trait": trait, "value": number})
+    except (TypeError, ValueError):
+        return jsonify({"status": "error", "message": "The value must be a number."}), 400
     except Exception as e:
         return api_error(e, "Couldn't save the personality")
 

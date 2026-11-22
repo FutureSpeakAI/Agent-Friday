@@ -30,4 +30,4 @@ def test_a_bad_value_is_an_error_and_changes_nothing(client, _home):
     ps.begin_session()
     before = (_home / "personality.json").read_text(encoding="utf-8")
     r = client.post("/api/personality/set", json={"trait": "humor", "value": "loud"})
-    assert r.status_code >= 400 and (_home / "personality.json").read_text(encoding="utf-8") == before
+    assert r.status_code == 400 and (_home / "personality.json").read_text(encoding="utf-8") == before
