@@ -60,6 +60,9 @@ def test_the_chat_handler_keeps_all_its_wrappers():
     # must hold for everything the turn does.
     # _outside_turn_scope (services/phone_outside_text) is outermost: a turn that carries outside text is held off
     # the record even when an inner gate answers it with a canned reply.
-    assert names == ["route", "_outside_turn_scope", "_stop_everything_gate", "_cloud_fallback_choice", "_withhold_pasted_keys",
+    # _add_device_gate (services/add_device_command) comes right after _stop_everything_gate: "Friday, add a device"
+    # opens pairing at this PC before any model or rule reads the words.
+    assert names == ["route", "_outside_turn_scope", "_stop_everything_gate", "_add_device_gate",
+                     "_cloud_fallback_choice", "_withhold_pasted_keys",
                      "_traced_turn",
                      "_privacy_hold_turn", "per_turn"], names
