@@ -310,3 +310,15 @@ def test_a_device_cannot_flood_the_desktops_list(client, desk, bus):
     assert codes[:-1] == [201] * pc_chats.STARTS_PER_WINDOW and codes[-1] == 429
     assert len(desk.created) == pc_chats.STARTS_PER_WINDOW
     assert post(client, paired("tablet"), "/tv/v1/chats", {}).status_code == 201        # per device, not for everyone
+
+
+def test_a_failed_start_does_not_use_up_the_devices_starts(client, desk, bus, monkeypatch):
+    pc_chats = importlib.import_module("agent_friday.tv_gateway.pc_chats")
+    dev = paired()
+
+    def down(path, body=None):
+        raise RuntimeError("desktop busy")
+    monkeypatch.setattr(pc_chats, "_desk_post", down)
+    assert {post(client, dev, "/tv/v1/chats", {}).status_code for _ in range(pc_chats.STARTS_PER_WINDOW + 2)} == {503}
+    monkeypatch.setattr(pc_chats, "_desk_post", desk.post)
+    assert post(client, dev, "/tv/v1/chats", {}).status_code == 201

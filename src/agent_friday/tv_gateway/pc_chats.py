@@ -42,17 +42,25 @@ _starts: Dict[str, List[float]] = {}
 _starts_lock = threading.Lock()
 
 
-def _may_start(device_id: str) -> bool:
-    """Count one start for this device unless it already made STARTS_PER_WINDOW in WINDOW_S
-    (test_a_device_cannot_flood_the_desktops_list)."""
+def _may_start(device_id: str) -> Optional[float]:
+    """Hold one start slot for this device, or None when it already made STARTS_PER_WINDOW in WINDOW_S. A start
+    that fails gives its slot back (_give_back); only chats made count (test_a_device_cannot_flood_the_desktops_list,
+    test_a_failed_start_does_not_use_up_the_devices_starts)."""
     now = time.monotonic()
     with _starts_lock:
         recent = [t for t in _starts.get(device_id, []) if now - t < WINDOW_S]
         if len(recent) >= STARTS_PER_WINDOW:
             _starts[device_id] = recent
-            return False
+            return None
         _starts[device_id] = recent + [now]
-        return True
+        return now
+
+
+def _give_back(device_id: str, slot: float) -> None:
+    with _starts_lock:
+        held = _starts.get(device_id, [])
+        if slot in held:
+            held.remove(slot)
 
 
 def _body() -> Tuple[Optional[dict], Optional[Response]]:
@@ -186,9 +194,13 @@ def register(app: Flask) -> None:
             if not known:
                 return _refuse(404, "this PC has no such project", code="unknown_project")
         dev = getattr(g, "device", None) or {}
-        if not _may_start(str(dev.get("id") or "")):
+        dev_id = str(dev.get("id") or "")
+        slot = _may_start(dev_id)
+        if slot is None:
             return _refuse(429, "that is a lot of new chats; try again in a few minutes", code="too_many")
         status, answer = start_chat(project)
+        if status != 201:
+            _give_back(dev_id, slot)
         if status == 201:
             from agent_friday.services import device_pairing
             device_pairing._receipt("device_chat_started", dev, conversation_id=answer["conversation_id"],

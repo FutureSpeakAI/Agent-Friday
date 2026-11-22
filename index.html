@@ -70540,8 +70540,8 @@ function App() {
      transcript is re-read, so what renders is what was actually written. */
   const dockReread = useRef(null);
   const dockRereadAfterTurn = useRef(null);
-  // chatLoad is the "this chat's own turn is streaming" signal; inFlightTurn outlives the turn and is not
-  // (tests/app/specs/device_turn_rereads_dock.spec.ts)
+  // true from the moment this chat's own turn starts until it ends (set with chatLoad in setTurnBusy, so no
+  // render gap); a device turn's re-read waits for it (tests/app/specs/device_turn_rereads_dock.spec.ts)
   const dockLoading = useRef(false);
   dockLoading.current = chatLoad;
   useEffect(() => {
@@ -74397,7 +74397,7 @@ function App() {
       throw new Error('Open this codebase’s conversation before asking.');
     }
     const setTurnMsgs = value => { if (ownsTurn()) setChatMsgs(previous => ownsTurn() ? (typeof value === 'function' ? value(previous) : value) : previous); };
-    const setTurnBusy = value => { if (ownsTurn()) setChatLoad(value); };
+    const setTurnBusy = value => { if (ownsTurn()) { dockLoading.current = value; setChatLoad(value); } };
     const setTurnPause = value => { if (ownsTurn()) setPausePending(value); };
 
     /* A key never leaves the chat box. The same shapes the setup chat checks
