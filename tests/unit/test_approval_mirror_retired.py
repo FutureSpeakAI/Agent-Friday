@@ -22,7 +22,9 @@ def _isolate(tmp_path, monkeypatch):
     monkeypatch.setenv("FRIDAY_HOME", str(tmp_path))
     monkeypatch.setattr(ap, "APPROVALS_FILE", tmp_path / "approvals.json")
     monkeypatch.setattr(ap, "_fire_hook", lambda rec: None)
-    monkeypatch.setattr(ap, "_feed", lambda *a, **k: None)
+    # Pages are not told (no SSE), but approvals._feed itself runs: it is what closes a decided card's notices.
+    from agent_friday.services import approval_feed
+    monkeypatch.setattr(approval_feed, "publish", lambda *a, **k: None)
     monkeypatch.setattr(ap, "_notify_pending", lambda rec: None)
     monkeypatch.setattr(ti, "_key", lambda: b"k" * 32)
     monkeypatch.setattr(ti, "_assistant", lambda: "Friday")
@@ -105,10 +107,11 @@ def test_deciding_a_card_closes_every_notice_that_names_it():
 def test_an_approval_is_never_for_your_information():
     assert pol.tier_for("approval_pending", "approvals", "low", tier="fyi") == pol.NEEDS_YOU
     from agent_friday.services import notice_registry as nr
-    wrong = [e for e in nr.REGISTRY.values() if e.place == nr.NEEDS_YOU
-             and ("approval" in e.kind or e.source in ("approvals", "tasks_inbox"))
+    # The old mirror's notices (an approval brought "to your desk", filed as FYI) are gone from the registry.
+    assert [e.id for e in nr.REGISTRY.values() if e.source == "tasks_inbox"] == []
+    wrong = [e for e in nr.REGISTRY.values() if e.kind == "approval_pending"
              and pol.tier_for(e.kind, e.source, "normal") != pol.NEEDS_YOU]
-    assert wrong == [], "an approval-related notice is filed as for your information: %s" % [e.id for e in wrong]
+    assert wrong == [], "an approval card's own notice is filed as for your information: %s" % [e.id for e in wrong]
 
 
 def test_no_part_of_the_mirror_still_posts_an_item_or_a_notice():
