@@ -1,37 +1,41 @@
 """The built-in "Learning from your corrections" (laya_personal_refit) can run (Scheduler, item 31).
 
-It was set to run "once a day, while you're away", but its own presence rule (Decision 10) runs it only while the owner is
-signed in, the session unlocked and within 30 minutes of their last input. Every run was skipped, and a skip was recorded
-as a failure and retried every five minutes. The rule stays; the trigger now fires inside the window the rule allows, the
-status names the rule, and a skip is a skip. practice_trials and daily_creation are checked for the same contradiction.
-Synthetic idle windows only."""
+It was set to run "once a day, while you're away", but Decision 10 let it run only while the owner was signed in, the
+session unlocked and within 30 minutes of their last input: away and present at once. Every run was skipped, and a skip was
+recorded as a failure and retried every five minutes. The owner amended the rule on 2026-11-22: "Allow it for as many hours
+as the PC is idle." The refit now runs while the Windows session is signed in, locked or unlocked, for as long as the PC
+stays idle; it never runs while he is using the PC or has a voice session open, and it yields when his input resumes. The
+other gates stay: AC power, the vault open, the GPU lease, Battery Saver. practice_trials and daily_creation are checked for
+the same contradiction. Synthetic idle windows only."""
 from __future__ import annotations
 
 import pytest
 
-from agent_friday.services import background_gate, laya_personal_fit as fit, local_scheduler, scheduler
+from agent_friday.services import background_gate, laya_personal_fit as fit, local_scheduler, power_state, scheduler
 
 MINUTE = 60.0
+HOUR = 3600.0
 
 
 @pytest.fixture
 def quiet(monkeypatch):
-    """The refit's own conditions all hold, and the owner has been idle for ``state['idle_s']``."""
-    state = {"idle_s": 4 * MINUTE, "unlocked": True, "ac": True, "vault": True}
+    """Every gate of the refit holds, and the owner has been idle for ``state['idle_s']``."""
+    state = {"idle_s": 4 * MINUTE, "ac": True, "vault": True, "voice": False, "saver": False, "lease": None}
     monkeypatch.setattr(fit, "presence_override", None)
-    monkeypatch.setattr(fit, "session_unlocked", lambda: state["unlocked"])
     monkeypatch.setattr(fit, "on_ac_power", lambda: state["ac"])
     monkeypatch.setattr(fit.store, "vault_open", lambda: state["vault"])
     monkeypatch.setattr(fit.lp, "learning_state", lambda profile=None: {"on": True, "why": ""})
     monkeypatch.setattr(fit.lp, "current_profile", lambda: "owner")
-    from agent_friday.services import thermal
+    from agent_friday.services import residency_arbiter, stand_down, thermal
     monkeypatch.setattr(thermal, "too_hot", lambda: (False, ""))
     monkeypatch.setattr(background_gate, "idle_state", lambda: {"idle": True, "idle_s": state["idle_s"], "os_readable": True})
+    monkeypatch.setattr(background_gate, "interactive_kinds",
+                        lambda: [background_gate.KIND_VOICE_CALL] if state["voice"] else [])
+    monkeypatch.setattr(power_state, "battery_saver_on", lambda: state["saver"])
+    monkeypatch.setattr(residency_arbiter, "exclusive_lease", lambda: state["lease"])
+    monkeypatch.setattr(stand_down, "is_stood_down", lambda: False)
     monkeypatch.setattr(scheduler, "_idle_settings", lambda: {"enabled": True, "after_s": 600.0, "from_hour": 0, "to_hour": 24})
     monkeypatch.setattr(local_scheduler, "interactive_busy_reason", lambda: "")
-    from agent_friday.services import residency_arbiter, stand_down
-    monkeypatch.setattr(residency_arbiter, "exclusive_lease", lambda: None)
-    monkeypatch.setattr(stand_down, "is_stood_down", lambda: False)
     monkeypatch.setattr(scheduler, "_RUNNING", set())
     return state
 
@@ -39,66 +43,92 @@ def quiet(monkeypatch):
 def _refit_record(monkeypatch):
     monkeypatch.setattr(scheduler, "BUILTIN_TASKS", {})
     fit.register()
-    meta = scheduler.BUILTIN_TASKS[fit.JOB_REF]
-    return scheduler._seed_record(fit.JOB_REF, meta)
+    return scheduler._seed_record(fit.JOB_REF, scheduler.BUILTIN_TASKS[fit.JOB_REF])
+
+
+def _due(rec):
+    return scheduler._is_due_on_schedule(dict(rec), scheduler._now_central())
 
 
 def test_an_idle_window_makes_the_refit_eligible_to_run_at_least_once(quiet, monkeypatch):
-    """Simulated idle window: the owner has been idle four minutes, session unlocked, on AC, vault open."""
     rec = _refit_record(monkeypatch)
     assert rec["trigger"] == "idle_daily"
-    assert scheduler._is_due_on_schedule(rec, scheduler._now_central()) is True
+    assert _due(rec) is True and fit.blocked_reason() == ""
+
+
+def test_it_is_eligible_while_the_pc_is_idle_for_any_number_of_hours_there_is_no_cap(quiet, monkeypatch):
+    """The owner: 'Allow it for as many hours as the PC is idle.' The session is locked, which the rule no longer asks about."""
+    rec = _refit_record(monkeypatch)
+    for hours in (0.5, 2, 8, 30, 200):
+        quiet["idle_s"] = hours * HOUR
+        assert _due(rec) is True and fit.blocked_reason() == "", hours
+
+
+def test_it_is_not_eligible_while_the_owner_is_using_the_pc(quiet, monkeypatch):
+    rec = _refit_record(monkeypatch)
+    for seconds in (0, 5, 60, fit.IDLE_AFTER_S - 1):
+        quiet["idle_s"] = seconds
+        assert _due(rec) is False, seconds
+        reason = fit.blocked_reason()
+        assert "used the PC" in reason and "Decision 10, amended by owner 2026-11-22" in reason
+    quiet["idle_s"] = fit.IDLE_AFTER_S
+    assert fit.blocked_reason() == "" and _due(rec) is True
+
+
+def test_it_never_runs_during_an_open_voice_session_however_idle_the_pc_is(quiet, monkeypatch):
+    quiet["idle_s"] = 5 * HOUR
+    quiet["voice"] = True
+    assert fit.blocked_reason().startswith("a voice session is open") and "amended by owner" in fit.blocked_reason()
+    quiet["voice"] = False
     assert fit.blocked_reason() == ""
 
 
-def test_the_trigger_asks_for_less_quiet_than_the_presence_rule_allows():
-    """The contradiction itself: a trigger that needs more idle time than the rule tolerates can never fire."""
-    assert 0 < fit.IDLE_AFTER_S < fit.PRESENT_WITHIN_S
+@pytest.mark.parametrize("flag,value,words", [("ac", False, "battery"), ("vault", False, "vault is locked"),
+                                              ("saver", True, "Battery Saver"), ("lease", {"role": "an image job"}, "GPU")])
+def test_the_other_gates_stay(quiet, flag, value, words):
+    quiet["idle_s"] = 5 * HOUR
+    quiet[flag] = value
+    assert words in fit.blocked_reason()
 
 
-def test_a_window_the_trigger_allows_is_a_window_the_rule_allows_for_every_idle_length(quiet, monkeypatch):
+def test_when_input_resumes_the_refit_yields_at_the_next_checkpoint_and_applies_nothing(quiet, monkeypatch):
+    """A refit under way asks yield_reason at each checkpoint; the owner's input ends the idle time between two of them."""
+    import threading
+    quiet["idle_s"] = 2 * HOUR
+    later = []
+    monkeypatch.setattr(fit.lp, "_build_lock", threading.RLock())
+    monkeypatch.setattr(fit.lp, "rebuild", lambda profile, why: (quiet.__setitem__("idle_s", 3.0) or {"status": "ok"}))
+    monkeypatch.setattr(fit.lp, "base_state", lambda: later.append("base") or None)
+    out = fit.refit("owner", should_yield=fit.yield_reason)
+    assert out["status"] == "yielded" and out["stage"] == "after_rebuild" and "amended by owner" in out["why"]
+    assert later == []                                          # nothing after the checkpoint ran, so nothing was applied
+
+
+def test_a_refit_that_is_not_the_scheduled_run_does_not_yield(quiet, monkeypatch):
+    """The owner pressing 'refit now' is at the PC by definition: only the scheduled run passes yield_reason."""
+    import threading
+    quiet["idle_s"] = 1.0
+    monkeypatch.setattr(fit.lp, "_build_lock", threading.RLock())
+    monkeypatch.setattr(fit.lp, "rebuild", lambda profile, why: {"status": "no_check", "why": "x"})
+    assert fit.refit("owner")["status"] == "no_check"
+
+
+def test_the_trigger_fires_the_moment_the_pc_is_idle_long_enough_so_it_can_never_contradict_the_rule(quiet, monkeypatch):
     rec = _refit_record(monkeypatch)
+    assert rec["spec"] == {"idle_after_s": fit.IDLE_AFTER_S}
     eligible = []
-    for minutes in range(0, 61):
+    for minutes in range(0, 12 * 60, 5):
         quiet["idle_s"] = minutes * MINUTE
-        triggered = scheduler._is_due_on_schedule(dict(rec), scheduler._now_central())
-        allowed = fit.blocked_reason() == ""
-        if triggered and allowed:
+        if _due(rec) and fit.blocked_reason() == "":
             eligible.append(minutes)
-    assert eligible and min(eligible) == fit.IDLE_AFTER_S // 60 and max(eligible) == fit.PRESENT_WITHIN_S // 60
-
-
-def test_the_old_ten_minute_wait_left_no_window_on_a_pc_that_locks_sooner(quiet, monkeypatch):
-    """What happened: unlocked requires input within the lock timeout, the trigger required ten idle minutes."""
-    rec = _refit_record(monkeypatch)
-    rec["spec"] = {"idle_after_s": fit.OLD_IDLE_AFTER_S}
-    quiet["idle_s"] = 4 * MINUTE
-    assert scheduler._is_due_on_schedule(dict(rec), scheduler._now_central()) is False      # not yet idle enough
-    quiet["idle_s"] = 11 * MINUTE
-    quiet["unlocked"] = False                                                              # the PC locked at ten minutes
-    assert scheduler._is_due_on_schedule(dict(rec), scheduler._now_central()) is True
-    assert "locked" in fit.blocked_reason()                                                # ...and the rule refuses
-
-
-def test_the_status_names_the_rule_that_blocks_it(quiet):
-    quiet["unlocked"] = False
-    locked = fit.blocked_reason()
-    assert "Decision 10" in locked and "locked" in locked and "30 minutes" in locked
-    quiet["unlocked"], quiet["idle_s"] = True, 50 * MINUTE
-    away = fit.blocked_reason()
-    assert "Decision 10" in away and "50 minutes" in away
-    quiet["idle_s"], quiet["ac"] = 4 * MINUTE, False
-    assert "battery" in fit.blocked_reason()
+    assert eligible and min(eligible) * MINUTE >= fit.IDLE_AFTER_S and max(eligible) == 11 * 60 + 55
 
 
 def test_an_untouched_old_default_moves_to_the_new_wait_once_and_an_edited_one_stays(quiet, monkeypatch, tmp_path):
     from agent_friday.services import builtin_overrides
     monkeypatch.setattr(scheduler, "SCHEDULES_FILE", tmp_path / "schedules.json")
     monkeypatch.setattr(builtin_overrides, "_file", lambda: tmp_path / "overrides.json")
-    monkeypatch.setattr(scheduler, "BUILTIN_TASKS", {})
-    fit.register()
-    meta = scheduler.BUILTIN_TASKS[fit.JOB_REF]
-    old = scheduler._seed_record(fit.JOB_REF, meta)
+    old = _refit_record(monkeypatch)
     old["spec"] = {"idle_after_s": fit.OLD_IDLE_AFTER_S}
     scheduler._write_store([old])
     scheduler._seed_and_reconcile()
@@ -115,7 +145,7 @@ def test_a_skipped_run_is_recorded_as_a_skip_with_its_reason_and_is_not_retried(
     monkeypatch.setattr(scheduler, "RUNS_FILE", tmp_path / "runs.jsonl")
 
     def waits():
-        raise scheduler.SkippedRun("Laya's personal refit waits: you are not signed in and here.")
+        raise scheduler.SkippedRun("Laya's personal refit waits: you used the PC 30 seconds ago.")
 
     monkeypatch.setattr(scheduler, "BUILTIN_TASKS", {"waits": {
         "fn": waits, "label": "Waits", "default_trigger": "daily", "default_spec": {"hour": 7, "minute": 0},
@@ -129,18 +159,17 @@ def test_a_skipped_run_is_recorded_as_a_skip_with_its_reason_and_is_not_retried(
     monkeypatch.setattr(scheduler.threading, "Thread", Sync)
     scheduler.dispatch(scheduler.get_schedule("sch_waits"), manual=True)
     rec = scheduler.get_schedule("sch_waits")
-    assert rec["last_status"] == "skipped" and "not signed in" in rec["last_summary"]
+    assert rec["last_status"] == "skipped" and "used the PC" in rec["last_summary"]
     assert not rec.get("retry_pending") and not rec.get("retry_count")
 
 
-def test_practice_trials_and_daily_creation_have_no_presence_rule_to_contradict_their_idle_trigger(quiet, monkeypatch):
+def test_practice_trials_and_daily_creation_have_no_presence_rule_to_contradict_their_idle_trigger(quiet):
     """Both are 'while you're away' built-ins; neither asks for the owner to be present, so an away window is a window."""
     import inspect
     from agent_friday.services import creations, trial_job
     for module in (trial_job, creations):
         source = inspect.getsource(module)
-        assert "owner_present" not in source and "session_unlocked" not in source and "presence_reason" not in source
+        assert "activity_reason" not in source and "session_unlocked" not in source and "owner_present" not in source
     away = {"trigger": "idle_daily", "enabled": True, "id": "sch_x", "spec": {"idle_after_s": 600}}
-    quiet["idle_s"] = 6 * 60 * MINUTE                                     # away for six hours, session locked
-    quiet["unlocked"] = False
+    quiet["idle_s"] = 6 * HOUR
     assert scheduler._is_due_on_schedule(dict(away), scheduler._now_central()) is True

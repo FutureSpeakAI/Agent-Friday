@@ -41,9 +41,12 @@ THE JOB (every job is visible). ``run_scheduled`` is a scheduler built-in
 through services/background_gate, so the queue chip, the tray and the Activity
 lane show it with its model name, status, trace and place in line. It runs only
 when: personal learning is on, the vault is open (Decision 10: no overnight
-unlock; a locked vault means it waits for the next idle window in which you are
-signed in), the PC is on AC power, and it has the idle window the queue gives
-deferrable work. It uses no GPU and no model seat: its "model" is the CPU
+unlock; a locked vault means it waits), the PC is on AC power and Battery Saver
+is off, the GPU is not held by other work, and the PC is idle. Decision 10,
+amended by owner 2026-11-22: idle means the owner's last input was at least
+IDLE_AFTER_S ago and no voice session is open; the Windows session may be locked,
+and there is no limit on the hours. Input that resumes makes the refit yield at
+its next checkpoint (``refit(should_yield=...)``). It uses no GPU and no model seat: its "model" is the CPU
 reading model Laya already shares.
 """
 from __future__ import annotations
@@ -289,19 +292,33 @@ def gate(candidate: Optional[dict], live: Optional[dict], *, labels, protos,
 #  the refit
 # ---------------------------------------------------------------------------
 
-def refit(profile: str, *, now: Optional[float] = None) -> dict:
+def refit(profile: str, *, now: Optional[float] = None, should_yield=None) -> dict:
     """Rebuild U1, fit U2 on the training rows, run the gate, and move a passing
-    candidate through shadow to live. Needs the vault open. Returns a summary."""
+    candidate through shadow to live. Needs the vault open. Returns a summary.
+
+    ``should_yield`` (the scheduled run passes ``yield_reason``) is asked at each checkpoint, before the step that
+    follows saves anything: a reason ends the refit there with status ``yielded`` and nothing half-applied."""
     now = now if now is not None else now_fn()
+
+    def _yield(stage):
+        why = should_yield() if should_yield else ""
+        return {"status": "yielded", "why": why, "stage": stage} if why else None
+
     with lp._build_lock:
         ls = lp.learning_state(profile)
         if not ls["on"]:
             return {"status": "off", "why": ls["why"]}
         if not store.vault_open():
             return {"status": "locked", "why": "The vault is locked, so I do not train until it opens."}
+        stopped = _yield("start")
+        if stopped:
+            return stopped
         u1 = lp.rebuild(profile, "a scheduled refit")
         if u1.get("status") == "no_check":
             return {"status": "no_check", "why": u1["why"]}
+        stopped = _yield("after_rebuild")
+        if stopped:
+            return stopped
         base = lp.base_state()
         if base is None:
             return {"status": "no_model", "why": "My reading model is not ready."}
@@ -318,7 +335,13 @@ def refit(profile: str, *, now: Optional[float] = None) -> dict:
             by_label.setdefault(p["label"], []).append(p["vec"])
         protos = lp.adjusted_protos(labels, base_protos, seed_counts, by_label)
         shipped = shipped_entry()
+        stopped = _yield("before_fit")
+        if stopped:
+            return stopped
         fitted = fit_u2(train, labels, base_protos, seed_counts, phr, shipped)
+        stopped = _yield("after_fit")
+        if stopped:
+            return stopped
         live_u2 = (live_art or {}).get("u2")
         out = {"status": "ok", "u1": u1, "fitted": bool(fitted), "promoted": False, "pending": False}
         if fitted is None:
@@ -394,56 +417,70 @@ def on_ac_power() -> bool:
         return False
 
 
-PRESENT_WITHIN_S = 30 * 60.0
-#: The refit's own trigger: the owner idle for this long (and, by the rule below, not for more than PRESENT_WITHIN_S).
-#: A trigger that asks for more quiet than the rule allows can never fire (tests/unit/test_refit_can_run.py).
+#: The rule's name in every sentence that cites it.
+DECISION_10 = "Decision 10, amended by owner 2026-11-22"
+#: The refit runs while the PC stays idle: the owner's last input at least this long ago. There is no upper limit (the
+#: owner's words: "Allow it for as many hours as the PC is idle."), so a trigger that asks for this much quiet can always
+#: fire once the PC has been left alone (tests/unit/test_refit_can_run.py).
 IDLE_AFTER_S = 180
 OLD_IDLE_AFTER_S = 600
 presence_override = None
 
 
-def session_unlocked() -> bool:
-    """True when the Windows session is unlocked (the input desktop can be opened). Not Windows: True."""
-    try:
-        import sys
-        if sys.platform != "win32":
-            return True
-        import ctypes
-        h = ctypes.windll.user32.OpenInputDesktop(0, False, 0x0001)
-        if not h:
-            return False
-        ctypes.windll.user32.CloseDesktop(h)
-        return True
-    except Exception:
-        return False                                        # cannot tell: treat as locked
+def activity_reason() -> str:
+    """Why the PC is in use right now, naming the rule, or "" while it is idle.
 
-
-def presence_reason() -> str:
-    """Why the owner does not count as present, naming the rule, or "" when they do.
-
-    Decision 10: training only while the owner is signed in. The cached vault key alone proves nothing (it is held for
-    the life of the process, overnight too), so a run needs the Windows session unlocked AND the owner at the PC within
-    the last 30 minutes. Idle but present is allowed; overnight is not. The rule is the owner's, not a technical need of
-    the key store; relaxing it is the owner's decision."""
+    Decision 10, amended by owner 2026-11-22: the refit runs while the Windows session is signed in, locked or unlocked, for as long as the PC stays idle
+    and with no limit on the hours, and never while the owner is using the PC or has a voice session open. The vault key
+    is cached for the life of the process, so a locked session needs no extra key access; what the rule keeps is that
+    nothing trains while the owner is at the PC. Input that resumes ends the idle time at once; ``yield_reason`` is the
+    same question asked at the refit's checkpoints."""
     if presence_override is not None:
-        return "" if presence_override() else "you are not here (Decision 10: the refit runs only while you are signed in and at the PC)"
-    if not session_unlocked():
-        return ("the Windows session is locked (Decision 10: the refit runs only while you are signed in and at the PC, "
-                "within %d minutes of your last input)" % int(PRESENT_WITHIN_S // 60))
+        return "" if presence_override() else "you are using the PC (%s: the refit runs only while it is idle)" % DECISION_10
     try:
         from agent_friday.services import background_gate
-        idle = float(background_gate.idle_state()["idle_s"])
+        state = background_gate.idle_state()
+        idle = float(state["idle_s"])
+        readable = bool(state.get("os_readable", True))
     except Exception:
-        return "could not tell whether you are at the PC (Decision 10: the refit runs only while you are)"
-    if idle > PRESENT_WITHIN_S:
-        return ("you have been away from the PC for %d minutes (Decision 10: the refit runs only within %d minutes of "
-                "your last input, while the session is unlocked)" % (int(idle // 60), int(PRESENT_WITHIN_S // 60)))
+        return "could not tell whether you are using the PC (%s: the refit runs only while it is idle)" % DECISION_10
+    if not readable:
+        return "could not read how long the PC has been idle (%s: the refit runs only while it is idle)" % DECISION_10
+    if idle < IDLE_AFTER_S:
+        return ("you used the PC %d seconds ago (%s: the refit runs only while it is idle, for %d seconds or more)"
+                % (int(idle), DECISION_10, int(IDLE_AFTER_S)))
+    try:
+        from agent_friday.services import background_gate as _bg
+        if _bg.KIND_VOICE_CALL in _bg.interactive_kinds():
+            return "a voice session is open (%s: the refit never runs during one)" % DECISION_10
+    except Exception:
+        pass
     return ""
 
 
-def owner_present() -> bool:
-    """True when the presence rule is met (``presence_reason``)."""
-    return not presence_reason()
+def yield_reason() -> str:
+    """Why a refit already running must stop at its next checkpoint: the owner's input has resumed, or a voice session
+    opened. "" while the PC is still idle."""
+    return activity_reason()
+
+
+def environment_reason() -> str:
+    """Why the PC's power or GPU says wait: Battery Saver (battery power is checked by ``on_ac_power``), or the GPU
+    held by other work."""
+    try:
+        from agent_friday.services import power_state
+        if power_state.battery_saver_on():
+            return "Battery Saver is on"
+    except Exception:
+        pass
+    try:
+        from agent_friday.services.residency_arbiter import exclusive_lease
+        lease = exclusive_lease()
+        if lease:
+            return "the GPU is held by %s" % (lease.get("role") or lease.get("holder") or "other work")
+    except Exception:
+        pass
+    return ""
 
 
 def blocked_reason(profile: Optional[str] = None) -> str:
@@ -460,9 +497,12 @@ def blocked_reason(profile: Optional[str] = None) -> str:
     hot, why = thermal.too_hot()
     if hot:
         return why
-    gone = presence_reason()
-    if gone:
-        return gone
+    waits = environment_reason()
+    if waits:
+        return waits
+    busy = activity_reason()
+    if busy:
+        return busy
     try:
         from agent_friday.services import off_record
         if off_record.active():
@@ -513,11 +553,11 @@ def run_scheduled() -> dict:
         try:
             from agent_friday.services import reasoning_trace as rt
             with rt.scope("laya_personal", JOB_LABEL, nested=True, model=JOB_MODEL):
-                res = refit(profile)
+                res = refit(profile, should_yield=yield_reason)
                 lp.flush_skipped(profile)
                 return res
         except ImportError:
-            return refit(profile)
+            return refit(profile, should_yield=yield_reason)
 
 
 def _skip(message: str) -> None:
