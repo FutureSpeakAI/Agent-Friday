@@ -100,30 +100,56 @@ def _write_report(path: Path, text: str) -> None:
     path.write_text(text, encoding="utf-8")
 
 
+def _anchored(p: Path):
+    """`p` as (its nearest existing ancestor, the names below it), or (None, ()) when nothing on the way up exists."""
+    for i, ancestor in enumerate((p, *p.parents)):
+        try:
+            if ancestor.exists():
+                return ancestor, p.parts[len(p.parts) - i:] if i else ()
+        except OSError:
+            continue
+    return None, ()
+
+
+def _fold(names) -> tuple:
+    return tuple(os.path.normcase(n) for n in names)
+
+
 def _inside(path: Path, root: Path) -> bool:
-    """True when `path` is `root` or under it. Decided by which folder each existing ancestor IS (os.path.samefile), not by
-    how the path is spelled: an extended-length or localhost-UNC spelling of the root is the root. The text comparison
-    stays for a root that does not exist yet. Held by test_out_under_another_spelling_of_the_root_is_refused."""
+    """True when `path` is `root` or under it. Decided by which folder things ARE, not by how the path is spelled: the
+    root's nearest existing ancestor (the root itself once it exists) is found by identity (os.path.samefile) among the
+    path's existing ancestors, and the names below it must continue as the root's do. So an extended-length or localhost-UNC
+    spelling of the root is the root, whether or not the root exists yet. Held by
+    test_out_under_another_spelling_of_the_root_is_refused."""
     try:
         path.resolve().relative_to(root.resolve())
         return True
     except (ValueError, OSError):
         pass
-    if not root.exists():
+    root_anchor, root_rest = _anchored(root)
+    if root_anchor is None:
         return False
-    for ancestor in (path, *path.parents):
+    for i, ancestor in enumerate((path, *path.parents)):
         try:
-            if ancestor.exists() and os.path.samefile(ancestor, root):
-                return True
+            if ancestor.exists() and os.path.samefile(ancestor, root_anchor):
+                rest = path.parts[len(path.parts) - i:] if i else ()
+                return _fold(rest[:len(root_rest)]) == _fold(root_rest)
         except OSError:
             continue
     return False
 
 
+def _names_a_stream(p: Path) -> bool:
+    """`folder:name` or `file:name` addresses an NTFS stream on that folder or file, not a file of its own."""
+    return os.name == "nt" and any(":" in part for part in p.parts[1:])
+
+
 def _out_refusal(out: Path, root: Path) -> str:
     """Why the report may not be written at `out`, or "" when it may. Never inside the scanned root, never inside the owner's
     data root (FRIDAY_HOME or ~/.friday) whatever root is scanned, and never through a second name for an existing file (a
-    hard link would write through to it)."""
+    hard link would write through to it) or a stream on an existing folder or file."""
+    if _names_a_stream(out):
+        return "names a stream on a folder or file (a ':' in a name); name a plain new file"
     for guarded in (root, default_root()):
         if _inside(out, guarded):
             return "is inside the data root %s; this script never writes there" % guarded
