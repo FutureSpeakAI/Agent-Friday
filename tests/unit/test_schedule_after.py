@@ -170,7 +170,8 @@ def test_the_runs_output_says_stale_with_the_age_when_a_failed(jobs, monkeypatch
     assert due is True and rec["_stale"]["why"] == "it failed today"
     scheduler.dispatch(rec, manual=True)
     summary = scheduler.get_schedule("sch_digest")["last_summary"]
-    assert seen.get("ran") and summary.startswith("Stale data:") and "Morning news" in summary and "hours ago" in summary
+    assert seen.get("ran") and summary.startswith("Stale data:") and "Morning news" in summary
+    assert "24 hours 15 minutes ago" in summary
 
 
 def test_a_dependency_loop_or_self_dependency_is_refused_when_a_schedule_is_made_or_changed(jobs):
@@ -191,7 +192,7 @@ def test_the_list_shows_the_latest_start_as_its_next_run_and_says_what_it_waits_
     clock = datetime.fromtimestamp(rows["sch_digest"]["next_run"], tz=TZ)
     assert (clock.hour, clock.minute) == (6, 0)
     text = workflow_overview.describe_when({"trigger": "after", "spec": dict(SPEC)})
-    assert "After sch_news finishes" in text and "no later than 6:00" in text.replace("06:00", "6:00") and "stale" in text
+    assert "After sch_news finishes" in text and "no later than 6 AM" in text and "stale" in text
 
 
 # ── the tool and the voice ─────────────────────────────────────────────────────────
@@ -215,8 +216,9 @@ def test_the_model_can_create_an_after_job_through_schedule_job_and_a_loop_is_re
 
 
 def test_voice_borrows_the_same_tool_so_the_trigger_is_there_by_voice_too():
-    """The voice session declares tools from the same registry the chat uses (schedule_tools.TOOL_SCHEMAS)."""
+    """Chat and voice draw the tool from one place: agent registers schedule_tools.TOOL_SCHEMAS (and its handler) once."""
     import agent_friday.services.agent as agent
-    declared = {t["name"]: t for t in agent.CLAUDE_TOOLS if isinstance(t, dict)}
-    spec = declared["schedule_job"]["input_schema"]["properties"]["spec"]["properties"]
-    assert "deadline_hour" in spec and "after" in declared["schedule_job"]["input_schema"]["properties"]["trigger"]["enum"]
+    assert agent._SCHEDULE_TOOLS is schedule_tools.TOOL_SCHEMAS and agent.CLAUDE_TOOL_HANDLERS["schedule_job"] is schedule_tools.schedule_job
+    declared = {t["name"]: t for t in agent.WORKSPACE_TOOLS["on_demand"] if isinstance(t, dict) and "name" in t}
+    schema = declared["schedule_job"]["input_schema"]["properties"]
+    assert "after" in schema["trigger"]["enum"] and "deadline_hour" in schema["spec"]["properties"]

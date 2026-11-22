@@ -55,10 +55,11 @@ def validate(own_id: Optional[str], spec: Dict[str, Any], records: Iterable[Dict
 
 
 def age_words(seconds: float) -> str:
+    """An age in the two largest units that matter: ``24 hours 45 minutes``, ``3 days 4 hours``, ``12 minutes``."""
     seconds = max(0.0, float(seconds))
-    if seconds >= 86400:
-        days = int(seconds // 86400)
-        return "%d day%s" % (days, "" if days == 1 else "s")
+    if seconds >= 2 * 86400:
+        days, hours = int(seconds // 86400), int(seconds % 86400 // 3600)
+        return "%d days%s" % (days, (" %d hour%s" % (hours, "" if hours == 1 else "s")) if hours else "")
     if seconds >= 3600:
         hours, minutes = int(seconds // 3600), int(seconds % 3600 // 60)
         return "%d hour%s%s" % (hours, "" if hours == 1 else "s", (" %d minute%s" % (minutes, "" if minutes == 1 else "s")) if minutes else "")
