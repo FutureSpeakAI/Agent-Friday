@@ -99,14 +99,21 @@ NEVER_GATE = "N"
 #: What each right lets a paired device do. The keys are device_pairing.ALL_RIGHTS
 #: (test_every_right_has_a_note); `sees` says which arrive with the pairing press.
 RIGHT_NOTES = {
-    "chat_read": "read the chat you send to it",
-    "tv_brain": "use me as its brain: talk with me and use my memory and models",
-    "studio": "start Studio jobs on this PC's paid providers, each showing its cost first",
+    "chat_read": "talk with me, answered by this PC's models",
+    "tv_brain": "have me propose actions on the device, which it still asks about on its own screen",
+    "studio": "start Studio jobs on this PC's paid providers, outside the daily spend stop, each showing its cost first",
     "tv_channels": "share its channels with this PC",
     "pc_read": "read your chats, workspaces and jobs on this PC",
     "pc_act": "stop, resume or re-run a job on this PC",
     "pc_approve": "approve my requests, one at a time, signed on the unlocked device",
 }
+
+
+#: How a turn from each kind of device is answered (tv_gateway/turn.run, tv_gateway/inherit).
+OWNER_TURN = ("What it asks is answered as your own request at this PC would be, with my memory and "
+              "knowledge; anything I would do on this PC still needs a press here.")
+HOUSEHOLD_TURN = ("Its questions are answered with none of your memory or files, and no tool of this PC "
+                  "is run for it. It also receives the household profile's settings and chats.")
 
 
 class EcosystemError(ValueError):
@@ -383,12 +390,14 @@ def sees(a: App) -> list:
     elif pairing.owner_grant(a.id, household.member_for_kind(a.id)):
         lines.append(f"Once you approve the pairing it is signed in as you, and that one press lets it: "
                      f"{listed(device_pairing.RIGHTS)}.")
+        lines.append(OWNER_TURN)
         lines.append(f"Each of these is asked separately on this PC's screen, and is off until you allow it: "
                      f"{listed(device_pairing.PC_RIGHTS)}.")
     else:
         later = [r for r in device_pairing.RIGHTS if r != device_pairing.BASE_RIGHT]
         lines.append(f"It is a household device, never signed in as you. Pairing lets it "
-                     f"{RIGHT_NOTES[device_pairing.BASE_RIGHT]}, and nothing else.")
+                     f"{RIGHT_NOTES[device_pairing.BASE_RIGHT]}.")
+        lines.append(HOUSEHOLD_TURN)
         lines.append(f"Each of these is asked separately on this PC's screen, and is off until you allow it: "
                      f"{listed(later)}.")
     notes = []
