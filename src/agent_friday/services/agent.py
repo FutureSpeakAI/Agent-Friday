@@ -14327,6 +14327,18 @@ def _clear_pending(session_id, fingerprint=None):
             _PENDING_CONFIRMATIONS.pop(session_id, None)
 
 
+def _card_still_waiting(approval_id) -> bool:
+    """True when this approval card exists and is still pending. Cannot tell: True (a yes then asks which)."""
+    if not approval_id:
+        return False
+    try:
+        from agent_friday.services import approvals as _appr
+        rec = _appr.get_approval(approval_id)
+    except Exception:
+        return True
+    return bool(rec) and rec.get("status") == "pending"
+
+
 def _deny_awaiting_card(session_id):
     """Deny the approval card of the question this reply answers, and no other.
 
@@ -14461,12 +14473,16 @@ def prepare_confirmation_ctx(session_id, message, base_ctx=None):
         # refuse to spend this grant on a different action.
         eligible = [(fp, entry) for fp, entry in bucket.items()
                     if entry.get("awaiting_reply")]
-        if not eligible:
-            return ctx
-        if len(eligible) > 1:
+        # Every question in this conversation still waiting for the owner: the one just asked, and any older one
+        # whose card is still waiting in the tray (a new request disarms the chat question, not its card).
+        waiting = [(fp, entry) for fp, entry in bucket.items()
+                   if entry.get("awaiting_reply") or _card_still_waiting(entry.get("approval_id"))]
+        if len(waiting) > 1:
             # More than one question is waiting and a bare yes does not say which. Never guess and never
             # approve them all: nothing is granted, and the gate tells the model to ask the owner which.
-            ctx["confirm_which"] = sorted(fp for fp, _entry in eligible)
+            ctx["confirm_which"] = sorted(fp for fp, _entry in waiting)
+            return ctx
+        if not eligible:
             return ctx
         fp, entry = eligible[0]
         if entry.get("approval_id") and ctx.get("owner_surface") is not True:
