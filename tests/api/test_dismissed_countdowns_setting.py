@@ -2,6 +2,8 @@
 after a reload from disk, and a value of the wrong shape is refused. Synthetic ids only."""
 import json
 
+import pytest
+
 from agent_friday import core
 
 HIDDEN = {"todo:t-grant": 1893456000, "wiki:people/dana-reyes.md#0": 1893542400}
@@ -24,4 +26,15 @@ def test_a_value_of_the_wrong_shape_is_refused_and_changes_nothing(client):
     client.post("/api/settings", json={"settings": {"dismissed_countdowns": HIDDEN}})
     r = client.post("/api/settings", json={"settings": {"dismissed_countdowns": ["todo:t-grant"]}})
     assert r.status_code >= 400
+    assert core._load_settings()["dismissed_countdowns"] == HIDDEN
+
+
+@pytest.mark.parametrize("raw", ['{"todo:t-grant": Infinity}', '{"todo:t-grant": NaN}', '{"todo:t-grant": -5}',
+                                 '{"todo:t-grant": true}', '{"": 1893456000}'])
+def test_a_time_that_is_not_a_finite_moment_is_refused(client, raw):
+    # Infinity or NaN stored in settings.json would make the settings answer unparseable in the page.
+    client.post("/api/settings", json={"settings": {"dismissed_countdowns": HIDDEN}})
+    r = client.post("/api/settings", data='{"settings": {"dismissed_countdowns": %s}}' % raw,
+                    content_type="application/json")
+    assert r.status_code == 400
     assert core._load_settings()["dismissed_countdowns"] == HIDDEN

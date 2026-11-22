@@ -402,3 +402,13 @@ def test_with_the_wiki_and_the_tasks_emptied_nothing_is_left_to_show(world):
     (world.wiki / "people" / "dana-reyes.md").unlink()
     world.todos = []
     assert cd.countdowns(now=NOW)["countdowns"] == []
+
+
+def test_a_wiki_countdown_keeps_its_id_when_a_line_is_added_above_it(world):
+    world.page("people/dana-reyes.md", "# Dana Reyes\n\n- **Birthday:** %s\n" % spoken_date(12))
+    before = by_label(cd.countdowns(now=NOW))["Dana's birthday"]["id"]
+    world.page("people/dana-reyes.md", "# Dana Reyes\n\n- **Anniversary:** %s\n- **Birthday:** %s\n"
+               % (spoken_date(40), spoken_date(12)))
+    after = by_label(cd.countdowns(now=NOW))
+    assert after["Dana's birthday"]["id"] == before
+    assert len({c["id"] for c in after.values()}) == len(after)                # still one id each
