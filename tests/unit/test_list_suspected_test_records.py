@@ -83,32 +83,93 @@ def test_out_inside_the_root_is_refused_and_outside_is_written(root, tmp_path, c
     assert "suspected test record" in outside.read_text(encoding="utf-8")
 
 
-_MUTATING = {"unlink", "remove", "rmtree", "rename", "replace", "rmdir", "write_text", "write_bytes", "truncate", "move"}
+_MUTATING = {"unlink", "remove", "rmtree", "rename", "replace", "rmdir", "write_text", "write_bytes", "truncate", "move",
+             "touch", "mkdir", "makedirs", "chmod", "utime", "symlink", "symlink_to", "hardlink_to", "link", "link_to",
+             "copy", "copyfile", "copy2", "copytree"}
+_WRITE_FLAGS = {"O_WRONLY", "O_RDWR", "O_CREAT", "O_APPEND", "O_TRUNC"}
+
+
+def _write_mode(call):
+    """The mode an open() call names, positionally (open(p, mode) / p.open(mode)) or by keyword; '' when none."""
+    for kw in call.keywords:
+        if kw.arg == "mode" and isinstance(kw.value, ast.Constant):
+            return str(kw.value.value)
+    pos = 0 if isinstance(call.func, ast.Attribute) and not (isinstance(call.func.value, ast.Name)
+                                                             and call.func.value.id in ("io", "os", "codecs")) else 1
+    if len(call.args) > pos and isinstance(call.args[pos], ast.Constant):
+        return str(call.args[pos].value)
+    return ""
 
 
 def _mutations(source):
-    """Calls that change files, outside the one function that writes the report."""
+    """Calls that change files, anywhere in the script (module level included) outside the one report writer."""
     tree = ast.parse(source)
-    found = []
+    skip = set()
+    for fn in [n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and n.name == "_write_report"]:
+        skip |= {id(n) for n in ast.walk(fn)}
+    owner = {}
     for fn in [n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef)]:
-        if fn.name == "_write_report":
-            continue
-        for call in [n for n in ast.walk(fn) if isinstance(n, ast.Call)]:
-            name = call.func.attr if isinstance(call.func, ast.Attribute) else getattr(call.func, "id", "")
-            if name in _MUTATING:
-                found.append((fn.name, name))
-            if name == "open" and len(call.args) > 1 and isinstance(call.args[1], ast.Constant) \
-                    and any(c in str(call.args[1].value) for c in "wax+"):
-                found.append((fn.name, "open for write"))
-    top = [n for n in tree.body if not isinstance(n, (ast.FunctionDef, ast.Import, ast.ImportFrom, ast.Assign, ast.Expr, ast.If))]
-    return found + [("module", type(n).__name__) for n in top]
+        for n in ast.walk(fn):
+            owner.setdefault(id(n), fn.name)
+    found = []
+    for call in [n for n in ast.walk(tree) if isinstance(n, ast.Call) and id(n) not in skip]:
+        where = owner.get(id(call), "module")
+        name = call.func.attr if isinstance(call.func, ast.Attribute) else getattr(call.func, "id", "")
+        if name in _MUTATING:
+            found.append((where, name))
+        elif name == "open":
+            flags = {n.attr for n in ast.walk(call) if isinstance(n, ast.Attribute)} & _WRITE_FLAGS
+            if flags or any(c in _write_mode(call) for c in "wax+"):
+                found.append((where, "open for write"))
+    return found
 
 
-def test_the_script_has_no_delete_move_or_edit_call_and_the_check_can_fail():
-    assert _mutations(SCRIPT.read_text(encoding="utf-8")) == []
-    mutant = SCRIPT.read_text(encoding="utf-8").replace("    return scan_people(root) + scan_wiki(root)",
-                                                        "    os.remove(root / 'trust_graph.json')\n    return scan_people(root) + scan_wiki(root)")
-    assert ("scan", "remove") in _mutations(mutant), "a delete added to the script is reported"
+#: each line is a change someone could slip into scan(); every one must be reported
+_MUTANTS = (
+    "    os.remove(root / 'trust_graph.json')",
+    "    (root / 'x').open('w')",
+    "    open(root / 'x', mode='w')",
+    "    open(root / 'x', 'a')",
+    "    (root / 'x').touch()",
+    "    (root / 'x').mkdir()",
+    "    os.open(str(root / 'x'), os.O_CREAT | os.O_WRONLY)",
+    "    shutil.copy(root / 'a', root / 'b')",
+)
+
+
+@pytest.mark.parametrize("mutant", _MUTANTS)
+def test_the_script_has_no_delete_move_or_edit_call_and_the_check_can_fail(mutant):
+    source = SCRIPT.read_text(encoding="utf-8")
+    assert _mutations(source) == []
+    line = "    return scan_people(root) + scan_wiki(root)"
+    assert source.count(line) == 1
+    assert _mutations(source.replace(line, mutant + chr(10) + line)), "a write added to the script is not reported: " + mutant
+    assert _mutations(source + chr(10) + mutant.strip() + chr(10)), "a module-level write is not reported: " + mutant
+
+
+def test_out_in_the_owners_real_root_is_refused_whatever_root_is_scanned(tmp_path, monkeypatch):
+    """--out is refused inside the owner's data root (FRIDAY_HOME / ~/.friday), not only inside --root: scanning a
+    sub-folder of it, or a backup elsewhere, must not let the report land in it."""
+    mod = _load()
+    home = tmp_path / "home" / ".friday"
+    (home / "wiki").mkdir(parents=True)
+    backup = tmp_path / "backup"
+    backup.mkdir()
+    monkeypatch.setenv("FRIDAY_HOME", str(home))
+    for scanned, out in ((home / "wiki", home / "report.txt"), (backup, home / "report2.txt")):
+        assert mod.main(["--root", str(scanned), "--out", str(out)]) == 2
+        assert not out.exists()
+
+
+def test_out_through_a_hard_link_is_refused(root, tmp_path):
+    """A report path that is another name for a file (a hard link) would write through to it: refused."""
+    import os
+    target = root / "notes.txt"
+    target.write_text("keep me", encoding="utf-8")
+    link = tmp_path / "report.txt"
+    os.link(target, link)
+    assert _load().main(["--root", str(root), "--out", str(link)]) == 2
+    assert target.read_text(encoding="utf-8") == "keep me"
 
 
 def test_nothing_found_is_status_zero_and_json_is_valid(tmp_path, capsys):
