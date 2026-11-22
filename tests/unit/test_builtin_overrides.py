@@ -196,6 +196,10 @@ def test_a_model_can_restore_and_revert_a_built_in_but_a_background_run_cannot_e
     scheduler.update_schedule("sch_sample_job", {"spec": {"hour": 5, "minute": 0}}, by="owner")
     out = json.loads(schedule_tools.schedule_job({"action": "restore_default", "schedule_id": "sch_sample_job"}))
     assert out["restored"] is True and _stored()["spec"]["hour"] == 7
+    back = json.loads(schedule_tools.schedule_job({"action": "revert", "schedule_id": "sch_sample_job"}))   # undoes the restore
+    assert back["reverted"] is True and _stored()["spec"]["hour"] == 5
+    schedule_tools.schedule_job({"action": "revert", "schedule_id": "sch_sample_job"})                      # undoes the edit
+    assert _stored()["spec"]["hour"] == 7
     with pytest.raises(ValueError, match="no earlier edit"):
         schedule_tools.schedule_job({"action": "revert", "schedule_id": "sch_sample_job"})      # nothing left to step back to
     with pytest.raises(ValueError, match="no schedule"):
