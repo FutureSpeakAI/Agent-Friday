@@ -119,15 +119,16 @@ def restore(sid: str, current: Dict[str, Any], defaults: Dict[str, Any], by: str
 
 def revert(sid: str, current: Dict[str, Any], defaults: Dict[str, Any], by: str,
            path: Optional[Path] = None) -> Optional[Dict[str, Any]]:
-    """Step back one edit: the fields from before the newest version, logged as a new version. None when there is
-    nothing to step back to."""
+    """Step back the newest version that has not been stepped back (an edit, an adoption or a restore-to-default): the
+    fields from before it, logged as a new version. None when there is nothing to step back to."""
     with _LOCK:
         data = _load(path)
         job = _job(data, sid)
-        steps = [e for e in job["history"] if e["kind"] in ("edit", "adopted")]
+        steps = [e for e in job["history"] if e["kind"] in ("edit", "adopted", "restore_default") and not e.get("undone")]
         if not steps:
             return None
         newest = steps[-1]
+        newest["undone"] = True                  # each version is stepped back once; a revert is not itself stepped back
         target = copy.deepcopy(newest["before"])
         _append(job, "revert", by, fields_of(current), target, note="steps back version %d" % newest["version"])
         job["owner_fields"] = _differs(target, defaults)

@@ -135,8 +135,10 @@ def test_restore_default_works_and_can_be_undone(sched):
     assert restored["spec"] == {"hour": 7, "minute": 0} and restored["enabled"] is True
     assert bo.history("sch_sample_job")[-1]["kind"] == "restore_default" and not bo.has_edits("sch_sample_job")
     assert sched[-1][1]["kind"] == "restore_default"
-    back = scheduler.revert_builtin_edit("sch_sample_job", by="owner")                  # step back the edit before it
-    assert back["spec"] == {"hour": 7, "minute": 0}
+    back = scheduler.revert_builtin_edit("sch_sample_job", by="owner")                  # undo the restore: the edit is back
+    assert back["spec"] == {"hour": 5, "minute": 30} and back["enabled"] is False
+    again = scheduler.revert_builtin_edit("sch_sample_job", by="owner")                 # then undo the edit itself
+    assert again["spec"] == {"hour": 7, "minute": 0} and again["enabled"] is True
     assert scheduler.restore_builtin_default("sch_not_a_builtin") is None and scheduler.revert_builtin_edit("nope") is None
 
 

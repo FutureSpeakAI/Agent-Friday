@@ -26,7 +26,7 @@ def test_history_restore_and_revert_through_the_routes(client, seeded):
     restored = client.post("/api/schedules/%s/restore-default" % sid).get_json()
     assert restored["status"] == "ok" and restored["schedule"]["spec"]["hour"] == 7
     back = client.post("/api/schedules/%s/revert" % sid).get_json()
-    assert back["status"] == "ok" and back["schedule"]["spec"]["hour"] == 7 or back["schedule"]["spec"]["hour"] == 5
+    assert back["status"] == "ok" and back["schedule"]["spec"]["hour"] == 5            # the restore is undone
     assert [h["kind"] for h in client.get("/api/schedules/%s/history" % sid).get_json()["history"]][-2:] == ["restore_default", "revert"]
 
 
