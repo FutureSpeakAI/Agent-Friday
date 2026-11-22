@@ -144,7 +144,7 @@ def test_a_refusal_after_a_workers_last_test_fails_the_whole_xdist_run(real):
         guard.pytest_sessionfinish(worker, 0)
     finally:
         guard._baseline[0] = len(guard.VIOLATIONS)
-    handed = worker.config.workeroutput.get(guard.WORKER_KEY)
+    handed = {k: v for k, v in worker.config.workeroutput.items() if k != "exitstatus" and v}
     assert handed, "the worker kept its refusal to itself: xdist would end the run green"
 
     controller = types.SimpleNamespace(exitstatus=0, config=types.SimpleNamespace())
