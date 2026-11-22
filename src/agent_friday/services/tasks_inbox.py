@@ -592,6 +592,8 @@ def _words_out(title: str, notes: str, fallback_title: str) -> Optional[Tuple[st
 def enable(account_id: str, text_level: str) -> dict:
     """Turn the inbox on for one account at one text level. The route requires a press on
     this PC's screen; nothing here is reachable from a model or a tool."""
+    return {"ok": False, "message": "Friday no longer mirrors approvals to Google Tasks. They wait in the tray, "
+                                    "which your phone, tablet and widget reach through the gateway."}
     # egress: recorded by _service (egress_record.tasks wraps the only client this module uses)
     if text_level not in TEXT_LEVELS:
         return {"ok": False, "message": "Choose how much text goes to Google first."}
@@ -775,71 +777,6 @@ def _post_group(svc, cfg: dict, level: str, task_key: str) -> Optional[dict]:
     return {"item_id": iid, "gid": made.get("id"), "task_key": task_key}
 
 
-def _list_changes(svc, list_id: str, since: float) -> List[dict]:
-    out, token = [], None
-    for _page in range(20):
-        kw = {"tasklist": list_id, "showCompleted": True, "showHidden": True, "showDeleted": True,
-              "showAssigned": False, "maxResults": 100}
-        if since:
-            kw["updatedMin"] = _iso(max(0.0, since - UPDATED_OVERLAP_SECONDS))
-        if token:
-            kw["pageToken"] = token
-        resp = svc.tasks().list(**kw).execute()
-        out.extend(resp.get("items") or [])
-        token = resp.get("nextPageToken")
-        if not token:
-            break
-    return out
-
-
-def _notify(emitter: str, approval_id: str, title: str, body: str, priority: str = "high") -> None:
-    try:
-        import agent_friday.notifications_engine as _ne
-        if emitter == "TI1":
-            _ne.push(title=title, body=body, priority=priority, source="tasks_inbox", kind="tasks_inbox_tick",
-                     emitter="TI1", dedupe_key="tasks-inbox-tick:%s" % approval_id,
-                     target={"workspace": "system", "tab": "approvals"},
-                     actions=[{"type": "navigate", "label": "Review", "workspace": "system", "tab": "approvals"}])
-        else:
-            _ne.push(title=title, body=body, priority=priority, source="tasks_inbox", kind="tasks_inbox_change",
-                     emitter="TI2", dedupe_key="tasks-inbox-change:%s" % approval_id,
-                     target={"workspace": "settings", "tab": "connectors"})
-    except Exception as e:
-        _log.debug("tasks inbox notice failed: %s", e)
-
-
-def _bring_to_desk(item: dict, at: float) -> None:
-    from agent_friday.services import approvals as ap
-    aid = item.get("approval_id")
-    if not aid:
-        return
-    rec = ap.get_approval(aid)
-    if not rec or rec.get("status") != "pending":
-        return
-    words = "A tick was seen in Google Tasks at %s. %s can't tell who made it." % (_hhmm(at), _assistant())
-    try:
-        ap._patch(aid, phone_tick={"at": at, "words": words})
-    except Exception:
-        pass
-    _notify("TI1", aid, "Brought to your desk from Google Tasks: %s" % ap.waiting_notice_title(rec), words)
-
-
-def _decline(item: dict, at: float, why: str) -> bool:
-    from agent_friday.services import approvals as ap
-    aid = item.get("approval_id")
-    rec = ap.get_approval(aid) if aid else None
-    if not rec or rec.get("status") != "pending" or not _declinable(rec):
-        return False
-    note = "Declined from Google Tasks at %s (%s). %s can't tell who did it." % (_hhmm(at), why, _assistant())
-    out, won = ap.decide_with_outcome(aid, "deny", decided_by=TICK_LABEL, note=note)
-    if won:
-        _append("declined", item_id=item["item_id"], approval_id=aid, why=why)
-        _notify("TI2", aid, "Declined from Google Tasks: %s" % ap.waiting_notice_title(rec),
-                note + " If that wasn't you, turn the phone list off in Settings and ask %s again." % _assistant(),
-                priority="medium")
-    return bool(won)
-
-
 def _result_words(rec: Optional[dict]) -> Tuple[str, bool]:
     """(the line Friday adds to an item once its card is settled, whether the card has ended)."""
     if not rec:
@@ -881,130 +818,32 @@ def _patch_own(svc, item: dict, body: dict, *, closed: bool = False) -> Optional
     return resp
 
 
+#: Notice kinds the old mirror made. Nothing makes them any more; any left in the list is cleared.
+RETIRED_NOTICE_KINDS = frozenset({"tasks_inbox_tick", "tasks_inbox_change"})
+
+
+def clear_retired_notices() -> int:
+    """Dismiss every notice the old mirror left behind. Never raises."""
+    try:
+        import agent_friday.notifications_engine as _ne
+        return _ne.dismiss_kinds(RETIRED_NOTICE_KINDS)
+    except Exception as e:
+        _log.debug("tasks inbox: old notices not cleared (%s)", type(e).__name__)
+        return 0
+
+
 def tick(now: Optional[float] = None, force: bool = False) -> dict:
-    """One sync: post what is waiting, read what changed, act on it (Part 1: bring to desk,
-    decline), write results back, tidy up. Safe to call at any time; does nothing when off."""
-    now = _now() if now is None else now
-    cfg = config()
-    if not cfg.get("enabled"):
+    """Retired: approval cards are no longer mirrored to Google Tasks, and nothing is read back from there.
+
+    Approvals live only in Friday's tray, which the phone, tablet and widget reach through the gateway. A machine
+    whose settings still say "on" posts nothing and reads nothing; what the old mirror left in the notice list
+    (a "brought to your desk from Google Tasks" notice, which never closed with its card) is cleared. The list in the
+    owner's Google account is left as it is: turning it off (``disable``) is the owner's to do."""
+    clear_retired_notices()
+    if not config().get("enabled"):
         return {"ok": True, "skipped": "off"}
-    with _LOCK:
-        items, extras, chain_ok = _state()
-        if not chain_ok:
-            return {"ok": False, "skipped": "record", "message": "The inbox record does not verify, so the phone "
-                                                                  "list is paused until you look at it on the PC."}
-        open_items = [i for i in items.values() if i["state"] in ("open", "ticked") and not i["removed"]]
-        last = extras["last_poll"]
-        if not force and now - last < (POLL_OPEN_SECONDS if open_items or _pending_cards() else POLL_IDLE_SECONDS) - 1:
-            return {"ok": True, "skipped": "not_due"}
-        svc = _service(cfg["account_id"])
-        if svc is None:
-            return {"ok": False, "skipped": "account", "message": "The Google account needs signing in again."}
-        try:
-            from agent_friday.services import off_record
-            off = off_record.active()
-        except Exception:
-            off = True
-        summary = {"ok": True, "posted": 0, "ticks": 0, "declined": 0, "held": 0, "void": 0, "foreign": 0}
-        polled_at = _now()
-        try:
-            changes = _list_changes(svc, cfg["list_id"], last)
-        except Exception as e:
-            return {"ok": False, "skipped": "google", "message": "Google could not be reached (%s)." % type(e).__name__}
-        _apply_changes(svc, cfg, items, extras, changes, now, summary)
-        _note_poll(polled_at)
-        items, extras, _ok = _state()
-        if not off:
-            _post_new(svc, cfg, items, extras, now, summary)
-            items, extras, _ok = _state()
-            _write_results(svc, items, now)
-        _tidy(svc, items, now)
-    return summary
-
-
-def _apply_changes(svc, cfg, items, extras, changes, now, summary) -> None:
-    by_gid = {i["gid"]: i for i in items.values() if i.get("gid")}
-    events: List[Tuple[str, dict, dict]] = []
-    for t in changes:
-        gid = t.get("id")
-        item = by_gid.get(gid)
-        if item is None:
-            if gid not in extras["foreign"] and len(extras["foreign"]) < MAX_FOREIGN_NOTED and not t.get("deleted"):
-                _append("foreign", gid=gid)
-                summary["foreign"] += 1
-            continue
-        if item["state"] in ("void", "deleted") or item.get("removed"):
-            continue
-        own = t.get("etag") in set(item["etags"])
-        if t.get("deleted"):
-            if item.get("own_delete") or own:
-                continue
-            events.append(("deleted", item, t))
-            continue
-        if own:
-            continue
-        sha = _text_hash(t.get("title") or "", t.get("notes") or "")
-        if sha != item["text_sha"]:
-            events.append(("edited", item, t))
-            continue
-        status = t.get("status") or "needsAction"
-        if status != item["status"]:
-            events.append(("ticked" if status == "completed" else "untick", item, t))
-    # Deleting a parent deletes its subtasks with it: those are one change, the parent's.
-    deleted_ids = {i["item_id"] for kind, i, _t in events if kind == "deleted"}
-    events = [(k, i, t) for k, i, t in events
-              if not (k == "deleted" and i.get("parent_item") in deleted_ids)]
-    # The burst rule: several of Friday's items changed within seconds of each other (a
-    # "clear completed", an assistant told to finish everything). Nothing is declined.
-    stamps = sorted(_parse_iso(t.get("updated")) or now for kind, _i, t in events if kind in ("ticked", "deleted"))
-    burst = any(stamps[k + BURST_CHANGES] - stamps[k] <= BURST_WINDOW_SECONDS
-                for k in range(0, max(0, len(stamps) - BURST_CHANGES)))
-    for kind, item, t in events:
-        if kind == "edited":
-            _append("void", item_id=item["item_id"], approval_id=item.get("approval_id"), why="edited")
-            summary["void"] += 1
-            for child in items.values():
-                if child.get("parent_item") == item["item_id"] and child["state"] in ("open", "ticked"):
-                    _append("void", item_id=child["item_id"], approval_id=child.get("approval_id"), why="parent edited")
-            if item.get("approval_id"):
-                _notify("TI2", item["approval_id"], "An item in Google Tasks was changed outside %s" % _assistant(),
-                        "%s can't tell who changed it. Nothing was approved or declined; the card is unchanged on "
-                        "your PC, and a fresh item replaces the changed one." % _assistant(), priority="low")
-            continue
-        if kind == "untick":
-            _append("untick", item_id=item["item_id"])
-            continue
-        if kind == "ticked":
-            _append("ticked", item_id=item["item_id"], approval_id=item.get("approval_id"))
-            summary["ticks"] += 1
-            targets = _targets(items, item)
-            if item["role"] == "no":
-                if burst:
-                    _append("held", item_id=item["item_id"], why="burst")
-                    summary["held"] += 1
-                    for tgt in targets:
-                        _bring_to_desk(tgt, now)
-                    continue
-                for tgt in targets:
-                    if _decline(tgt, now, "\"%s\" was ticked" % NO_TITLE):
-                        summary["declined"] += 1
-            else:
-                for tgt in targets:
-                    _bring_to_desk(tgt, now)
-            continue
-        if kind == "deleted":
-            _append("deleted", item_id=item["item_id"], approval_id=item.get("approval_id"))
-            if item["role"] == "no":
-                continue                                 # deleting the "No" line declines nothing
-            if burst:
-                _append("held", item_id=item["item_id"], why="burst")
-                summary["held"] += 1
-                for tgt in _targets(items, item):
-                    _bring_to_desk(tgt, now)
-                continue
-            for tgt in _targets(items, item):
-                if _decline(tgt, now, "the item was deleted"):
-                    summary["declined"] += 1
+    return {"ok": True, "skipped": "retired",
+            "message": "Friday no longer mirrors approvals to Google Tasks; decide them in the tray."}
 
 
 def _targets(items: Dict[str, dict], item: dict) -> List[dict]:
