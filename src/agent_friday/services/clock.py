@@ -71,15 +71,24 @@ def annotate_weekdays(text: str) -> str:
     if not text or ("-" not in text and "/" not in text):
         return text
 
+    def _in_path(src, m):
+        # A date that is part of a path or a file name ("tool-output/2026-11-22/x.txt", "2026-11-22.md",
+        # "backup_2026-11-22.zip") is left as written: a tag there names a file that does not exist
+        # (tests/unit/test_weekday_tags_never_touch_a_path.py).
+        before = src[m.start() - 1:m.start()]
+        after = src[m.end():m.end() + 2]
+        return (before in ("/", "\\", "_") or after[:1] in ("/", "\\", "_")
+                or (after[:1] == "." and after[1:2].isalnum()))
+
     def _iso(m):
         wd = weekday_of(int(m.group(1)), int(m.group(2)), int(m.group(3)))
-        if not wd or _ALREADY_ANNOTATED.match(text[m.end():m.end() + 12]):
+        if not wd or _ALREADY_ANNOTATED.match(m.string[m.end():m.end() + 12]) or _in_path(m.string, m):
             return m.group(0)
         return f"{m.group(0)} ({wd})"
 
     def _us(m):
         wd = weekday_of(int(m.group(3)), int(m.group(1)), int(m.group(2)))
-        if not wd or _ALREADY_ANNOTATED.match(text[m.end():m.end() + 12]):
+        if not wd or _ALREADY_ANNOTATED.match(m.string[m.end():m.end() + 12]) or _in_path(m.string, m):
             return m.group(0)
         return f"{m.group(0)} ({wd})"
 
