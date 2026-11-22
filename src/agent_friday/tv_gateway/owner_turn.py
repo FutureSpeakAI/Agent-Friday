@@ -133,6 +133,7 @@ class _DesktopTurn:
         act = getattr(_CTX, "activity", None)           # (label, model) set by run(): ONE activity per remote turn
 
         def work():
+            landed = conversation_id
             try:
                 with _activity(act):
                     r = _call_desktop(text, conversation_id)
@@ -140,6 +141,8 @@ class _DesktopTurn:
                     ready.set()
                     if r.status_code == 200:
                         for f in _frames(r):
+                            if f.get("done"):
+                                landed = landed_in(f.get("payload"), landed)
                             self.q.put(f)
             except Exception as e:  # noqa: BLE001
                 _log.info("owner turn thread failed: %s", type(e).__name__)
@@ -150,6 +153,8 @@ class _DesktopTurn:
             finally:
                 ready.set()
                 self.q.put(None)
+                if self.status_code == 200:
+                    announce_changed(landed)
 
         threading.Thread(target=work, name="owner-turn", daemon=True).start()
         ready.wait(60.0)
@@ -167,6 +172,27 @@ class _DesktopTurn:
             if f is None:
                 return
             yield f
+
+
+def landed_in(payload, asked: Optional[str]) -> Optional[str]:
+    """The PC chat this turn was written to: the desktop's own answer (a turn sent with no id lands in Main), else
+    the id the device sent. Held by test_a_turn_without_an_id_reports_the_chat_it_landed_in."""
+    cid = (payload or {}).get("conversation_id") if isinstance(payload, dict) else None
+    return cid if valid_cid(cid) else asked
+
+
+def announce_changed(cid: Optional[str]) -> None:
+    """Tell every open desktop chat that this conversation moved, so a turn from a phone, tablet or watch shows
+    on the PC without a reload. The event names the chat, never its content; the page re-reads the transcript.
+    Held by test_a_device_turn_tells_open_desktop_chats_to_reread (tests/unit/test_tv_chats_both_ways.py)."""
+    if not valid_cid(cid):
+        return
+    try:
+        from agent_friday.services import notice_registry as _nr
+        _nr.bus_broadcast("E74", {"type": "conversation_changed", "conversation_id": cid, "via": "device"},
+                          kind="chat")
+    except Exception as e:  # never touches the turn
+        _log.info("conversation_changed not sent: %s", type(e).__name__)
 
 
 def _post(text: str, conversation_id: Optional[str]):
@@ -308,7 +334,9 @@ def bind_seat(cid: Optional[str], model_id: str) -> str:
     if not cid:
         # Start the chat WITHOUT a seat, then bind it through the same checked path as an existing chat: the
         # desktop's create route stores a seat unchecked, and only its PATCH refuses a second local model.
-        d = _json(_api("POST", "/api/conversations", {"title": "Phone chat"}))
+        # "New chat" is the title the desktop's first-message titling replaces, so a chat a device starts is named by
+        # what was said in it, like any other chat in the PC's list (test_a_device_chat_is_named_by_its_first_message).
+        d = _json(_api("POST", "/api/conversations", {"title": "New chat"}))
         cid = (d.get("conversation") or {}).get("id")
         if not cid:
             raise turn.TurnRefused(503, "this computer could not start that chat", "chat_unavailable")
@@ -526,6 +554,7 @@ def _stream(response, dev: Optional[dict] = None, requested: str = "", cid: Opti
                      "the stream before the answer was sent)", int(time.time() - started), tools, len(final))
         raise
     text = answer_only(final) or answer_only("".join(spoken))
+    cid = landed_in(payload, cid)       # the device always learns which PC chat holds this exchange
     # One line per turn so a missing answer can be traced: how it ended, how long, how much came back.
     _log.info("owner turn finished: ended=%s seconds=%d tools=%d answer_chars=%d failed=%s", ended,
               int(time.time() - started), tools, len(text), bool(failed))

@@ -17539,7 +17539,9 @@ function ConversationWindow({
       if (stopped) return;
       let m = null;
       try { m = JSON.parse(e.data); } catch (_) { return; }
-      if (!m || (m.type !== 'approval_result' && m.type !== 'codebase_run')) return;
+      // conversation_changed: a turn from the owner's phone, tablet or watch landed in this chat
+      // (tv_gateway/owner_turn.announce_changed); test_open_desktop_chats_reread_on_conversation_changed.
+      if (!m || (m.type !== 'approval_result' && m.type !== 'codebase_run' && m.type !== 'conversation_changed')) return;
       if (m.conversation_id && m.conversation_id !== cid) return;
       openConvQuiet(cid);
     };
@@ -70559,7 +70561,11 @@ function App() {
         } catch (_) {}
         return;
       }
-      if (!ev || ev.type !== 'approval_result') return;
+      // conversation_changed: a turn from the owner's phone, tablet or watch landed in this chat
+      // (tv_gateway/owner_turn.announce_changed); test_open_desktop_chats_reread_on_conversation_changed.
+      if (!ev || (ev.type !== 'approval_result' && ev.type !== 'conversation_changed')) return;
+      // the list moves too: a chat a device started or continued rises to the top of the sidebar
+      if (ev.type === 'conversation_changed') refreshConvs();
       if (ev.conversation_id && ev.conversation_id !== convId) return;
       const refreshEpoch = chatEpoch.current;
       apiFetch('/api/conversations/' + encodeURIComponent(convId) + '/messages')
