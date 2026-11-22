@@ -129,3 +129,19 @@ def test_the_page_is_called_changed_only_when_its_hash_differs_from_the_one_read
                                          "new_value": "- Alex: likes milk"}, before_sha256="0" * 64)
     assert out["status"] == "stale" and "changed" in out["message"].lower(), out
     assert b"likes tea" in _page(wiki), "a page that differs from the read was written anyway"
+
+
+def test_looking_for_the_nearest_text_stays_quick_and_short_on_a_long_page():
+    """The search runs while the wiki is locked: a long stale edit on a long page must not stall every write."""
+    import time
+    page = "\n".join("- item %d: some ordinary list line about item %d" % (i, i * 7) for i in range(3000))
+    old = "\n".join("- thing %d: a line that is not on the page at %d" % (i, i * 3) for i in range(100))
+    t = time.perf_counter()
+    near = we._nearest_text(page, old)
+    took = time.perf_counter() - t
+    assert took < 1.0, "the nearest-text search took %.1f s" % took
+    assert len(near) <= 800, "the nearest text shown is %d characters" % len(near)
+    huge = "\n".join("x" * 50 for _ in range(1600))
+    t = time.perf_counter()
+    we._nearest_text(page + "\n" + huge, huge.replace("x", "y"))
+    assert time.perf_counter() - t < 1.0
