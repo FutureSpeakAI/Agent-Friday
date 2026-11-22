@@ -1377,7 +1377,7 @@ if __name__ == '__main__':
     except Exception as _sm_err:
         print(f"  Session memory: skipped ({_sm_err})")
 
-    # One more session, and maturity from experience (services/personality_state).
+    # Count this start as a session (services/personality_state.begin_session).
     try:
         from agent_friday.services import personality_state
         _ps = personality_state.begin_session()

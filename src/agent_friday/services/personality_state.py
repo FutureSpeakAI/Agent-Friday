@@ -1,13 +1,10 @@
-"""The owner of Friday's personality state: `personality.json` (traits, style, temperature, sessions, maturity).
-
-One path, one lock, atomic writes. Before this module nothing in the program ever moved `session_count` or
-`maturity`: readers (the FRIDAY STATE block, the introspection page, `/api/personality`) all fell back to a
-count of 0 and a maturity of 0.5 forever, and `/api/personality/set` rewrote the file with a plain, non-atomic
-read-modify-write. Now:
+"""The owner of Friday's personality state: `personality.json` (traits, style, temperature, sessions, maturity,
+the preferred scene). Every write to the file goes through here: one path, one lock, atomic writes.
 
 * `begin_session()` counts one session per server start and recomputes maturity from experience (sessions plus
   finished task runs); maturity only ever rises, between BASE_MATURITY and 1.0;
-* `set_trait()` is the single writer for a trait, a style dimension or the temperature;
+* `set_trait()` writes a trait, a style dimension or the temperature, as a finite number;
+* `update()` writes other top-level keys (first-run setup's preferred scene);
 * a file that cannot be read is left exactly as it is (never replaced by defaults), and every write keeps the
   keys it does not own.
 
@@ -17,6 +14,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import os
 import tempfile
 import threading
@@ -90,8 +88,32 @@ def finished_task_runs() -> int:
         return 0
 
 
+def _setup_finished() -> bool:
+    """First run is over: its marker is in the Friday home, or settings say so (core._is_existing_install's other
+    two signs, read against the home in use now)."""
+    from agent_friday import core
+    if (Path(core.FRIDAY_DIR) / ".setup_complete").exists():
+        return True
+    try:
+        return bool((core._load_settings() or {}).get("setup_complete"))
+    except Exception:
+        return False
+
+
+def finite(value) -> Optional[float]:
+    """The value as a finite number (a number, or text that reads as one), else None. True/False are not numbers."""
+    if isinstance(value, bool) or not isinstance(value, (int, float, str)):
+        return None
+    try:
+        number = float(value)
+    except ValueError:
+        return None
+    return number if math.isfinite(number) else None
+
+
 def _number(value, default: float) -> float:
-    return float(value) if isinstance(value, (int, float)) and not isinstance(value, bool) else default
+    number = finite(value)
+    return default if number is None else number
 
 
 def begin_session() -> Optional[dict]:
@@ -101,6 +123,10 @@ def begin_session() -> Optional[dict]:
     with _LOCK:
         if _BEGUN:
             return None
+        # core._is_existing_install() reads an existing personality.json as "setup is finished", so this never
+        # creates the file on an install whose first run has not finished (the wizard would be skipped).
+        if not path().exists() and not _setup_finished():
+            return None
         try:
             data = _load()
         except Unreadable:
@@ -109,16 +135,19 @@ def begin_session() -> Optional[dict]:
         sessions = int(_number(data.get("session_count"), 0)) + 1
         data["session_count"] = sessions
         data.setdefault("first_launch", datetime.now().isoformat())
-        data["maturity"] = max(_number(data.get("maturity"), BASE_MATURITY),
-                               maturity_for(sessions, finished_task_runs()))
+        data["maturity"] = min(1.0, max(_number(data.get("maturity"), BASE_MATURITY),
+                                        maturity_for(sessions, finished_task_runs())))
         _write(data)
         _BEGUN = True
         return data
 
 
 def set_trait(trait: str, value) -> float:
-    """Set a trait, a `style.<name>` dimension or `temperature` to a number, keeping every other key."""
-    number = float(value)
+    """Set a trait, a `style.<name>` dimension or `temperature` to a finite number, keeping every other key.
+    Raises ValueError for anything else (text that is not a number, NaN, infinity, True/False)."""
+    number = finite(value)
+    if number is None:
+        raise ValueError("not a finite number")
     name = str(trait or "")
     if not name:
         raise ValueError("no trait")
@@ -132,6 +161,21 @@ def set_trait(trait: str, value) -> float:
             data.setdefault("traits", {})[name] = number
         _write(data)
     return number
+
+
+#: Keys update() may not write: they belong to begin_session and set_trait.
+_OWN_KEYS = ("session_count", "maturity", "first_launch", "traits", "style", "temperature")
+
+
+def update(fields: dict) -> None:
+    """Write other top-level keys (first-run setup's preferred scene), keeping every other key. Raises Unreadable
+    for a file that cannot be read (it is left as it is) and ValueError for a key this module's own writers own."""
+    if any(key in _OWN_KEYS for key in fields):
+        raise ValueError("those keys are written by begin_session and set_trait")
+    with _LOCK:
+        data = _load()
+        data.update(fields)
+        _write(data)
 
 
 def summary() -> Optional[dict]:

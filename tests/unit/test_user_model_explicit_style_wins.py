@@ -143,7 +143,33 @@ def test_applying_the_first_run_style_sets_the_user_model_so_inference_cannot_ou
     monkeypatch.setattr(core, "_save_settings", lambda delta: None)
     setup_profile.apply_style({"sliders": {"formality": 22, "verbosity": 85}})
     assert um.owner_set("comm.formality") and um.owner_set("comm.verbosity")
-    assert um.get_trait("comm.formality") == 0.22 and um.get_trait("comm.verbosity") == 0.85
+    assert float(um.get_trait("comm.formality")) == 0.2 and float(um.get_trait("comm.verbosity")) == 0.8
     for _ in range(30):                                   # a long run of formal, terse messages
         um.observe_message("Kindly proceed. Thank you.")
-    assert um.get_trait("comm.formality") == 0.22 and um.get_trait("comm.verbosity") == 0.85
+    assert float(um.get_trait("comm.formality")) == 0.2 and float(um.get_trait("comm.verbosity")) == 0.8
+
+
+def test_an_inference_made_earlier_in_the_session_is_not_shown_as_stated_once_the_sliders_are_set(monkeypatch):
+    # Review B1: the owner chats formally and briefly, THEN saves 22/85 in the first-run chat.
+    monkeypatch.setattr(core, "_load_settings", settings("casual", "detailed"))
+    monkeypatch.setattr(setup_profile, "load_profile", stated(22, 85))
+    infer("formal", "terse")
+    assert um.render_user_model_prompt().count("formal") == 0                  # ruled out while inferred
+    setup_profile._align_user_model({"formality": 22, "verbosity": 85})
+    out = um.render_user_model_prompt()
+    assert "casual/relaxed" in out and "prefers detail" in out
+    assert "formal/professional" not in out and "terse" not in out and "(inferred" not in out
+    um.observe_message("Kindly proceed. Thank you.")                           # nothing nudges a stated trait
+    assert "comm.formality" not in um._SESSION_TRAITS
+
+
+@pytest.mark.parametrize("formality,detail,words", [
+    (60, 50, ("formal/professional",)), (59, 50, ("balanced",)), (40, 50, ("balanced",)), (39, 50, ("casual/relaxed",)),
+    (50, 33, ("balanced", "prefers terse answers")), (50, 34, ("balanced",)), (50, 66, ("balanced",)),
+    (50, 67, ("balanced", "prefers detail")),
+])
+def test_the_stated_sliders_say_in_the_prompt_what_the_settings_words_say(monkeypatch, formality, detail, words):
+    # Review S1: the user model uses the same bands as setup_profile.apply_style (formality 40/60, detail 34/67).
+    setup_profile._align_user_model({"formality": formality, "verbosity": detail})
+    line = [l for l in um.render_user_model_prompt().split("\n") if l.startswith("Communication style:")][0]
+    assert line == "Communication style: " + ", ".join(words)

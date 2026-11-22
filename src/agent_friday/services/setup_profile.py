@@ -33,6 +33,7 @@ diagnostic or clinical language.
 from __future__ import annotations
 
 import json
+import logging
 import re
 import threading
 import time
@@ -504,14 +505,21 @@ def apply_style(style: dict, name: str = "") -> dict:
             "communication_style": comm, "response_length": length}
 
 
+def _band_value(value: int, low: int, high: int) -> float:
+    """A 0-100 slider as the user model's 0-1 reading of the same band apply_style uses for the Settings words:
+    below `low` 0.2, from `high` 0.8, between them 0.5 (the user model reads above 0.6 and below 0.4 as a lean)."""
+    return 0.2 if value < low else 0.8 if value >= high else 0.5
+
+
 def _align_user_model(sliders: dict) -> None:
-    """The stated sliders ARE the user model's style: set, so what is inferred later cannot out-rank them."""
+    """The stated sliders ARE the user model's style: set, so what is inferred later cannot out-rank them, and set
+    by band, so the prompt says what the Settings words say (formality 40/60, detail 34/67, as in apply_style)."""
     try:
         from agent_friday.services import user_model
-        user_model.set_trait("comm.formality", round(sliders["formality"] / 100, 2), confidence=1.0)
-        user_model.set_trait("comm.verbosity", round(sliders["verbosity"] / 100, 2), confidence=1.0)
+        user_model.set_trait("comm.formality", _band_value(sliders["formality"], 40, 60), confidence=1.0)
+        user_model.set_trait("comm.verbosity", _band_value(sliders["verbosity"], 34, 67), confidence=1.0)
     except Exception:
-        pass
+        logging.getLogger(__name__).exception("the stated style could not be written to the user model")
 
 
 def remove_style_block() -> bool:

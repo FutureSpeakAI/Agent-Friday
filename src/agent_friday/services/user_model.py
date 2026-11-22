@@ -25,6 +25,7 @@ never raises to the caller).
 """
 from __future__ import annotations
 
+import math
 import re
 import sqlite3
 import threading
@@ -157,6 +158,10 @@ def set_trait(key: str, value, confidence: float = 0.6, evidence: int = 1) -> Di
                     "VALUES(?,?,?,?,?)", (_OWNER_MARK + key, "1", 1.0, time.time(), 0))
             conn.commit()
             conn.close()
+            if key.startswith(_STYLE_PREFIXES):
+                # What this session inferred for the key is read before the store (get_trait): drop it, or the
+                # inference would be shown as the owner's own setting.
+                _SESSION_TRAITS.pop(key, None)
             return {"ok": True, "key": key, "value": value}
         except Exception as e:
             return {"ok": False, "error": exception_text(e)}
@@ -185,11 +190,11 @@ def _nudge_trait(key: str, target: float, weight: float = 0.15) -> None:
     """
     try:
         with _LOCK:
+            if owner_set(key):
+                return
             if key in _SESSION_TRAITS:
                 cur, ev = _SESSION_TRAITS[key]
             else:
-                if owner_set(key):
-                    return
                 durable = _durable_trait(key)
                 cur, ev = (float(durable) if _isfloat(durable) else 0.5), 0
             new = round(cur + (target - cur) * weight, 4)
@@ -423,7 +428,7 @@ _STATED_EDGES = (("formality", 40, 60, "formal", "casual"), ("verbosity", 34, 67
 
 
 def _is_number(value) -> bool:
-    return isinstance(value, int) and not isinstance(value, bool)
+    return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
 
 
 def rules_out_inference(explicit: dict, axis: str, reading: str) -> bool:
