@@ -11621,7 +11621,7 @@ def _tool_devices_status(inp):
 CLAUDE_TOOLS.append({
     "name": "devices_status",
     "description": ("Read-only (Ring 0): which companion devices are paired with this PC right now: kind, "
-                    "the version each reports, whether it is connected or when it last was. Use before saying "
+                    "whether each is connected now or when it last signed in. Use before saying "
                     "anything about paired devices. It cannot pair, remove or change a device."),
     "input_schema": {"type": "object", "properties": {
         "kind": {"type": "string", "enum": ["phone", "tablet", "tv", "watch"]}}},
