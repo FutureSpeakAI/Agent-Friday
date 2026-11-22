@@ -61,11 +61,11 @@ _BARE_URL = re.compile(r"(?:https?://|www\.)[^\s<>\"'\])]*", re.I)
 _ANGLE_URL = re.compile(r"<((?:https?://|www\.)[^\s>]+)>", re.I)
 _SET_ASIDE = re.compile("\x00(\\d+)\x00")
 #: Control and invisible characters a briefing has no use for: removed first, so they can neither spoof a
-#: set-aside mark nor make an address look as though it ends where the renderer does not end it.
-_CONTROL = re.compile("[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f​-‏  ⁠﻿]")
+#: set-aside mark nor make an address look as though it ends where the renderer does not end it; the bidi
+#: controls (U+202A-202E, U+2066-2069) go too, so no text shows reversed.
+_CONTROL = re.compile("[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f\u200b-\u200f\u2028-\u202e\u2060\u2066-\u2069\ufeff]")
 #: The target of ANY markdown link or image, whatever its label holds: what follows "](" up to the closing ")".
 _LINK_TARGET = re.compile(r"\]\(([^)\n]*)\)")
-#: A reference-style link definition ("[r]: //host/x"): a briefing never uses one, so the line goes.
 _HAS_WORDS = re.compile(r"[A-Za-z0-9]")
 #: A line that is only a bold label: a heading a section skill wrote, demoted (briefing_sections), so kept like one.
 _LABEL_LINE = re.compile(r"^\s*\*\*[^*\n]+\*\*\s*$")
@@ -145,6 +145,9 @@ def strip_unknown_links(text: str, known: Iterable[str]) -> str:
     text = _MD_LINK.sub(lambda m: m.group(0) if m.group(2) in known else m.group(1), text)
     # A label with brackets in it ("[[draft] plan](...)") is no _MD_LINK match; its target is caught here.
     text = _LINK_TARGET.sub(lambda m: aside(m.group(0)) if m.group(1) in known else "]", text)
+    # Every "](" left opens a link this pass did not see (its target or title on the next line, which
+    # CommonMark allows): escaped, it is text. The known links are set aside, so none of theirs is touched.
+    text = text.replace("](", "]\\(")
     for link in sorted(known, key=len, reverse=True):
         # only where it ends: closing punctuation at most, then a space, the end, or a bracket that closes it
         text = re.sub(re.escape(link) + r"(?=[.,;:!?]*(?:[ \t\r\n]|$|[)\]>]))", lambda m: aside(m.group(0)), text)

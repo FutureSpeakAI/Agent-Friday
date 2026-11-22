@@ -307,6 +307,18 @@ def test_a_known_address_with_anything_glued_after_it_is_not_kept_as_known(suffi
     assert bl.strip_unknown_links("see %s. Then %s, now" % (GCAL, GCAL), {GCAL}).count(GCAL) == 2
 
 
+@pytest.mark.parametrize("shape", ["[tickets](\n//evil.example.test/nl)", "[tickets](  \n  //evil.example.test/sp)",
+                                   '[tickets](//evil.example.test/t \n"title")', "![x](\n//evil.example.test/img)",
+                                   "[[a] b](\nhttps://evil.example.test/br)"])
+def test_no_inline_link_opens_with_its_target_or_title_on_the_next_line(shape):
+    known = bl.known_links(sources())
+    out = bl.strip_unknown_links("Book the %s today." % shape, known)
+    assert "](" not in out and bl.strip_unknown_links(out, known) == out
+    got = bl.strip_unknown_links(run("## Calendar\n- Planning at ten [C1], book the %s\n" % shape.replace("\n", "\n  "))
+                                 .text, known)
+    assert "](https://calendar.example.test/event?eid=abc123)" in got and got.count("](") == 1
+
+
 def test_the_final_pass_can_run_twice_without_changing_the_text_again():
     text = "## News\n- a < b, and [ok](https://gazette.example.test/budget) <https://gazette.example.test/budget>\n"
     known = {"https://gazette.example.test/budget"}
