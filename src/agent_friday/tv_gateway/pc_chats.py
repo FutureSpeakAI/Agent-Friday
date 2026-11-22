@@ -7,8 +7,10 @@ PC conversation, in the desktop's own list, and every PC chat can be opened and 
   names it from what was said, like any other chat; a device never writes words into the desktop's sidebar.
 * Who: the same as an owner turn (an owner-bound phone or tablet, pc_common.allowed), because starting an empty chat
   is what the owner's first turn already does (owner_turn.bind_seat); it is a write, so it is NOT behind ``pc_read``,
-  whose card promises the device cannot change anything. The body is data: at most ``MAX_BODY`` bytes, a fixed
-  shape, a project id checked against ID_PATTERN and against the desktop's own project list before it is used.
+  whose card promises the device cannot change anything. Starting one INSIDE a project also needs ``pc_read``: whether
+  a project id exists is project knowledge. The body is data: at most ``MAX_BODY`` bytes, a fixed shape, a project id
+  checked against ID_PATTERN and against the desktop's own project list before it is used. The answer is the new id
+  only. At most ``STARTS_PER_WINDOW`` starts per device in ``WINDOW_S`` seconds, so no device floods the sidebar.
 
 * ``GET /tv/v1/projects`` and ``GET /tv/v1/projects/<id>``: the desktop's projects as its sidebar shows them, a project's
   chats (rows like /tv/v1/chats) and its files by name and size. Read from the desktop's own /api/projects routes; no
@@ -20,25 +22,37 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import Optional, Tuple
+import threading
+import time
+from typing import Dict, List, Optional, Tuple
 
 from flask import Flask, Response, g, jsonify, request
 
 from agent_friday.tv_gateway import pc_read
+from agent_friday.tv_gateway.pc_act import _desk_post
 from agent_friday.tv_gateway.pc_common import ID_PATTERN, allowed, refuse as _refuse
 
 _log = logging.getLogger(__name__)
 
 MAX_BODY = 4 * 1024
 NEW_TITLE = "New chat"
+STARTS_PER_WINDOW = 10
+WINDOW_S = 600.0
+_starts: Dict[str, List[float]] = {}
+_starts_lock = threading.Lock()
 
 
-def _desk_post(path: str, body: dict) -> Tuple[int, dict]:
-    """One POST to this PC's own app, in process, with its own token. ``path`` is always built here."""
-    from agent_friday import core
-    r = core.app.test_client().post(path, json=body, headers={"X-Friday-Token": core._current_api_token()})
-    data = r.get_json(silent=True)
-    return r.status_code, data if isinstance(data, dict) else {}
+def _may_start(device_id: str) -> bool:
+    """Count one start for this device unless it already made STARTS_PER_WINDOW in WINDOW_S
+    (test_a_device_cannot_flood_the_desktops_list)."""
+    now = time.monotonic()
+    with _starts_lock:
+        recent = [t for t in _starts.get(device_id, []) if now - t < WINDOW_S]
+        if len(recent) >= STARTS_PER_WINDOW:
+            _starts[device_id] = recent
+            return False
+        _starts[device_id] = recent + [now]
+        return True
 
 
 def _body() -> Tuple[Optional[dict], Optional[Response]]:
@@ -69,7 +83,7 @@ def start_chat(project: Optional[str] = None) -> Tuple[int, dict]:
     conv = data.get("conversation") if isinstance(data.get("conversation"), dict) else None
     if status >= 300 or not conv or not conv.get("id"):
         return 503, {"ok": False, "error": "the PC could not start a chat right now", "code": "pc_unavailable"}
-    return 201, {"ok": True, "conversation_id": conv["id"], "conversation": conv}
+    return 201, {"ok": True, "conversation_id": conv["id"]}
 
 
 def _project_exists(pid: str) -> Optional[bool]:
@@ -136,7 +150,9 @@ def register(app: Flask) -> None:
         if bad is not None:
             return bad
         proj = data.get("project") if isinstance(data.get("project"), dict) else {}
-        files, _ = _desk_json("/api/projects/%s/files" % pid, "project files")
+        files, bad = _desk_json("/api/projects/%s/files" % pid, "project files")
+        if bad is not None:
+            return bad                     # unknown files are a refusal, never an empty list that reads as "none"
         names = {pid: proj.get("name")}
         chats = [pc_read._chat_row(c, names) for c in (data.get("conversations") or [])[:pc_read.CHATS_PAGE_MAX]
                  if isinstance(c, dict) and c.get("id")]
@@ -161,15 +177,20 @@ def register(app: Flask) -> None:
         if project is not None:
             if not isinstance(project, str) or not ID_PATTERN.match(project):
                 return _refuse(400, "not a project id", code="bad_id")
+            denied = pc_read._guard("projects")
+            if denied is not None:
+                return denied
             known = _project_exists(project)
             if known is None:
                 return _refuse(503, "the PC could not check that project right now", code="pc_unavailable")
             if not known:
                 return _refuse(404, "this PC has no such project", code="unknown_project")
+        dev = getattr(g, "device", None) or {}
+        if not _may_start(str(dev.get("id") or "")):
+            return _refuse(429, "that is a lot of new chats; try again in a few minutes", code="too_many")
         status, answer = start_chat(project)
         if status == 201:
             from agent_friday.services import device_pairing
-            dev = getattr(g, "device", None) or {}
             device_pairing._receipt("device_chat_started", dev, conversation_id=answer["conversation_id"],
                                     in_project=bool(project))
             from agent_friday.tv_gateway import owner_turn

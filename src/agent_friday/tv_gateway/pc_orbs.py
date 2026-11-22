@@ -63,6 +63,15 @@ def plain(value, limit: int = TEXT_MAX) -> str:
     return " ".join(text.split())[:limit]
 
 
+ICON_MAX = 16
+
+
+def icon(value) -> Optional[str]:
+    """The PC's icon whole, or none: a cut emoji is a broken glyph (test_an_icon_too_long_to_show_whole_is_left_out_never_cut)."""
+    text = str(value or "").strip()
+    return text if 0 < len(text) <= ICON_MAX and not _URL.search(text) and not _HOST_PATH.search(text) else None
+
+
 def drawn(row: dict) -> bool:
     """The desktop's own rule for drawing an orb (window.fridaySyncOrbs: ``orb_visible === false || dismissed`` skips it).
     Held by test_the_phone_gets_exactly_the_rows_the_desktop_draws."""
@@ -134,7 +143,7 @@ def _orb(row: dict, task: dict) -> dict:
         "status": plain(row.get("status"), 30) or "running",
         "progress": _progress(row),
         "category": category if category in _CATEGORIES else "default",
-        "icon": "⚠" if row.get("orb_failed") else (plain(row.get("icon"), 4) or None),
+        "icon": "⚠" if row.get("orb_failed") else icon(row.get("icon")),
         "failed": bool(row.get("orb_failed")) or state == FAILED,
         "steps": _steps(row),
         "step_n": _int(row.get("step_n")), "step_total": _int(row.get("step_total")),
@@ -244,7 +253,11 @@ def stop(orb_id: str) -> tuple[int, dict]:
     if _state(row, {}) in (DONE, FAILED, STOPPED):
         return 409, {"ok": False, "error": "that has already finished", "code": "not_running"}
     tid = row.get("task_id")
-    how = "after_this_step" if tid and pc_read.ID_PATTERN.match(str(tid)) else "cancelled"
+    if tid and not pc_read.ID_PATTERN.match(str(tid)):
+        # the desktop's Cancel stops a task after its step; cancelling the bare process instead is a different stop
+        # (test_a_task_id_the_gateway_cannot_use_refuses_the_stop_instead_of_changing_it)
+        return 409, {"ok": False, "error": "stop this one on the PC", "code": "cannot_stop_here"}
+    how = "after_this_step" if tid else "cancelled"
     try:
         if how == "after_this_step":
             status, body = _desk_post("/api/tasks/%s/stop-after-step" % tid)

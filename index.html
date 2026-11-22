@@ -70540,6 +70540,10 @@ function App() {
      transcript is re-read, so what renders is what was actually written. */
   const dockReread = useRef(null);
   const dockRereadAfterTurn = useRef(null);
+  // chatLoad is the "this chat's own turn is streaming" signal; inFlightTurn outlives the turn and is not
+  // (tests/app/specs/device_turn_rereads_dock.spec.ts)
+  const dockLoading = useRef(false);
+  dockLoading.current = chatLoad;
   useEffect(() => {
     if (!convId) return;
     let es = null, stopped = false;
@@ -70580,7 +70584,7 @@ function App() {
       if (ev.conversation_id && ev.conversation_id !== convId) return;
       // a desktop turn streaming here: re-read when it ends, never under its stream
       // (test_a_device_turn_never_rereads_under_a_desktop_stream)
-      if (ev.type === 'conversation_changed' && inFlightTurn.current) { dockRereadAfterTurn.current = convId; return; }
+      if (ev.type === 'conversation_changed' && dockLoading.current) { dockRereadAfterTurn.current = convId; return; }
       dockReread.current && dockReread.current();
     };
     dockReread.current = () => {

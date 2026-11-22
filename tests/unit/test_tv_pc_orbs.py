@@ -6,9 +6,7 @@ running task from /api/processes. These tests hold what the phone is sent from t
 (tv_gateway/pc_orbs.py):
 
 * the phone gets exactly the orbs the desktop draws (window.fridaySyncOrbs: ``orb_visible`` and not ``dismissed``):
-  running ones, and a finished or failed one while the desktop still shows it, with how it ended (Stephen 2026-11-22:
-  "They do not look or function like the process orbs on our Friday desktop. Why?": the feed dropped every finished
-  row the desktop still drew, and the fields the desktop draws from);
+  running ones, and a finished or failed one while the desktop still shows it, with how it ended;
 * progress, category, icon and steps are the PC's own values; a step is a tool's name and status only;
 * the label is the PC's own model value; a voice turn that calls five tools is still one orb;
 * a tool's arguments and results never leave the PC, and no string carries a URL or a host path;
@@ -374,3 +372,17 @@ def test_every_stop_attempt_leaves_a_receipt_with_its_outcome(client, desk, post
     stop(client, dev, "done-1")
     stops = [kw for kind, kw in seen if kind == "device_orb_stop"]
     assert [(s["orb"], s["outcome"]) for s in stops] == [("a", "stopped"), ("done-1", "not_running")]
+
+
+def test_a_task_id_the_gateway_cannot_use_refuses_the_stop_instead_of_changing_it(client, desk, posts):
+    # the desktop's Cancel stops a task after its step; a cancel of the bare process is not the same stop
+    desk.processes = [proc("a", task_id="../t 9")]
+    r = stop(client, controller(), "a")
+    assert r.status_code == 409 and r.get_json()["code"] == "cannot_stop_here" and posts.calls == []
+
+
+def test_an_icon_too_long_to_show_whole_is_left_out_never_cut():
+    from agent_friday.tv_gateway import pc_orbs
+    family = "\U0001F468\u200d\U0001F469\u200d\U0001F467\u200d\U0001F466"
+    assert pc_orbs.icon(family) == family
+    assert pc_orbs.icon("x" * 40) is None and pc_orbs.icon("") is None and pc_orbs.icon("\U0001F50D") == "\U0001F50D"
