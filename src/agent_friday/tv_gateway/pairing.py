@@ -22,8 +22,12 @@ the least rights ("chat_read"). Each wider right then has its own screen-only
 (services/device_pairing.RIGHTS): one press per right, nothing pre-selected,
 and declining or ignoring one leaves the TV at chat-and-read.
 
-Limits: a pairing lives five minutes, each step happens once, one pairing at
-a time, at most three started per hour.
+Limits: pairing is only possible inside a window the owner opened at this PC
+(device_pairing.open_pairing_window; at most 15 minutes, closes by itself). A
+pairing lives five minutes, each step happens once, one pairing at a time, a start
+that never reveals frees its place after 30 seconds, at most three started per hour
+from one address and twelve from all. The card names the address and the name that
+asked, so the owner can tell their own phone from someone else's.
 """
 from __future__ import annotations
 
@@ -75,7 +79,11 @@ RIGHT_CARDS = {
         "receipts and shown on this screen. Removing the device here ends it."),
 }
 PAIR_TTL_S = 300
-MAX_STARTS_PER_HOUR = 3
+MAX_STARTS_PER_HOUR = 3             # per source address
+MAX_STARTS_PER_HOUR_ALL = 12        # from every address together
+PAIRING_CLOSED = ("Pairing is closed. On the PC, say or type \"Friday, add a device\" "
+                  "(or open Add a device at /pairing), then try again.")
+REVEAL_WITHIN_S = 30                # a start that has not revealed by then frees its place
 SAS_CONTEXT = b"friday-tv-pair-v1|"
 COMMIT_CONTEXT = b"friday-tv-pair-commit-v1|"
 FIRST_RIGHTS = "chat_read"
@@ -95,7 +103,11 @@ _STARTS: deque = deque()
 
 
 class PairingRefused(Exception):
-    """A pairing step was refused; the message is safe to show the TV."""
+    """A pairing step was refused; the message is safe to show the TV. ``code`` is for apps that branch on it."""
+
+    def __init__(self, message: str, code: str = ""):
+        super().__init__(message)
+        self.code = code
 
 
 def commitment(pin_hex: str, device_spki: bytes, nd: bytes) -> str:
@@ -120,6 +132,8 @@ def _expire(now: float) -> None:
     for pid, p in list(_PENDING.items()):
         if p["state"] in ("committed", "awaiting_press") and p["expires"] < now:
             p["state"] = "expired"
+        if p["state"] == "committed" and p.get("started", now) + REVEAL_WITHIN_S < now:
+            p["state"] = "expired"                         # never revealed: a stranger must not hold the place
         if p["expires"] + 600 < now:
             _PENDING.pop(pid, None)
 
@@ -146,8 +160,35 @@ def stale_rows(spki: bytes, name: str, kind: str, member: str) -> list:
     return out
 
 
-def start(device_spki: bytes, name: str, kind: str = "tv") -> dict:
+_NAME_DROPPED = frozenset(['"', "<", ">", "`", chr(92)])
+
+
+def clean_name(name: str) -> str:
+    """A device's name as data: printable characters only, no quotes or angle brackets, one line, 60 long.
+    It is shown on the owner's approval card, and a stranger chooses it."""
+    kept = "".join(c if c.isprintable() and c not in _NAME_DROPPED else " " for c in str(name or ""))
+    return " ".join(kept.split())[:60] or "TV"
+
+
+def end_in_flight() -> None:
+    """The owner closed pairing: a pairing not yet pressed ends with it (a card for it does nothing)."""
+    with _LOCK:
+        for p in _PENDING.values():
+            if p["state"] in ("committed", "awaiting_press"):
+                p["state"] = "expired"
+
+
+def reset_budget() -> None:
+    """The owner opened pairing: whatever strangers used up before is forgotten."""
+    with _LOCK:
+        _STARTS.clear()
+
+
+def start(device_spki: bytes, name: str, kind: str = "tv", remote: str = "") -> dict:
     now = time.time()
+    if not device_pairing.pairing_window()["open"]:
+        raise PairingRefused(PAIRING_CLOSED, code="pairing_closed")
+    remote = str(remote or "")[:64]
     try:
         device_pairing._load_pub(device_spki)
     except Exception:
@@ -162,18 +203,21 @@ def start(device_spki: bytes, name: str, kind: str = "tv") -> dict:
     # owner's screen press is the confirmation, and the new pairing replaces the stale row (see _on_decision).
     with _LOCK:
         _expire(now)
-        while _STARTS and now - _STARTS[0] > 3600:
+        while _STARTS and now - _STARTS[0][0] > 3600:
             _STARTS.popleft()
-        if len(_STARTS) >= MAX_STARTS_PER_HOUR:
+        if (sum(1 for e in _STARTS if e[2]) >= MAX_STARTS_PER_HOUR_ALL      # only starts that got as far as a card
+                or sum(1 for e in _STARTS if e[1] == remote) >= MAX_STARTS_PER_HOUR):
             raise PairingRefused("too many pairing attempts this hour; try again later")
         if any(p["state"] in ("committed", "awaiting_press") for p in _PENDING.values()):
             raise PairingRefused("another device is pairing right now")
-        _STARTS.append(now)
+        entry = [now, remote, False]
+        _STARTS.append(entry)
         pid = secrets.token_urlsafe(16)
         nd = secrets.token_bytes(32)
         pin = _pin()
-        _PENDING[pid] = {"state": "committed", "spki": device_spki, "name": str(name or "TV")[:60],
-                         "nd": nd, "pin": pin, "expires": now + PAIR_TTL_S, "card_id": None,
+        _PENDING[pid] = {"state": "committed", "spki": device_spki, "name": clean_name(name),
+                         "nd": nd, "pin": pin, "expires": now + PAIR_TTL_S, "started": now, "entry": entry, "card_id": None,
+                         "remote": remote,
                          "kind": kind, "member": member,
                          "device_id": device_pairing.spki_id(device_spki)}
         return {"pairing_id": pid, "commit": commitment(pin, device_spki, nd), "ttl_s": PAIR_TTL_S}
@@ -188,6 +232,7 @@ def reveal(pairing_id: str, nt: bytes) -> bytes:
         if p is None or p["state"] != "committed":
             raise PairingRefused("no pairing waiting for this step")
         p["state"] = "awaiting_press"
+        p["entry"][2] = True
         code = sas(p["pin"], p["spki"], bytes(nt), p["nd"])
         nd = p["nd"]
     from agent_friday.services import approvals
@@ -210,17 +255,20 @@ def reveal(pairing_id: str, nt: bytes) -> bytes:
             time.strftime("%H:%M", time.localtime(d["last_seen"])) if d.get("last_seen") else "never")
             for d in again)
         grant += "This replaces the old pairing of the same %s: %s. " % (what, replaced)
+    asked_by = ("Asked by \"%s\" from %s. If you did not ask for this, press Decline. "
+                % (p["name"], p.get("remote") or "an unknown address"))
     card = approvals.create_approval(
         kind=KIND, subject_type="device", subject_id=str(pairing_id),
         title="Pair a %s: is it showing %s?" % (what, spoken(code)),
         description=("Press Approve only if the %s in front of you shows %s. "
-                     % (what, spoken(code))) + grant +
+                     % (what, spoken(code))) + asked_by + grant +
                     ("It will be signed in as %s (%s) and will receive %s's settings, model choices, "
                      "chats, arcade and creations, plus the shared household ones. No keys are sent."
                      % (who, p["member"], who)),
         action_description="Pair a %s with Friday" % what,
         payload={"pairing_id": str(pairing_id), "device_id": p["device_id"], "sas": code,
-                 "origin": "tv_gateway", "kind": p["kind"], "member": p["member"]},
+                 "origin": "tv_gateway", "kind": p["kind"], "member": p["member"],
+                 "remote": p.get("remote", "")},
         requested_by="tv_gateway", force_gate=True)
     with _LOCK:
         p["card_id"] = card.get("approval_id")
@@ -410,6 +458,7 @@ def _register() -> None:
     approvals.register_decision_hook(KIND, _on_decision)
     approvals.register_decision_hook(RIGHT_KIND, _on_right_decision)
     approvals.register_decision_hook(device_pairing.RECONFIRM_CARD_KIND, _on_reconfirm_decision)
+    device_pairing.on_pairing_window(opened=reset_budget, closed=end_in_flight)
 
 
 _register()

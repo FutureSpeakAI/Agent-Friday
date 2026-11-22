@@ -188,14 +188,93 @@ def gateway_config() -> dict:
 
 
 def set_gateway(enabled: bool, port: int = 0) -> dict:
+    """Turning the gateway on opens pairing for 10 minutes, so a caller must carry the same proof as the
+    pairing-window route (a press on this PC's own page); tests/unit/test_pairing_window.py guards who calls it."""
     with _LOCK:
         body = _load()
+        was_on = bool(body["gateway"].get("enabled"))
         body["gateway"] = {"enabled": bool(enabled), "port": int(port or body["gateway"].get("port") or 0)}
         _save(body)
         if not enabled:
             _SESSIONS.clear()
             _persist_sessions()
-        return dict(body["gateway"])
+        out = dict(body["gateway"])
+    if not enabled:
+        close_pairing_window(by="gateway_off")
+    elif not was_on:
+        open_pairing_window(GATEWAY_ON_WINDOW_S, by="gateway_on")     # turning it on is the owner's act at the PC
+    return out
+
+
+# ── the pairing window ──────────────────────────────────────────────────────
+# pair/start is refused unless the owner opened pairing at the PC. Held in memory only, so a restart closes it.
+
+PAIRING_WINDOW_MIN_S = 30
+PAIRING_WINDOW_MAX_S = 900
+GATEWAY_ON_WINDOW_S = 600
+_WINDOW_UNTIL = 0.0
+
+
+def pairing_window() -> dict:
+    """Whether pairing is open and for how many more seconds."""
+    with _LOCK:
+        left = _WINDOW_UNTIL - time.time()
+    return {"open": left > 0, "remaining_s": int(round(left)) if left > 0 else 0}
+
+
+def _window_receipt(kind: str, by: str, **extra) -> None:
+    try:
+        from agent_friday.services import action_ledger
+        action_ledger.append(kind, {"principal": by, "surface": "pairing_window", **extra})
+    except Exception:
+        pass
+
+
+_WINDOW_HOOKS = {"open": [], "close": []}
+
+
+def on_pairing_window(*, opened=None, closed=None) -> None:
+    """The gateway's pairing flow registers what it does when the window opens (forget what strangers used up) and
+    closes (end a pairing not yet pressed). Registered from tv_gateway/pairing, so this service never imports the
+    gateway (tests/unit/test_tv_pc_approve_key.py holds that line)."""
+    if opened is not None and opened not in _WINDOW_HOOKS["open"]:
+        _WINDOW_HOOKS["open"].append(opened)
+    if closed is not None and closed not in _WINDOW_HOOKS["close"]:
+        _WINDOW_HOOKS["close"].append(closed)
+
+
+def _run_window_hooks(which: str) -> None:
+    for hook in list(_WINDOW_HOOKS[which]):
+        try:
+            hook()
+        except Exception:
+            pass
+
+
+def open_pairing_window(seconds: float = 300, by: str = "owner:desk") -> dict:
+    """Open pairing for ``seconds`` (clamped to 30 s .. 15 min). Callers prove the owner is at the PC."""
+    global _WINDOW_UNTIL
+    try:
+        secs = float(seconds)
+    except (TypeError, ValueError):
+        secs = 300.0
+    secs = max(PAIRING_WINDOW_MIN_S, min(PAIRING_WINDOW_MAX_S, secs))
+    with _LOCK:
+        _WINDOW_UNTIL = time.time() + secs
+    _run_window_hooks("open")
+    _window_receipt("pairing_window_opened", by, seconds=int(secs))
+    return pairing_window()
+
+
+def close_pairing_window(by: str = "owner:desk") -> dict:
+    global _WINDOW_UNTIL
+    with _LOCK:
+        was_open = _WINDOW_UNTIL > time.time()
+        _WINDOW_UNTIL = 0.0
+    _run_window_hooks("close")
+    if was_open:
+        _window_receipt("pairing_window_closed", by)
+    return pairing_window()
 
 
 # ── devices ─────────────────────────────────────────────────────────────────
@@ -684,8 +763,9 @@ def _touch(device_id: str) -> None:
 
 
 def _reset_for_tests() -> None:
-    global _RESTORED
+    global _RESTORED, _WINDOW_UNTIL
     with _LOCK:
+        _WINDOW_UNTIL = 0.0
         _SESSIONS.clear()
         _CHALLENGES.clear()
         _RESTORED = False

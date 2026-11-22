@@ -58,6 +58,9 @@ def test_the_chat_handler_keeps_all_its_wrappers():
     # chat acts before anything reads the turn, and nothing runs while stopped. Then
     # _cloud_fallback_choice (A6): the owner's one-turn choice of the other cloud provider
     # must hold for everything the turn does.
-    assert names == ["route", "_stop_everything_gate", "_cloud_fallback_choice", "_withhold_pasted_keys",
+    # _add_device_gate (services/add_device_command) comes right after it: "Friday, add a device" opens
+    # pairing at this PC before any model or rule reads the words.
+    assert names == ["route", "_stop_everything_gate", "_add_device_gate", "_cloud_fallback_choice",
+                     "_withhold_pasted_keys",
                      "_traced_turn",
                      "_privacy_hold_turn", "per_turn"], names
