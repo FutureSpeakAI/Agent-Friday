@@ -474,4 +474,8 @@ def _verb_entry(v: dict, block: Optional[dict]) -> dict:
 def _ws_entry(w: dict) -> dict:
     out = {k: w[k] for k in _WS_FIELDS if k in w}
     out["boundary"] = (w.get("boundary") or {}).get("kind", "native")
+    # which renderer the device uses: "a2ui" when the workspace has an A2UI document (contract draft 3, section 4).
+    # tests/unit/test_tv_ws_view.py: test_the_workspace_list_marks_the_a2ui_ones
+    from agent_friday.services import a2ui_workspaces
+    out["renderer"] = "a2ui" if a2ui_workspaces.has_view(str(w.get("id") or "")) else "legacy"
     return out
