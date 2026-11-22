@@ -13,10 +13,13 @@ The rules, by what an item says rather than only where it sits:
 * an item that cites an id must have EVERY id resolve to a source of a kind its section accepts; one unknown or
   unlinkable id ([C9]) drops the item;
 * in a sourced section (a heading that names news, email, calendar, schedule, agenda, meetings or events) an item
-  with no citation and no verified link is dropped; items elsewhere (tasks, an insight) are kept unless they cite;
-* a heading naming two kinds ("Schedule & Inbox") accepts both;
-* a link or address the model typed is removed unless it is exactly one the tools returned (`strip_unknown_links`
-  runs again over the whole assembled briefing, so text added after `validate` cannot carry one either).
+  with no citation and no verified link is dropped, and a line of prose there is an item too; items elsewhere
+  (tasks, an insight) are kept unless they cite;
+* a heading naming two kinds ("Schedule & Inbox") accepts both; a level-1 heading that opens the briefing is its
+  title and names no section, so "# Morning: headlines & schedule" does not make "## Tasks" a news section;
+* a link or address the model typed is removed unless it is exactly one the tools returned, whatever its label
+  holds (`[[draft] plan](...)` too), and so is a bare `www.` address (`strip_unknown_links` runs again over the
+  whole assembled briefing, so text added after `validate` cannot carry one either).
 
 Every dropped item is counted; the briefing ends with "N items dropped: no source". This module never builds or
 guesses an id or a URL. `validate` is pure (text and sources in, text and counts out) so the one writer of briefing
@@ -51,9 +54,13 @@ _HEADING = re.compile(r"^(#{1,6})\s+(.*\S)\s*$")
 _BULLET = re.compile(r"^(\s{0,3})(?:[-*+]|\d{1,3}[.)])\s+")
 _CITE = re.compile(r"\[\s*([A-Z]\d{1,3}(?:\s*[,;]\s*[A-Z]\d{1,3})*)\s*\]")
 _MD_LINK = re.compile(r"\[([^\]\n]{1,300})\]\((https?://[^)\s]+)\)")
-#: Any address not written as a markdown link's target: in round brackets, angle brackets or bare.
-_BARE_URL = re.compile(r"(?<!\]\()\bhttps?://[^\s)\]>\"']+")
-_ANGLE_URL = re.compile(r"<(https?://[^\s>]+)>")
+#: Any address not written as a markdown link's target: in round brackets, angle brackets or bare (markdown
+#: renderers link a bare www. address too).
+_BARE_URL = re.compile(r"(?<!\]\()\b(?:https?://|www\.)[^\s)\]>\"']+", re.I)
+_ANGLE_URL = re.compile(r"<((?:https?://|www\.)[^\s>]+)>", re.I)
+#: The target of ANY markdown link or image, whatever its label holds: what follows "](" up to the closing ")".
+_LINK_TARGET = re.compile(r"\]\(([^)\n]*)\)")
+_HAS_WORDS = re.compile(r"[A-Za-z0-9]")
 LABELS = {EMAIL: "Open email", CALENDAR: "Calendar event", EVENT: "Event page"}
 
 
@@ -110,6 +117,9 @@ def strip_unknown_links(text: str, known: Iterable[str]) -> str:
     bracketed or angle-bracketed address that is not known. Safe to run on a whole assembled briefing."""
     known = set(known)
     text = _MD_LINK.sub(lambda m: m.group(0) if m.group(2) in known else m.group(1), text or "")
+    # A label with brackets in it ("[[draft] plan](...)") is no _MD_LINK match; its target is caught here. Only a
+    # target that is exactly a known address (no title, no spaces) stays; otherwise the label is left as plain text.
+    text = _LINK_TARGET.sub(lambda m: m.group(0) if m.group(1) in known else "]", text)
     text = _ANGLE_URL.sub(lambda m: m.group(0) if m.group(1) in known else "", text)
     text = _BARE_URL.sub(lambda m: m.group(0) if m.group(0) in known else "", text)
     return re.sub(r"\(\s*\)", "", text)
@@ -155,6 +165,10 @@ def _resolve(item: str, kinds: set, sources: dict, known: set) -> Optional[str]:
     return re.sub(r" +([.,;:])", r"\1", out)
 
 
+def _links_or_cites(line: str) -> bool:
+    return bool(_CITE.search(line) or _MD_LINK.search(line) or _BARE_URL.search(line) or _LINK_TARGET.search(line))
+
+
 def _count_line(total: int) -> str:
     return "_%d item%s dropped: no source_" % (total, "" if total == 1 else "s")
 
@@ -179,6 +193,7 @@ def validate(text: str, sources: dict) -> Validated:
             out.extend(resolved.split("\n"))
         item = None
 
+    first_heading = True
     for line in (text or "").split("\n"):
         heading = _HEADING.match(line)
         bullet = _BULLET.match(line)
@@ -191,11 +206,14 @@ def validate(text: str, sources: dict) -> Validated:
             level = len(heading.group(1))
             while stack and stack[-1][0] >= level:
                 stack.pop()
-            stack.append((level, _section_kinds(heading.group(2)) or (stack[-1][1] if stack else set())))
+            title = first_heading and level == 1                # the briefing's own title names no section
+            first_heading = False
+            stack.append((level, set() if title else
+                          (_section_kinds(heading.group(2)) or (stack[-1][1] if stack else set()))))
             out.append(line)
-        elif bullet or (line.strip() and (_CITE.search(line) or _MD_LINK.search(line) or _BARE_URL.search(line))):
-            # a list item, or a line of prose that cites or links: checked as an item
-            if kinds or _CITE.search(line) or _MD_LINK.search(line) or _BARE_URL.search(line):
+        elif bullet or (_HAS_WORDS.search(line) and (kinds or _links_or_cites(line))):
+            # a list item; a line of prose in a sourced section; a line of prose that cites or links: an item
+            if kinds or _links_or_cites(line):
                 item, item_kinds = [line], kinds
             else:
                 out.append(line)                       # a task or an insight outside the sourced sections

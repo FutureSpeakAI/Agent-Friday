@@ -186,3 +186,53 @@ def test_the_final_pass_keeps_only_known_links_anywhere_in_the_text():
     text = "## Extra\n- [Presale](https://evil.example.test/presale) and [ok](https://gazette.example.test/budget)\n"
     out = bl.strip_unknown_links(text, {"https://gazette.example.test/budget"})
     assert "evil.example.test" not in out and "Presale" in out and "](https://gazette.example.test/budget)" in out
+
+
+# -- round 2: link shapes the first pattern missed, prose in a sourced section, the briefing's title ----------------
+
+EVIL = "evil.example.test"
+
+
+def test_a_typed_link_whose_label_has_brackets_loses_its_address():
+    got = run("## Your Day\n- Read the [[draft] plan](https://evil.example.test/nested-body)\n"
+              "## Calendar\n- Planning at ten [C1], see [[the] agenda](https://evil.example.test/agenda)\n")
+    assert EVIL not in got.text and "Read the" in got.text and "calendar.example.test" in got.text
+
+
+LABELS_ = ["plan", "[draft] plan", "[[deep]] plan", "a ] b", "![img]", "", "x [y] z"]
+TARGETS = ["https://evil.example.test/p", "HTTPS://EVIL.EXAMPLE.TEST/p", "<https://evil.example.test/p>",
+           'https://evil.example.test/p "title"', " https://evil.example.test/p ", "www.evil.example.test/p",
+           "https://gazette.example.test/budget#evil.example.test"]
+
+
+@pytest.mark.parametrize("label", LABELS_)
+@pytest.mark.parametrize("target", TARGETS)
+def test_no_link_shape_carries_an_address_the_tools_did_not_return(label, target):
+    known = {"https://gazette.example.test/budget"}
+    for text in ("[%s](%s)" % (label, target), "![%s](%s)" % (label, target), "see %s now" % target,
+                 "[ref]: %s" % target, "<%s>" % target.strip().strip("<>")):
+        out = bl.strip_unknown_links(text, known)
+        assert EVIL not in out.lower(), (text, out)
+
+
+@pytest.mark.parametrize("label", LABELS_)
+def test_a_link_to_any_other_scheme_is_no_link_at_all(label):
+    for target in ("javascript:alert(1)", "data:text/html,hi", "mailto:someone@example.test", "/relative/page"):
+        assert "](" not in bl.strip_unknown_links("[%s](%s)" % (label, target), set())
+
+
+def test_a_known_link_survives_every_pass_with_its_label():
+    text = "[Read [the] story](https://gazette.example.test/budget)"
+    assert bl.strip_unknown_links(text, {"https://gazette.example.test/budget"}) == text
+
+
+def test_a_line_of_prose_with_no_source_in_a_sourced_section_is_dropped():
+    got = run("## Calendar\nBig day: dinner at 7 with the mayor.\n- Planning at ten. [C1]\n")
+    assert "mayor" not in got.text and "Planning at ten" in got.text and got.dropped == {"calendar": 1}
+
+
+def test_the_briefings_title_does_not_make_its_sections_sourced():
+    got = run("# Morning: headlines & schedule\n## Tasks\n- Send the grant report\n## News\n- Budget passed. [N1]\n")
+    assert "Send the grant report" in got.text and got.dropped_total == 0
+    nested = run("## Calendar\n### Morning\n- Coffee with nobody in particular.\n")
+    assert "Coffee" not in nested.text                       # a level-2 kind still carries down
