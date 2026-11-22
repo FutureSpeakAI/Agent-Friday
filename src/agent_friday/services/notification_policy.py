@@ -94,6 +94,18 @@ def rules_in_words() -> list:
             for rule in INTERRUPT_RULES]
 
 
+def set_interrupt_rule(rule_id: str, on: bool) -> list:
+    """Switch one rule on or off and return the rules as the owner reads them. Raises ValueError for a
+    rule that does not exist or an answer that is not a plain yes or no."""
+    if rule_id not in {rule.id for rule in INTERRUPT_RULES}:
+        raise ValueError("there is no such rule")
+    if not isinstance(on, bool):
+        raise ValueError("a rule is on or off")
+    from agent_friday.core import _save_settings
+    _save_settings({INTERRUPT_SETTING: {**_chosen_rules(), rule_id: on}})
+    return rules_in_words()
+
+
 def interrupts_by_rule(emitter: str) -> bool:
     """True when this emitter's notice is the successful completion or delivery of something the owner
     said may interrupt him, and that rule is on."""
