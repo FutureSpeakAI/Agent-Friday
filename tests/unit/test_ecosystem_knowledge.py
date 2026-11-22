@@ -7,6 +7,7 @@ import copy
 import importlib.util
 import json
 import re
+import sys
 from pathlib import Path
 
 import pytest
@@ -19,6 +20,7 @@ REPO = Path(__file__).resolve().parents[2]
 def _facts_script():
     spec = importlib.util.spec_from_file_location("ecosystem_facts", REPO / "scripts" / "ecosystem_facts.py")
     module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
     spec.loader.exec_module(module)
     return module
 
@@ -212,7 +214,7 @@ def test_every_store_mention_says_it_is_not_there():
     for text in _everything_rendered():
         for line in text.splitlines():
             if "store" in line.lower() and "app store" in line.lower() or "Play Store" in line:
-                assert re.search(r"\bnot in\b|isn't built yet|until there is a store|None of them is in", line), line
+                assert re.search(r"\bnot in\b|isn't built yet|until there is a store|None (?:of them )?is in", line), line
 
 
 def test_the_tv_entry_states_the_kids_mode_rule_and_pairs_behind_the_pin():

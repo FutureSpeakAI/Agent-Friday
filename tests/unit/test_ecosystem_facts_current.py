@@ -8,6 +8,7 @@ skipped by name; the rest run on a synthetic repo.
 import importlib.util
 import json
 import os
+import sys
 from pathlib import Path
 
 import pytest
@@ -17,6 +18,7 @@ ENV = "FRIDAY_ECOSYSTEM_REPOS"
 
 spec = importlib.util.spec_from_file_location("ecosystem_facts", REPO / "scripts" / "ecosystem_facts.py")
 facts = importlib.util.module_from_spec(spec)
+sys.modules[spec.name] = facts      # dataclasses look the module up by name
 spec.loader.exec_module(facts)
 
 KOTLIN_GRADLE = '''
