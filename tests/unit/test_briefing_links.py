@@ -236,3 +236,47 @@ def test_the_briefings_title_does_not_make_its_sections_sourced():
     assert "Send the grant report" in got.text and got.dropped_total == 0
     nested = run("## Calendar\n### Morning\n- Coffee with nobody in particular.\n")
     assert "Coffee" not in nested.text                       # a level-2 kind still carries down
+
+
+# -- round 3: a www. host inside a known link; links made by raw HTML or a reference definition -------------------
+
+GCAL = "https://www.google.com/calendar/event?eid=abc123"
+WWW_NEWS = "https://www.gazette.example.test/budget"
+
+
+def test_a_known_link_with_a_www_host_survives_validation_and_the_final_pass():
+    src = bl.collect(news=[{"id": "N1", "title": "Budget", "url": WWW_NEWS}],
+                     calendar=[{"id": "C1", "title": "Standup", "url": GCAL}])
+    got = bl.validate("## Calendar\n- Standup at nine. [C1]\n## Sources\n- [Budget](%s)\n" % WWW_NEWS, src)
+    final = bl.strip_unknown_links(got.text, bl.known_links(src))
+    assert "(%s)" % GCAL in final and "(%s)" % WWW_NEWS in final and "(https://)" not in final
+    assert bl.strip_unknown_links("see %s now" % GCAL, {GCAL}) == "see %s now" % GCAL
+
+
+HTML_AND_REF_LINKS = ['<a href="https&#58;//evil.example.test/x">open</a>',
+                      '<a href="https&colon;//evil.example.test/x">open</a>',
+                      '<a href="//evil.example.test/x">open</a>',
+                      "<A HREF='javascript:alert(1)'>open</A>",
+                      "[r]: //evil.example.test/x", "   [r]: https&#58;//evil.example.test/x 'title'",
+                      "[r]: <https://evil.example.test/x>"]
+
+
+@pytest.mark.parametrize("shape", HTML_AND_REF_LINKS)
+def test_raw_html_and_reference_definitions_make_no_link(shape):
+    out = bl.strip_unknown_links("Read [this][r] first.\n%s\nThen the rest.\n" % shape, set())
+    assert "<" not in out and "]:" not in out and "Then the rest." in out
+    got = run("## Calendar\n- Planning at ten. [C1]\n  %s\n" % shape.strip())    # inside a cited item
+    assert "<" not in got.text and "]:" not in got.text and "calendar.example.test" in got.text
+
+
+def test_a_typed_email_address_shows_but_is_no_mailto_link_and_the_gmail_link_keeps_its_account():
+    gmail = "https://mail.google.com/mail/u/owner@example.test/#all/18f3a1b2c3d4e5f6"
+    out = bl.strip_unknown_links("Write to someone@evil.example.test. [Open email](%s)" % gmail, {gmail})
+    assert "someone&#64;evil.example.test" in out and "](%s)" % gmail in out
+
+
+def test_the_final_pass_can_run_twice_without_changing_the_text_again():
+    text = "## News\n- a < b, and [ok](https://gazette.example.test/budget) <https://gazette.example.test/budget>\n"
+    known = {"https://gazette.example.test/budget"}
+    once = bl.strip_unknown_links(text, known)
+    assert bl.strip_unknown_links(once, known) == once and "a &lt; b" in once
