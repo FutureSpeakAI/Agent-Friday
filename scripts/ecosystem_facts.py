@@ -200,11 +200,14 @@ def capability_facts(tree: Tree, folder: str | None) -> dict:
         doc = json.loads(tree.read(path))
         name = str(doc.get("capability") or Path(path).stem)
         verbs = doc.get("verbs") if isinstance(doc.get("verbs"), list) else []
-        names = [v.get("verb") if isinstance(v, dict) else v for v in verbs]
-        if not all(isinstance(n, str) and n for n in names):
-            raise MissingRepo(f"{path}: a verb with no name")
+        gates = {}
+        for v in verbs:
+            verb, gate = (v.get("verb"), v.get("gate")) if isinstance(v, dict) else (None, None)
+            if not isinstance(verb, str) or not verb or not isinstance(gate, str) or not gate:
+                raise MissingRepo(f"{path}: a verb with no name or no gate")
+            gates[verb] = gate
         out[name] = {"version": doc.get("version"), "owner_only": bool(doc.get("owner_only")),
-                     "verbs": sorted(names)}
+                     "verbs": dict(sorted(gates.items()))}
     return dict(sorted(out.items()))
 
 

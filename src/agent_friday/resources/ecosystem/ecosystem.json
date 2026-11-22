@@ -12,7 +12,7 @@
         "name": "0.12.27-p0u",
         "code": 60
       },
-      "facts_fingerprint": "f1b0822047f851fc45e5c3522ab36ce90d0dd23cc4fbbdbbe7c724be382f0c5e",
+      "facts_fingerprint": "6d3e7f2f4a3c66e2c77e2f767683708606dc097e6d8c18d65f6ea96ba491ccb9",
       "platform": {
         "summary": "Android 12 or newer, on a 64-bit ARM phone",
         "min_sdk": 31,
@@ -23,7 +23,7 @@
       },
       "adds": [
         "You can talk or type to me from anywhere in the house, and I answer from this PC.",
-        "When I need a yes from you, the phone can show the request and take your answer.",
+        "Once you allow it on this PC's screen, the phone can approve what I ask.",
         "It can do things on the phone itself when you ask, such as timers, calendar entries and starting a call."
       ],
       "capabilities": [
@@ -39,7 +39,7 @@
         },
         {
           "id": "approve",
-          "text": "approve or decline what I ask, confirmed with your fingerprint or face",
+          "text": "approve what I ask, confirmed with your fingerprint or face, once you allow approvals from it on this PC's screen",
           "status": "shipped",
           "evidence": [
             "capability:needs_you",
@@ -162,13 +162,13 @@
             "text": "Pairing needs the device gateway on this PC to be switched on. It is off on a new install and there is no switch for it in the app yet, so if it has never been switched on, pairing cannot start."
           },
           {
-            "text": "Put the phone on the same home Wi-Fi as this PC, and switch off any VPN on the phone for a minute."
+            "text": "Put the phone on the same home Wi-Fi as this PC."
           },
           {
             "text": "On the phone, open Agent Friday and tap Pair. It looks for this PC on your Wi-Fi. There is nothing to type and nothing to scan."
           },
           {
-            "text": "Both screens now show six digits. If they are the same, press Approve on this PC's screen. If they differ, press Decline."
+            "text": "Both screens now show six digits. If they are the same, press Approve on this PC's screen. If they differ, do not approve."
           },
           {
             "text": "Once you approve, the phone is paired and works over your home Wi-Fi."
@@ -179,7 +179,7 @@
         "On a new install the PC's side of pairing is switched off, and there is no switch for it in the app yet.",
         "It is not in the Play Store yet. A first install needs a computer and Android's developer tools.",
         "Today's builds are test builds, not a store release.",
-        "A phone I pair becomes yours: it can see your chats and answer requests for you. I cannot yet give another person their own space on their own phone.",
+        "A phone I pair is signed in as you. I cannot yet give another person their own space on their own phone, so if it belongs to someone else in the house it is safer to wait.",
         "Pairing only works at home, on the same network as this PC. Away from home it needs Tailscale on both, which you set up yourself."
       ]
     },
@@ -192,7 +192,7 @@
         "name": "0.12.27-p0u",
         "code": 60
       },
-      "facts_fingerprint": "f965249a202633c2dfd615addb7640a5bfb9fb9933d83c366e94ba0920382c4b",
+      "facts_fingerprint": "dce30418ef8bb8fc8b6e7367a3571b94f6e9b6910a75e229441387e1cb9744aa",
       "platform": {
         "summary": "Android 12 or newer, on a 64-bit ARM tablet",
         "min_sdk": 31,
@@ -218,7 +218,7 @@
         },
         {
           "id": "approve",
-          "text": "approve or decline what I ask, confirmed with your fingerprint or face",
+          "text": "approve what I ask, confirmed with your fingerprint or face, once you allow approvals from it on this PC's screen",
           "status": "shipped",
           "evidence": [
             "capability:needs_you",
@@ -320,13 +320,13 @@
             "text": "Pairing needs the device gateway on this PC to be switched on. It is off on a new install and there is no switch for it in the app yet, so if it has never been switched on, pairing cannot start."
           },
           {
-            "text": "Put the tablet on the same home Wi-Fi as this PC, and switch off any VPN on the tablet for a minute."
+            "text": "Put the tablet on the same home Wi-Fi as this PC."
           },
           {
             "text": "On the tablet, open Agent Friday and tap Pair. It looks for this PC on your Wi-Fi. There is nothing to type and nothing to scan."
           },
           {
-            "text": "Both screens now show six digits. If they are the same, press Approve on this PC's screen. If they differ, press Decline."
+            "text": "Both screens now show six digits. If they are the same, press Approve on this PC's screen. If they differ, do not approve."
           },
           {
             "text": "Once you approve, the tablet is paired and works over your home Wi-Fi."
@@ -337,7 +337,7 @@
         "On a new install the PC's side of pairing is switched off, and there is no switch for it in the app yet.",
         "It is not in the Play Store yet. A first install needs a computer and Android's developer tools.",
         "Today's builds are test builds, not a store release.",
-        "A tablet I pair becomes yours: it can see your chats and answer requests for you. If it belongs to someone else in the house, it is safer to wait until each person can have their own space.",
+        "A tablet I pair is signed in as you. I cannot yet give another person their own space on their own tablet, so if it belongs to someone else in the house it is safer to wait.",
         "Pairing only works at home, on the same network as this PC."
       ]
     },
@@ -452,7 +452,7 @@
             "text": "On the TV, open Agent Friday, then Settings, and enter your grown-up PIN with the remote. Choose to pair with your PC."
           },
           {
-            "text": "Both screens now show six digits. If they are the same, press Approve on this PC's screen. If they differ, press Decline."
+            "text": "Both screens now show six digits. If they are the same, press Approve on this PC's screen. If they differ, do not approve."
           },
           {
             "text": "The TV is paired. It can read the chat you send it. Anything more, such as using my brain, asks you on this PC's screen first."
