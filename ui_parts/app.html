@@ -27464,7 +27464,6 @@ function LaneNeedsYou({ onChanged }) {
   const h = React.createElement;
   const [d, reload] = useLaneData('/api/lanes/needs-you');
   const feed = useApprovalFeed();
-  const [busy, setBusy] = useState('');
   useEffect(() => { reload(); }, [feed.length]);
   if (!d) return h('div', { className: 'place-empty' }, 'One moment.');
   const inBatch = new Set();
@@ -27482,7 +27481,7 @@ function LaneNeedsYou({ onChanged }) {
         : h('button', { type: 'button', className: 'ws-tab-link', 'data-testid': 'lane-quiet-on', onClick: () => setQuiet(true) }, 'Quiet until morning')),
     d.count === 0 && !singles.length ? h('div', { className: 'place-empty' }, 'Nothing needs you.') : h('div', { className: 'place-summary', role: 'status' }, d.summary ? d.summary.charAt(0).toUpperCase() + d.summary.slice(1) + '.' : ''),
     d.batches.map(b => h(LaneBatch, { key: b.batch_id, b: b, items: feed, onDecided: done })),
-    singles.map(a => h(ApprovalCardBody, { key: a.approval_id, a: a, busy: busy, onDecide: (id, decision) => { setBusy(id); fridayDecideApproval(id, decision).then(() => { setBusy(''); done(); }); } })),
+    singles.map(a => h(ApprovalCardBody, { key: a.approval_id, a: a, onDecide: (id, decision) => { fridayDecideApproval(id, decision).then(done); } })),
     d.others.map(o => h('div', { key: o.id, className: 'place-card', 'data-testid': 'lane-need', 'data-kind': o.kind },
       h('div', { className: 'place-card-title' }, o.title + (o.count > 1 ? ' (' + o.count + ' times)' : '')),
       o.body ? h('div', { className: 'place-note' }, o.body) : null,
@@ -28091,7 +28090,7 @@ function useDeciding(id) {
 // Approve or decline from any page. Exactly one decision wins (the server
 // decides under one lock); a page that lost the race is told what happened.
 // A click that cannot apply says why: a refusal in the server's words, a card
-// that is gone, no connection. Nothing is a silent no-op, and the same card
+// that is gone (it leaves the list), no connection. Nothing is a silent no-op, and the same card
 // clicked twice sends one request.
 // decided_by 'owner:ui' marks a click on this page: some cards (file access)
 // can be approved by nothing else.
@@ -28107,9 +28106,13 @@ function fridayDecideApproval(id, decision) {
       const what = st === 'approved' ? 'approved' : st === 'denied' ? 'declined' : st === 'expired' ? 'expired' : st || 'decided';
       const by = st === 'expired' ? '' : /sms/.test(a.decided_by || '') ? ' by text message' : /voice/.test(a.decided_by || '') ? ' by voice' : ' elsewhere';
       fridayToast('Already decided: this was ' + what + by + '.');
+    } else if (d && d.error === 'not found') {
+      // The server has no such card: it is not waiting, so it leaves the list and the toast says so.
+      fridayApprovalFeed.drop(id);
+      fridayToast('That card is no longer waiting, so nothing was decided. It has been taken off the list.');
     } else if (!d || !d.ok) {
       const why = d && (d.message || (/ /.test(String(d.error || '')) ? d.error : ''));
-      fridayToast(why && d.error !== 'not found' ? why : 'That did not go through. The card is still waiting.');
+      fridayToast(why || 'That did not go through. The card is still waiting.');
     }
     return d;
   }).catch(() => {
