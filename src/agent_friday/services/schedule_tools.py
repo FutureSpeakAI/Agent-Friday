@@ -6,7 +6,7 @@ scheduler (services/scheduler.py) the Workflows screen shows:
   list    every schedule with its model, status and next run
   create  a recurring schedule for a saved workflow, or for a prompt
   pause / resume / delete  one schedule, by id
-  edit     change one schedule's timing, enabled state or prompt (a built-in's too)
+  update   change one schedule's timing, enabled state or prompt (a built-in's too)
   restore_default / revert  put a built-in job back as shipped, or step it back one edit
 
 Honesty: `create` answers only after the schedule is read back from the store,
@@ -28,8 +28,8 @@ from __future__ import annotations
 import json
 from datetime import datetime
 
-ACTIONS = ("list", "create", "pause", "resume", "delete", "edit", "restore_default", "revert")
-TRIGGERS = ("daily", "weekly", "monthly", "interval")
+ACTIONS = ("list", "get", "create", "pause", "resume", "delete", "update", "restore_default", "revert")
+TRIGGERS = ("daily", "weekly", "monthly", "interval", "on_idle")
 
 
 def _when_text(rec):
@@ -102,7 +102,7 @@ def classify(args) -> tuple:
         elif action == "resume":
             from agent_friday.services import scheduler as _sched
             acts = sends_later(_record_texts(_sched.get_schedule(str(a.get("schedule_id") or ""))))
-        elif action == "edit":
+        elif action == "update":
             from agent_friday.services import scheduler as _sched
             target = _sched.get_schedule(str(a.get("schedule_id") or "")) or {}
             changes_text = a.get("prompt") is not None or a.get("task") is not None
@@ -223,7 +223,7 @@ def _create(data) -> dict:
 
 
 def _change(action, sid, data) -> dict:
-    """edit / restore_default / revert on one schedule, read back from the store. A built-in's edit is a version the owner
+    """update / restore_default / revert on one schedule, read back from the store. A built-in's edit is a version the owner
     can step back (services/builtin_overrides); only a built-in has a shipped default to go back to."""
     from agent_friday.services import scheduler as _sched
     from agent_friday.services import workflow_operations as _ops
@@ -251,7 +251,7 @@ def _change(action, sid, data) -> dict:
     if not patch:
         raise ValueError("Say what to change: the timing (trigger and spec), enabled, or the prompt.")
     _sched.update_schedule(sid, patch, by="tool")
-    return dict(_row(_listed(sid) or {}), edited=True)
+    return dict(_row(_listed(sid) or {}), updated=True)
 
 
 def schedule_job(inp):
@@ -266,7 +266,7 @@ def schedule_job(inp):
     if action in ("create", "resume") and not _caller_may_schedule():
         raise ValueError("A scheduled or background job cannot set up or re-arm schedules; "
                          "ask from the owner's chat or voice conversation.")
-    if action in ("edit", "restore_default", "revert") and not _caller_may_schedule():
+    if action in ("update", "restore_default", "revert") and not _caller_may_schedule():
         raise ValueError("A scheduled or background job cannot change schedules; "
                          "ask from the owner's chat or voice conversation.")
     if action == "create":
@@ -274,7 +274,7 @@ def schedule_job(inp):
     sid = str(data.get("schedule_id") or "").strip()
     if not sid or not _sched.get_schedule(sid):
         raise ValueError("There is no schedule %r. List the schedules for their ids." % sid)
-    if action in ("edit", "restore_default", "revert"):
+    if action in ("update", "restore_default", "revert"):
         return json.dumps(_change(action, sid, data), ensure_ascii=False, default=str)
     if action == "delete":
         if not _sched.delete_schedule(sid):
@@ -304,8 +304,8 @@ TOOL_SCHEMAS = [
      "Only say something is scheduled after create returns its schedule_id and next_run.",
      "input_schema": {"type": "object", "properties": {
          "action": {"type": "string", "enum": list(ACTIONS)},
-         "schedule_id": {"type": "string", "description": "For pause, resume, delete, edit, restore_default, revert."},
-         "enabled": {"type": "boolean", "description": "edit: switch the job on or off."},
+         "schedule_id": {"type": "string", "description": "For get, pause, resume, delete, update, restore_default, revert."},
+         "enabled": {"type": "boolean", "description": "update: switch the job on or off."},
          "workflow": {"type": "string", "description": "Saved workflow slug to schedule."},
          "prompt": {"type": "string", "description": "What to do each time, when not a saved workflow."},
          "name": {"type": "string"},
@@ -315,7 +315,11 @@ TOOL_SCHEMAS = [
              "weekdays": {"type": "array", "items": {"type": "integer"},
                           "description": "Monday=0 ... Sunday=6 (weekly)."},
              "day": {"type": "integer", "description": "Day of month 1-31, or -1 for the last day (monthly)."},
-             "every_minutes": {"type": "integer"}}},
+             "every_minutes": {"type": "integer"},
+             "idle_minutes": {"type": "integer",
+                              "description": "on_idle: run after this many minutes with no input from the owner."},
+             "min_gap_minutes": {"type": "integer",
+                                 "description": "on_idle: at least this long between runs (default 60)."}}},
          "model": {"type": "string", "description": "Pin every run to this model; held, never moved, if it is unavailable."},
          "missed": {"type": "string", "enum": ["run_once", "skip"],
                     "description": "A run missed while Friday was closed: run once at the next start (default) or skip."}},

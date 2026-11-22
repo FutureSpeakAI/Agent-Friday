@@ -167,18 +167,18 @@ def owner_chat(monkeypatch):
 
 
 def test_a_model_may_change_a_built_ins_schedule_without_a_card_and_it_is_a_version(sched, owner_chat):
-    cls, _why = schedule_tools.classify({"action": "edit", "schedule_id": "sch_sample_job", "spec": {"hour": 6}})
+    cls, _why = schedule_tools.classify({"action": "update", "schedule_id": "sch_sample_job", "spec": {"hour": 6}})
     assert cls == "internal"
-    out = json.loads(schedule_tools.schedule_job({"action": "edit", "schedule_id": "sch_sample_job",
+    out = json.loads(schedule_tools.schedule_job({"action": "update", "schedule_id": "sch_sample_job",
                                                   "trigger": "daily", "spec": {"hour": 6, "minute": 15}}))
-    assert out["edited"] is True and _stored()["spec"] == {"hour": 6, "minute": 15}
+    assert out["updated"] is True and _stored()["spec"] == {"hour": 6, "minute": 15}
     assert bo.history("sch_sample_job")[-1]["by"] == "tool"
 
 
 def test_a_model_changing_a_built_ins_prompt_or_action_needs_an_approval_card(sched, owner_chat):
-    cls, why = schedule_tools.classify({"action": "edit", "schedule_id": "sch_sample_job", "prompt": "do something else"})
+    cls, why = schedule_tools.classify({"action": "update", "schedule_id": "sch_sample_job", "prompt": "do something else"})
     assert cls == "outward" and "built-in" in why and "owner" in why
-    cls, _ = schedule_tools.classify({"action": "edit", "schedule_id": "sch_sample_job", "task": {"kind": "x"}})
+    cls, _ = schedule_tools.classify({"action": "update", "schedule_id": "sch_sample_job", "task": {"kind": "x"}})
     assert cls == "outward"
 
 
@@ -186,9 +186,9 @@ def test_a_prompt_edit_of_the_owners_own_job_asks_only_when_it_would_send(sched,
     scheduler.register_schedule({"name": "Mine", "trigger": "daily", "spec": {"hour": 8, "minute": 0},
                                  "task": {"kind": "agent_prompt", "prompt": "summarise the news"}, "enabled": True})
     mine = next(r for r in scheduler.list_schedules() if r["name"] == "Mine")
-    cls, _ = schedule_tools.classify({"action": "edit", "schedule_id": mine["id"], "prompt": "summarise my day"})
+    cls, _ = schedule_tools.classify({"action": "update", "schedule_id": mine["id"], "prompt": "summarise my day"})
     assert cls == "internal"
-    cls, _ = schedule_tools.classify({"action": "edit", "schedule_id": mine["id"], "prompt": "email the summary to Sam"})
+    cls, _ = schedule_tools.classify({"action": "update", "schedule_id": mine["id"], "prompt": "email the summary to Sam"})
     assert cls == "outward"
 
 
@@ -202,4 +202,4 @@ def test_a_model_can_restore_and_revert_a_built_in_but_a_background_run_cannot_e
         schedule_tools.schedule_job({"action": "revert", "schedule_id": "sch_nothing_here"})
     monkeypatch.setattr(schedule_tools, "_caller_may_schedule", lambda: False)
     with pytest.raises(ValueError, match="cannot change schedules"):
-        schedule_tools.schedule_job({"action": "edit", "schedule_id": "sch_sample_job", "spec": {"hour": 3}})
+        schedule_tools.schedule_job({"action": "update", "schedule_id": "sch_sample_job", "spec": {"hour": 3}})
