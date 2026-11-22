@@ -1,25 +1,32 @@
 """Links in a briefing are enforced by code, not by the prompt.
 
-Before a briefing is stored or shown, every item in its news, email, calendar and events sections must resolve to
-a real link taken from the run's own tool output:
+Before a briefing is stored or shown, every item that names something from the outside world must resolve to a real
+link taken from the run's own tool output:
 
   news      the story's URL ([N3] cites a story by its id; services/news_links attaches the link afterwards),
   email     a Gmail link built from the email's REAL message id ([E2]), never from anything the model wrote,
   calendar  the calendar entry's own URL ([C1]), and
   events    the outing's, trip's or festival's own page ([V4]).
 
-An item that cannot is dropped and counted; the briefing ends with "N items dropped: no source". A link or
-address the model typed is removed unless it is exactly one the tools returned. This module never builds or guesses
-an id or a URL: a missing or malformed id means the item is dropped.
+The rules, by what an item says rather than only where it sits:
 
-`validate` is pure (text and sources in, text and counts out) so the one writer of briefing files can call it;
-tests/unit/test_briefing_links.py holds each rule.
+* an item that cites an id must have EVERY id resolve to a source of a kind its section accepts; one unknown or
+  unlinkable id ([C9]) drops the item;
+* in a sourced section (a heading that names news, email, calendar, schedule, agenda, meetings or events) an item
+  with no citation and no verified link is dropped; items elsewhere (tasks, an insight) are kept unless they cite;
+* a heading naming two kinds ("Schedule & Inbox") accepts both;
+* a link or address the model typed is removed unless it is exactly one the tools returned (`strip_unknown_links`
+  runs again over the whole assembled briefing, so text added after `validate` cannot carry one either).
+
+Every dropped item is counted; the briefing ends with "N items dropped: no source". This module never builds or
+guesses an id or a URL. `validate` is pure (text and sources in, text and counts out) so the one writer of briefing
+files can call it; tests/unit/test_briefing_links.py holds each rule.
 """
 from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
-from typing import Optional
+from typing import Iterable, Optional
 
 from agent_friday.services import news_links
 
@@ -29,10 +36,10 @@ SECTION_NEWS, SECTION_EMAIL, SECTION_CALENDAR, SECTION_EVENTS = "news", "email",
 ACCEPTS = {SECTION_NEWS: {NEWS}, SECTION_EMAIL: {EMAIL}, SECTION_CALENDAR: {CALENDAR, EVENT},
            SECTION_EVENTS: {CALENDAR, EVENT}}
 _HEADING_KIND = (
-    (SECTION_EMAIL, re.compile(r"\b(e-?mails?|inbox|unread)\b", re.I)),
+    (SECTION_EMAIL, re.compile(r"\b(e-?mails?|inbox|unread|mail)\b", re.I)),
     (SECTION_NEWS, re.compile(r"\b(news|headlines?|stories|story)\b", re.I)),
-    (SECTION_CALENDAR, re.compile(r"\b(calendar|schedule)\b", re.I)),
-    (SECTION_EVENTS, re.compile(r"\b(events?|outings?|trips?|festivals?|burns?|horizon|deadlines?|this week)\b", re.I)),
+    (SECTION_CALENDAR, re.compile(r"\b(calendar|schedule|agenda|meetings?|appointments?)\b", re.I)),
+    (SECTION_EVENTS, re.compile(r"\b(events?|outings?|trips?|festivals?|burns?|horizon)\b", re.I)),
 )
 #: /u/<address>/ opens the mailbox the message is in when several accounts are signed in (as gmail_send.draft_link);
 #: /u/0/ (the first signed-in account) only when the run did not say which account the message came from.
@@ -44,7 +51,9 @@ _HEADING = re.compile(r"^(#{1,6})\s+(.*\S)\s*$")
 _BULLET = re.compile(r"^(\s{0,3})(?:[-*+]|\d{1,3}[.)])\s+")
 _CITE = re.compile(r"\[\s*([A-Z]\d{1,3}(?:\s*[,;]\s*[A-Z]\d{1,3})*)\s*\]")
 _MD_LINK = re.compile(r"\[([^\]\n]{1,300})\]\((https?://[^)\s]+)\)")
-_BARE_URL = re.compile(r"(?<![(\[])\bhttps?://[^\s)\]>\"']+")
+#: Any address not written as a markdown link's target: in round brackets, angle brackets or bare.
+_BARE_URL = re.compile(r"(?<!\]\()\bhttps?://[^\s)\]>\"']+")
+_ANGLE_URL = re.compile(r"<(https?://[^\s>]+)>")
 LABELS = {EMAIL: "Open email", CALENDAR: "Calendar event", EVENT: "Event page"}
 
 
@@ -91,40 +100,56 @@ def collect(news=(), email=(), calendar=(), events=()) -> dict:
     return out
 
 
-def _section_kind(title: str) -> Optional[str]:
-    return next((kind for kind, pattern in _HEADING_KIND if pattern.search(title)), None)
+def known_links(sources: dict) -> set:
+    """Every link the run's sources support."""
+    return {link for s in sources.values() if (link := s.link())}
 
 
-def _strip_typed_links(text: str, known: set) -> str:
-    """Keep the words of a link the model typed and drop the address, unless it is exactly a known one."""
-    text = _MD_LINK.sub(lambda m: m.group(0) if m.group(2) in known else m.group(1), text)
-    return _BARE_URL.sub(lambda m: m.group(0) if m.group(0) in known else "", text)
+def strip_unknown_links(text: str, known: Iterable[str]) -> str:
+    """Keep the words of a link the model typed and drop the address, unless it is exactly a known one; drop a bare,
+    bracketed or angle-bracketed address that is not known. Safe to run on a whole assembled briefing."""
+    known = set(known)
+    text = _MD_LINK.sub(lambda m: m.group(0) if m.group(2) in known else m.group(1), text or "")
+    text = _ANGLE_URL.sub(lambda m: m.group(0) if m.group(1) in known else "", text)
+    text = _BARE_URL.sub(lambda m: m.group(0) if m.group(0) in known else "", text)
+    return re.sub(r"\(\s*\)", "", text)
 
 
-def _resolve(item: str, kind: str, sources: dict, known: set) -> Optional[str]:
-    """The item with its citations turned into links, or None when it has no verified source."""
-    text = _strip_typed_links(item, known)
+def _section_kinds(title: str) -> set:
+    return {kind for kind, pattern in _HEADING_KIND if pattern.search(title)}
+
+
+def _accepts(kinds: set) -> set:
+    return set().union(*(ACCEPTS[k] for k in kinds)) if kinds else {NEWS, EMAIL, CALENDAR, EVENT}
+
+
+def _resolve(item: str, kinds: set, sources: dict, known: set) -> Optional[str]:
+    """The item with its citations turned into links, or None when it may not stand (see the module rules)."""
+    text = strip_unknown_links(item, known)
     verified = any(url in text for url in known)
-    allowed = ACCEPTS[kind]
+    allowed = _accepts(kinds)
+    cited = bad = False
 
     def cite(match):
-        nonlocal verified
+        nonlocal verified, cited, bad
+        cited = True
         links, keep = [], []
         for sid in re.split(r"\s*[,;]\s*", match.group(1)):
             source = sources.get(sid)
             link = source.link() if source and source.kind in allowed else None
             if link is None:
+                bad = True                         # an id that resolves to nothing linkable here sinks the item
                 continue
             verified = True
             if source.kind == NEWS:
-                keep.append(sid)                       # services/news_links attaches the publisher link afterwards
+                keep.append(sid)                   # services/news_links attaches the publisher link afterwards
             else:
                 links.append("[%s](%s)" % (LABELS[source.kind], link))
         if keep and not links:
             return "[%s]" % ", ".join(keep)
         return "(%s)" % ", ".join(links) if links else ""
     out = _CITE.sub(cite, text)
-    if not verified:
+    if bad or (kinds and not verified):
         return None
     out = re.sub(r"[ \t]+\(", " (", out)
     return re.sub(r" +([.,;:])", r"\1", out)
@@ -135,20 +160,21 @@ def _count_line(total: int) -> str:
 
 
 def validate(text: str, sources: dict) -> Validated:
-    """The briefing with every unsourced item in its news, email, calendar and events sections dropped and counted."""
-    known = {link for s in sources.values() if (link := s.link())}
+    """The briefing with every item that may not stand dropped and counted (see the module rules)."""
+    known = known_links(sources)
     out, dropped = [], {}
-    stack: list = []                                   # (heading level, section kind)
+    stack: list = []                                   # (heading level, the section's kinds)
     item: Optional[list] = None                        # the lines of the item being collected
-    item_kind: Optional[str] = None
+    item_kinds: set = set()
 
     def close_item():
         nonlocal item
         if item is None:
             return
-        resolved = _resolve("\n".join(item), item_kind, sources, known)
+        resolved = _resolve("\n".join(item), item_kinds, sources, known)
         if resolved is None:
-            dropped[item_kind] = dropped.get(item_kind, 0) + 1
+            label = "/".join(sorted(item_kinds)) or "other"
+            dropped[label] = dropped.get(label, 0) + 1
         else:
             out.extend(resolved.split("\n"))
         item = None
@@ -160,14 +186,19 @@ def validate(text: str, sources: dict) -> Validated:
             item.append(line)
             continue
         close_item()
+        kinds = stack[-1][1] if stack else set()
         if heading:
             level = len(heading.group(1))
             while stack and stack[-1][0] >= level:
                 stack.pop()
-            stack.append((level, _section_kind(heading.group(2)) or (stack[-1][1] if stack else None)))
+            stack.append((level, _section_kinds(heading.group(2)) or (stack[-1][1] if stack else set())))
             out.append(line)
-        elif bullet and stack and stack[-1][1]:
-            item, item_kind = [line], stack[-1][1]
+        elif bullet or (line.strip() and (_CITE.search(line) or _MD_LINK.search(line) or _BARE_URL.search(line))):
+            # a list item, or a line of prose that cites or links: checked as an item
+            if kinds or _CITE.search(line) or _MD_LINK.search(line) or _BARE_URL.search(line):
+                item, item_kinds = [line], kinds
+            else:
+                out.append(line)                       # a task or an insight outside the sourced sections
         else:
             out.append(line)
     close_item()

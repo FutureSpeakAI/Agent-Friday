@@ -179,3 +179,42 @@ def test_turning_one_section_off_keeps_the_others_and_writes_the_whole_list(worl
     assert all(r["enabled"] for r in saved[bsec.SETTING])
     with pytest.raises(KeyError):
         bsec.set_enabled("not-a-section", False)
+
+
+def test_a_heading_the_skill_writes_cannot_end_the_checked_section(world):
+    generate, _ = model("## Presale\n- [Tickets](https://evil.example.test/presale)\n- Quiz night. [C1]")
+    results = bsec.run_all(SUNDAY, ROWS, generate, specs=bsec.configured({}))
+    events = [r for r in results if r.skill == "events-horizon"][0]
+    assert "evil.example.test" not in events.markdown and "**Presale**" in events.markdown
+    assert events.dropped == 1 and events.links == ("https://calendar.example.test/e/quiz",)
+
+
+def test_days_that_cannot_be_read_say_so_and_weekends_is_understood(world):
+    generate, _ = model()
+    specs = bsec.configured({bsec.SETTING: [{"skill": "events-horizon", "heading": "Events", "days": "every other day"},
+                                            {"skill": "family-outing", "heading": "Outing", "days": "weekends"}]})
+    monday = {r.skill: r for r in bsec.run_all(MONDAY, ROWS, generate, specs=specs)}
+    assert monday["events-horizon"].state == bsec.DID_NOT_RUN and "could not be read" in monday["events-horizon"].reason
+    assert "family-outing" not in monday
+    assert [r.skill for r in bsec.run_all(SUNDAY, ROWS, generate, specs=specs)] == ["events-horizon", "family-outing"]
+
+
+def test_stored_sections_are_made_again_when_a_skill_is_approved_or_a_section_switched_off(world):
+    world["skills"].pop("events-horizon")
+    world["queued"].append("events-horizon")
+    generate, box = model()
+    _, first = bsec.current(MONDAY, ROWS, generate, specs=bsec.configured({}))
+    assert first[0].reason == "awaiting approval"
+    world["queued"].clear()
+    world["skills"]["events-horizon"] = Skill("events-horizon", "Group window A in three.")
+    _, second = bsec.current(MONDAY + timedelta(minutes=5), ROWS, generate, specs=bsec.configured({}))
+    assert second[0].state == bsec.RAN
+    off = bsec.configured({bsec.SETTING: [{"skill": "events-horizon", "heading": "Events", "enabled": False}]})
+    _, third = bsec.current(MONDAY + timedelta(minutes=6), ROWS, generate, specs=off)
+    assert third == []
+
+
+def test_a_heading_from_settings_is_one_line_and_the_stamp_reads_back_under_any_locale():
+    specs = bsec.configured({bsec.SETTING: [{"skill": "x", "heading": "## Two\nlines"}]})
+    assert specs[0].heading == "Two lines"
+    assert bsec.generated_at("# B\n_Generated Lundi 2026-11-23 09:00_\n") == MONDAY

@@ -1,8 +1,5 @@
 """Start My Day speaks today's WRITTEN briefing, the same one the News workspace shows.
 
-Before this, the Start My Day button built its own spoken prompt from live data: it applied no skill, ran no section,
-checked no link, stored nothing, and said nothing about when its facts were read. Now it has one source of truth:
-
 * today's stored briefing (written through briefing_files by the one generator, routes/news.generate_briefing, whose
   finishing step applies the daily-briefing-format skill, runs the section skills with their "Didn't run" lines,
   enforces the links and stamps "Generated <weekday date time>") is used when its stamp is under MAX_AGE old;
@@ -15,6 +12,7 @@ tests/unit/test_start_my_day.py and tests/api/test_start_my_day_route.py hold ea
 from __future__ import annotations
 
 import re
+import threading
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -24,6 +22,9 @@ from agent_friday.services import briefing_sections
 
 #: A stored briefing older than this is made again when Start My Day is pressed (the same age the sections keep).
 MAX_AGE: timedelta = briefing_sections.MAX_AGE
+#: Held while Start My Day finds or makes today's briefing, so two presses never run the generator twice: the second
+#: waits, then finds the briefing the first one wrote.
+GENERATING = threading.Lock()
 
 
 @dataclass(frozen=True)
@@ -53,19 +54,23 @@ def fresh(now: datetime, directory: Optional[Path] = None) -> Optional[Briefing]
     return best
 
 
-_LINK_GROUP = re.compile(r"\s*\((?:\[[^\]\n]+\]\(https?://[^)\s]+\)(?:,\s*)?)+\)")
 _MD_LINK = re.compile(r"\[([^\]\n]+)\]\(https?://[^)\s]+\)")
 _BARE_URL = re.compile(r"<?\bhttps?://[^\s)>\]]+>?")
+#: Link words that only say what the link opens; spoken, they are noise. A story's outlet name is kept.
+_LINK_ONLY = ("Open email", "Calendar event", "Event page")
+_SOURCES = re.compile(r"(?ms)^##\s+Sources\s*$.*?(?=^#{1,2}\s|\Z)")
+_EMPTY_PARENS = re.compile(r"\s*\(\s*(?:,\s*)*\)")
 
 
 def speakable(text: str) -> str:
-    """The briefing as words to say: the link groups the validator added ("(Open email)") go, a linked phrase keeps
-    its words, a bare address goes, and citation ids go (services/news_links.for_speech)."""
+    """The briefing as words to say: the Sources list goes, a link keeps its words (so a story's outlet is named)
+    except words that only say what a link opens, a bare address goes, and citation ids go
+    (services/news_links.for_speech)."""
     from agent_friday.services.news_links import for_speech
-    out = _LINK_GROUP.sub("", text or "")
-    out = _MD_LINK.sub(r"\1", out)
+    out = _SOURCES.sub("", text or "")
+    out = _MD_LINK.sub(lambda m: "" if m.group(1) in _LINK_ONLY else m.group(1), out)
     out = _BARE_URL.sub("", out)
-    return for_speech(out)
+    return for_speech(_EMPTY_PARENS.sub("", out))
 
 
 def spoken_prompt(briefing: Briefing, now: datetime, tasks: str = "") -> str:

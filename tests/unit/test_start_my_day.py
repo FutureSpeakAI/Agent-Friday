@@ -62,3 +62,12 @@ def test_when_no_briefing_could_be_made_the_prompt_says_so_first():
     head = prompt.split("\n\n")[1]
     assert "could not be made (no provider is set up)" in head and "unchecked" in head
     assert "A story" in prompt
+
+
+def test_speech_keeps_a_storys_outlet_and_skips_the_sources_list():
+    text = ("# Briefing\n## News\n- The council passed the budget. ([Examplewire](https://examplewire.test/a))\n"
+            "## Sources\n- [Council passes the budget](https://examplewire.test/a) — Examplewire\n"
+            "## Events\n- Quiz night. ([Calendar event](https://calendar.example.test/e/1))\n")
+    said = smd.speakable(text)
+    assert "(Examplewire)" in said and "## Sources" not in said and "Council passes the budget" not in said
+    assert "Quiz night." in said and "Calendar event" not in said and "http" not in said

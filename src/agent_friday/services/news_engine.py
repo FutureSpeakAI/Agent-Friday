@@ -1129,8 +1129,9 @@ def _finish_briefing(content):
     if checked.dropped_total:
         print(f"  [briefing] {checked.dropped_total} items dropped: no source ({checked.dropped})")
     # The calendar and email links the validator just put in are verified; attach_links must not take them out.
-    verified = {link for source in sources.values() if (link := source.link())}
+    verified = briefing_links.known_links(sources)
     body = news_links.attach_links(checked.text, stories, keep=verified)
+    _LAST_BRIEFING_SOURCES["section_links"] = []
     try:
         extra = _briefing_sections()
     except Exception as exc:
@@ -1138,6 +1139,9 @@ def _finish_briefing(content):
         extra = "## Briefing sections\n_Didn't run: the section skills failed (%s)._" % type(exc).__name__
     if extra:
         body = body.rstrip() + "\n\n" + extra
+    # Last pass over everything assembled: the only links left are ones the tools returned.
+    allowed = verified | {s.get("url") for s in stories if s.get("url")} | set(_LAST_BRIEFING_SOURCES["section_links"])
+    body = briefing_links.strip_unknown_links(body, allowed)
     from agent_friday.services import briefing_sections
     body = briefing_sections.with_stamp(body, datetime.now())
     notice = _LAST_BRIEFING_SOURCES.get("skill_notices") or ""
@@ -1174,6 +1178,7 @@ def _briefing_sections():
         first_index=len(_LAST_BRIEFING_SOURCES.get("calendar") or []) + 1)
     _keep_briefing_sources(sections={r.skill: r.state for r in results},
                            sections_dropped={r.skill: r.dropped for r in results if r.dropped},
+                           section_links=sorted({link for r in results for link in r.links}),
                            sections_made=made.isoformat())
     if not results:
         return ""

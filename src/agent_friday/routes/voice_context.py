@@ -240,20 +240,21 @@ def voice_start_my_day():
     from agent_friday.services import start_my_day
     now = datetime.now()
     tasks = _vc_tasks()
-    found = start_my_day.fresh(now)
     made_now = False
     reason = ""
-    if found is None:
-        from agent_friday.routes.news import generate_briefing
-        result = generate_briefing()
-        response, code = result if isinstance(result, tuple) else (result, result.status_code)
-        body = response.get_json(silent=True) or {}
-        if code == 200 and body.get("status") == "ok":
-            found = start_my_day.fresh(datetime.now())
-            made_now = found is not None
-            reason = "" if found else "it was written without its generation time"
-        else:
-            reason = str(body.get("message") or "the briefing generator failed")[:200]
+    with start_my_day.GENERATING:              # a second press waits, then finds what the first one wrote
+        found = start_my_day.fresh(now)
+        if found is None:
+            from agent_friday.routes.news import generate_briefing
+            result = generate_briefing()
+            response, code = result if isinstance(result, tuple) else (result, result.status_code)
+            body = response.get_json(silent=True) or {}
+            if code == 200 and body.get("status") == "ok":
+                found = start_my_day.fresh(datetime.now())
+                made_now = found is not None
+                reason = "" if found else "it was written without its generation time"
+            else:
+                reason = str(body.get("message") or "the briefing generator failed")[:200]
     if found is None:
         try:
             from agent_friday.services.news_links import for_speech

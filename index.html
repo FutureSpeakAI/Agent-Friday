@@ -36691,7 +36691,7 @@ function NewsSectionSkills() {
       h('span', {style: {flex: 1, fontSize: 12, color: s.enabled ? '#e0e4ee' : '#666'}},
         s.heading, h('span', {style: {fontSize: 10, color: '#7fb6c9', marginLeft: 6}},
           s.skill + ' · ' + (FRIDAY_SECTION_STATE_WORDS[s.state] || s.state) + ' · ' + (s.days === 'daily' ? 'every day' : s.days))),
-      h('span', {className: 'toggle-pill ' + (s.enabled ? 'on' : ''), role: 'switch', 'aria-checked': s.enabled ? 'true' : 'false',
+      h('span', {className: 'toggle-pill ' + (s.enabled ? 'on' : ''), role: 'switch', 'aria-checked': s.enabled ? 'true' : 'false', 'aria-label': s.heading + ' section',
         tabIndex: 0, title: (s.enabled ? 'Turn off ' : 'Turn on ') + s.heading,
         onClick: () => toggle(s), onKeyDown: e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle(s); } }},
         s.enabled ? 'On' : 'Off'))),

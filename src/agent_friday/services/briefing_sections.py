@@ -59,28 +59,36 @@ class Result:
     markdown: str = ""
     reason: str = ""
     dropped: int = 0
+    links: tuple = ()               # the verified links the markdown carries (the final link pass keeps only these)
 
 
-def _days(spec_days: str) -> set:
-    """The weekday numbers (Monday 0) a days spec covers: "daily", "fri-sun", "mon,wed", or a single day."""
+_DAY_WORDS = {"daily": range(7), "weekdays": range(5), "weekends": (5, 6)}
+
+
+def _days(spec_days: str) -> Optional[set]:
+    """The weekday numbers (Monday 0) a days spec covers: "daily", "weekdays", "weekends", "fri-sun", "mon,wed", or
+    a single day. None when any part of it cannot be read (the section then says it did not run, and why)."""
     text = str(spec_days or "daily").strip().lower()
-    if text == "daily":
-        return set(range(7))
+    if text in _DAY_WORDS:
+        return set(_DAY_WORDS[text])
     out = set()
     for part in text.split(","):
         part = part.strip()
-        if "-" in part:
-            low, _, high = part.partition("-")
-            if low in DAY_NAMES and high in DAY_NAMES:
-                a, b = DAY_NAMES.index(low), DAY_NAMES.index(high)
-                out |= {d % 7 for d in range(a, b + 1 if b >= a else b + 8)}
+        low, dash, high = part.partition("-")
+        if dash and low in DAY_NAMES and high in DAY_NAMES:
+            a, b = DAY_NAMES.index(low), DAY_NAMES.index(high)
+            out |= {d % 7 for d in range(a, b + 1 if b >= a else b + 8)}
         elif part in DAY_NAMES:
             out.add(DAY_NAMES.index(part))
-    return out
+        else:
+            return None
+    return out or None
 
 
 def applies(spec: Spec, now: datetime) -> bool:
-    return spec.enabled and now.weekday() in _days(spec.days)
+    """On, and today is one of its days. A section whose days cannot be read applies (and says it did not run)."""
+    days = _days(spec.days)
+    return spec.enabled and (days is None or now.weekday() in days)
 
 
 def configured(settings: Optional[dict] = None) -> list:
@@ -90,6 +98,7 @@ def configured(settings: Optional[dict] = None) -> list:
             from agent_friday.core import _load_settings
             settings = _load_settings() or {}
         except Exception:
+            _log.exception("settings could not be read: the default briefing sections are used")
             settings = {}
     raw = settings.get(SETTING)
     if not isinstance(raw, list):
@@ -99,7 +108,8 @@ def configured(settings: Optional[dict] = None) -> list:
         if not isinstance(entry, dict) or not isinstance(entry.get("skill"), str) or not entry["skill"].strip():
             continue
         skill = entry["skill"].strip()
-        out.append(Spec(skill=skill, heading=str(entry.get("heading") or skill)[:80],
+        heading = " ".join(str(entry.get("heading") or skill).split()).lstrip("#").strip() or skill   # one line
+        out.append(Spec(skill=skill, heading=heading[:80],
                         days=str(entry.get("days") or "daily"), enabled=entry.get("enabled") is not False))
     return out
 
@@ -134,7 +144,7 @@ def didnt_run_line(skill: str, reason: str) -> str:
 def _prompt(spec: Spec, skill: briefing_skills.BriefingSkill, now: datetime, context: str) -> str:
     return "\n".join([
         "Write the \"%s\" section of today's briefing, following the %s skill below." % (spec.heading, skill.name),
-        "Today is %s." % now.strftime("%A %Y-%m-%d"),
+        "Today is %s %s." % (_WEEKDAYS[now.weekday()], now.strftime("%Y-%m-%d")),
         "Write markdown with no level-1 or level-2 heading (the heading is added for you).",
         "Cite each calendar entry you use by its id in square brackets, like [C1]. Never write a web address; "
         "links are added for you, and an item with no id is dropped.",
@@ -152,22 +162,45 @@ def run_one(spec: Spec, now: datetime, context: str, sources: dict, generate: Ca
         return Result(spec.skill, spec.heading, DID_NOT_RUN, reason="failed (%s)" % type(exc).__name__)
     if not isinstance(text, str) or not text.strip():
         return Result(spec.skill, spec.heading, DID_NOT_RUN, reason="returned nothing")
-    # Checked under a fixed events heading, so a custom heading cannot switch the checking off; the count line the
-    # validator appends is cut here and written once by `render`.
-    checked = briefing_links.validate("## Events\n%s" % text.strip(), sources)
+    # Checked under a fixed events heading, so a custom heading cannot switch the checking off. A heading the model
+    # wrote is made bold text first: as a heading it would end the events section and nothing under it would be
+    # checked. The count line the validator appends is cut here and written once by `render`.
+    flat = _HEADING_LINE.sub(lambda m: "**%s**" % m.group(1), text.strip())
+    checked = briefing_links.validate("## Events\n%s" % flat, sources)
     body = checked.text.split("\n", 1)[1] if "\n" in checked.text else ""
     if checked.dropped_total:
         body = body[:body.rindex(briefing_links._count_line(checked.dropped_total))]
-    return Result(spec.skill, spec.heading, RAN, markdown=body.strip(), dropped=checked.dropped_total)
+    links = tuple(sorted(link for link in briefing_links.known_links(sources) if link in body))
+    return Result(spec.skill, spec.heading, RAN, markdown=body.strip(), dropped=checked.dropped_total, links=links)
+
+
+_HEADING_LINE = re.compile(r"(?m)^\s{0,3}#{1,6}\s+(.*?)\s*#*\s*$")
+
+
+def _todays(now: datetime, specs) -> list:
+    return [spec for spec in (configured() if specs is None else specs) if applies(spec, now)]
 
 
 def run_all(now: datetime, calendar_rows, generate: Callable[[str], str], specs=None, first_index: int = 1) -> list:
     """Run every applicable section. Each gets the same numbered calendar windows; the ids it may cite are the
-    entries the tools returned, and nothing else."""
+    entries the tools returned, and nothing else. A section whose days cannot be read says so instead of running."""
     context = briefing_events.build(now, calendar_rows, first_index=first_index)
     sources = briefing_links.collect(calendar=context.calendar)
-    return [run_one(spec, now, context.text, sources, generate)
-            for spec in (configured() if specs is None else specs) if applies(spec, now)]
+    out = []
+    for spec in _todays(now, specs):
+        if _days(spec.days) is None:
+            out.append(Result(spec.skill, spec.heading, DID_NOT_RUN,
+                              reason="has days that could not be read (%s)" % spec.days[:40]))
+        else:
+            out.append(run_one(spec, now, context.text, sources, generate))
+    return out
+
+
+def fingerprint(now: datetime, specs=None) -> str:
+    """What today's sections depend on besides the calendar: the sections that apply and each skill's state. Stored
+    sections made under another fingerprint are made again (a section switched off, a skill just approved)."""
+    return json.dumps([[s.skill, s.heading, s.days, briefing_skills.load(s.skill).state]
+                       for s in _todays(now, specs)], sort_keys=True)
 
 
 def render(results) -> str:
@@ -188,8 +221,9 @@ def _path() -> Path:
     return friday_home() / SECTIONS_FILE
 
 
-def store(now: datetime, results) -> None:
-    data = {"generated_at": now.isoformat(), "results": [r.__dict__ for r in results]}
+def store(now: datetime, results, made_for: str = "") -> None:
+    data = {"generated_at": now.isoformat(), "fingerprint": made_for,
+            "results": [dict(r.__dict__, links=list(r.links)) for r in results]}
     target = _path()
     target.parent.mkdir(parents=True, exist_ok=True)
     fd, name = tempfile.mkstemp(prefix=".sections-", suffix=".tmp", dir=target.parent)
@@ -202,15 +236,18 @@ def store(now: datetime, results) -> None:
             os.unlink(name)
 
 
-def stored(now: datetime):
-    """(generated_at, results) when sections made today, within MAX_AGE, are stored; else None."""
+def stored(now: datetime, made_for: Optional[str] = None):
+    """(generated_at, results) when sections made today, within MAX_AGE (and, when `made_for` is given, under that
+    fingerprint) are stored; else None."""
     try:
         data = json.loads(_path().read_text(encoding="utf-8"))
         made = datetime.fromisoformat(data["generated_at"])
-        results = [Result(**row) for row in data["results"]]
+        results = [Result(**dict(row, links=tuple(row.get("links") or ()))) for row in data["results"]]
     except (OSError, ValueError, KeyError, TypeError):
         return None
     if made.date() != now.date() or now - made > MAX_AGE or now < made:
+        return None
+    if made_for is not None and data.get("fingerprint") != made_for:
         return None
     return made, results
 
@@ -220,12 +257,13 @@ def age_words(made: datetime, now: datetime) -> str:
     return "just now" if minutes < 2 else "%d minutes ago" % minutes if minutes < 90 else "%d hours ago" % round(minutes / 60)
 
 
-_STAMP_FORMAT = "%A %Y-%m-%d %H:%M"
-_STAMP = re.compile(r"_Generated ([A-Za-z]+ \d{4}-\d{2}-\d{2} \d{2}:\d{2})_")
+#: English day names written by code, so the stamp reads back the same under any system locale.
+_WEEKDAYS = ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")
+_STAMP = re.compile(r"_Generated [A-Za-z]+ (\d{4}-\d{2}-\d{2} \d{2}:\d{2})_")
 
 
 def stamp(now: datetime) -> str:
-    return "_Generated %s_" % now.strftime(_STAMP_FORMAT)
+    return "_Generated %s %s_" % (_WEEKDAYS[now.weekday()], now.strftime("%Y-%m-%d %H:%M"))
 
 
 def with_stamp(text: str, now: datetime) -> str:
@@ -242,7 +280,7 @@ def generated_at(text: str) -> Optional[datetime]:
     if not found:
         return None
     try:
-        return datetime.strptime(found.group(1), _STAMP_FORMAT)
+        return datetime.strptime(found.group(1), "%Y-%m-%d %H:%M")
     except ValueError:
         return None
 
@@ -256,9 +294,10 @@ def made_line(made: datetime, now: datetime) -> str:
 
 def current(now: datetime, calendar_rows, generate: Callable[[str], str], specs=None, first_index: int = 1):
     """Today's sections and when they were made: the stored ones when they are fresh, else made now and stored."""
-    fresh = stored(now)
+    made_for = fingerprint(now, specs)
+    fresh = stored(now, made_for)
     if fresh is not None:
         return fresh
     results = run_all(now, calendar_rows, generate, specs, first_index)
-    store(now, results)
+    store(now, results, made_for)
     return now, results

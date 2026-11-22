@@ -146,3 +146,43 @@ def test_collect_keeps_only_well_formed_sources_and_never_invents_an_id():
     got = bl.collect(news=[{"id": "N1", "title": "T", "url": "https://x.example.test/a"}, {"title": "no id"}, "junk", None],
                      email=[{"sender": "no id", "message_id": "18f3a1b2c3d4e5f6"}])
     assert sorted(got) == ["N1"]
+
+
+# -- by what an item says, not only where it sits (review of #1115) ---------------------------------
+
+def test_an_address_in_round_or_angle_brackets_is_removed_like_any_other_typed_address():
+    got = run("## News\n- Council passes the budget (https://evil.example.test/phish) [N1]\n"
+              "- Storm warning <https://evil.example.test/storm> [N2]\n")
+    assert "evil.example.test" not in got.text and got.dropped_total == 0
+
+
+def test_one_unknown_id_sinks_the_item_even_beside_a_real_one():
+    got = run("## Today's Calendar\n- Planning, then a call. [C1, C9]\n")
+    assert "Planning" not in got.text and got.dropped == {"calendar": 1}
+
+
+def test_agenda_and_meetings_headings_are_sourced_sections():
+    got = run("## Today's Agenda\n- Something with no source.\n## Meetings\n- Planning at ten. [C1]\n")
+    assert "no source" not in got.text.split("_")[0] and "calendar.example.test/event?eid=abc123" in got.text
+    assert got.dropped == {"calendar": 1}
+
+
+def test_tasks_and_insights_outside_the_sourced_sections_are_kept():
+    got = run("## Tasks & Deadlines\n- File the grant report by Friday.\n## One insight\n- Block an hour for it.\n")
+    assert "File the grant report" in got.text and "Block an hour" in got.text and got.dropped_total == 0
+
+
+def test_a_heading_that_names_two_kinds_accepts_both():
+    got = run("## Schedule & Inbox\n- Planning at ten. [C1]\n- Dana asks about the budget. [E1]\n")
+    assert got.dropped_total == 0 and "calendar.example.test" in got.text and "mail.google.com" in got.text
+
+
+def test_prose_that_cites_or_links_is_checked_too():
+    got = run("## Tasks\nA note pointing at https://evil.example.test/x and a made-up [C9].\n")
+    assert "evil.example.test" not in got.text and "made-up" not in got.text and got.dropped == {"other": 1}
+
+
+def test_the_final_pass_keeps_only_known_links_anywhere_in_the_text():
+    text = "## Extra\n- [Presale](https://evil.example.test/presale) and [ok](https://gazette.example.test/budget)\n"
+    out = bl.strip_unknown_links(text, {"https://gazette.example.test/budget"})
+    assert "evil.example.test" not in out and "Presale" in out and "](https://gazette.example.test/budget)" in out
