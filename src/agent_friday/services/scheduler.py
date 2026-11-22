@@ -40,6 +40,7 @@ from agent_friday.core import FRIDAY_DIR, _load_settings, process_log, process_r
 from agent_friday.services.visible_jobs import visible_job
 from agent_friday.services.job_prompt import Job as _JobPromptJob
 from agent_friday.services import schedule_math as _sm
+from agent_friday.services import schedule_health
 
 # ── Storage ──────────────────────────────────────────────────────────────────
 SCHEDULES_FILE = FRIDAY_DIR / "schedules.json"
@@ -382,11 +383,31 @@ def list_schedules() -> list:
     with _STORE_LOCK:
         recs = [dict(r) for r in _read_store()]
     now = _now_central()
+    runs = _run_history_rows()
+    wall = _time.time()
     for r in recs:
         r["next_run"] = _next_run_ts(r, now)
         r["running"] = r.get("id") in _RUNNING
         r.update(schedule_view(r))
+        flag = schedule_health.evaluate(r, wall, schedule_health.last_success(runs, r.get("id")))
+        r["health"], r["health_reason"] = flag["state"], flag["reason"]
     return recs
+
+
+def _run_history_rows() -> list:
+    """The run history rows (schedule_runs.jsonl) the health flag reads; unreadable lines are skipped."""
+    rows = []
+    try:
+        for line in RUNS_FILE.read_text(encoding="utf-8").splitlines():
+            try:
+                row = json.loads(line)
+            except ValueError:
+                continue
+            if isinstance(row, dict):
+                rows.append(row)
+    except OSError:
+        pass
+    return rows
 
 
 #: Run statuses that mean "held on purpose, with a reason" (pinned model
