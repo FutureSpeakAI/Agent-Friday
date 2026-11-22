@@ -112,3 +112,20 @@ def test_a_weekday_the_page_itself_holds_is_left_alone(wiki):
     assert _edit("- Dentist: 2026-11-24 (Tuesday)\n- Trip: 2026-12-01",
                  "- Dentist: 2026-11-26 (Thursday)\n- Trip: 2026-12-01")["status"] == "applied"
     assert _page(wiki) == before.replace(b"2026-11-24 (Tuesday)", b"2026-11-26 (Thursday)")
+
+
+def test_a_miss_on_an_unchanged_page_says_not_found_as_written_and_shows_the_nearest_text(wiki):
+    _put(wiki, TEXT, "\r\n")
+    out = _edit("- Sam: likes coffee\n- Kim: likes cake", "- Sam: x\n- Kim: y")
+    assert out["status"] == "stale"
+    assert "not found as written" in out["message"], out["message"]
+    assert "changed" not in out["message"], "an unchanged page was reported as changed"
+    assert "- Kim: likes juice" in out["message"], "the nearest text was not shown"
+
+
+def test_the_page_is_called_changed_only_when_its_hash_differs_from_the_one_read(wiki):
+    _put(wiki, TEXT, "\r\n")
+    out = we.apply_wiki_proposal_result({"file": PAGE, "mode": "edit", "old_value": "- Alex: likes tea",
+                                         "new_value": "- Alex: likes milk"}, before_sha256="0" * 64)
+    assert out["status"] == "stale" and "changed" in out["message"].lower(), out
+    assert b"likes tea" in _page(wiki), "a page that differs from the read was written anyway"
