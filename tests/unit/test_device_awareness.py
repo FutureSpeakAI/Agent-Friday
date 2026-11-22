@@ -207,7 +207,8 @@ def test_the_live_read_joins_store_household_and_open_streams(live):
                                  {"kind": "tv", "remove": True, "grant": "tv_brain", "approve": "yes"}])
 def test_the_tool_answers_in_words_and_changes_nothing(live, inp):
     out = da.tool_devices_status(inp)
-    assert isinstance(out, str) and "paired" in out
+    assert isinstance(out, str) and ("paired" in out or "connected" in out)
+    assert "d1" not in out and "d2" not in out
 
 
 def test_the_tool_says_so_when_the_store_cannot_be_read(monkeypatch):
