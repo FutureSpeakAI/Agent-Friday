@@ -29,7 +29,7 @@ import json
 from datetime import datetime
 
 ACTIONS = ("list", "get", "create", "pause", "resume", "delete", "update", "restore_default", "revert")
-TRIGGERS = ("daily", "weekly", "monthly", "interval", "on_idle")
+TRIGGERS = ("daily", "weekly", "monthly", "interval", "on_idle", "after")
 
 
 def _when_text(rec):
@@ -396,6 +396,13 @@ TOOL_SCHEMAS = [
                           "description": "Monday=0 ... Sunday=6 (weekly)."},
              "day": {"type": "integer", "description": "Day of month 1-31, or -1 for the last day (monthly)."},
              "every_minutes": {"type": "integer"},
+             "job": {"type": "string",
+                     "description": "after: the schedule_id of the job this one runs after (run when it finishes "
+                                    "successfully)."},
+             "deadline_hour": {"type": "integer",
+                               "description": "after: the latest hour it may start; it runs then even if the job it follows "
+                                              "is late or failed, and says its data is stale."},
+             "deadline_minute": {"type": "integer", "description": "after: the minute of the deadline (default 0)."},
              "idle_minutes": {"type": "integer",
                               "description": "on_idle: run after this many minutes with no input from the owner."},
              "min_gap_minutes": {"type": "integer",

@@ -104,7 +104,7 @@ def validate_timing(when):
     if not isinstance(when, dict) or not isinstance(when.get("spec", {}), dict):
         raise UserFacingValueError("Choose a supported schedule and its timing.")
     trigger, spec = when.get("trigger"), copy.deepcopy(when.get("spec") or {})
-    if trigger not in ("daily", "weekly", "monthly", "interval", "once", "on_idle"):
+    if trigger not in ("daily", "weekly", "monthly", "interval", "once", "on_idle", "after"):
         raise UserFacingValueError("That timing isn't one Friday can keep.")
     def number(key, default, low, high, integer=True):
         value = spec.get(key, default)
@@ -128,6 +128,16 @@ def validate_timing(when):
         spec["weekdays"] = sorted(set(days))
     if trigger == "interval":
         spec["every_minutes"] = number("every_minutes", 60, 1, 525600)
+    if trigger == "after":
+        job = spec.get("job")
+        if not isinstance(job, str) or not job.strip():
+            raise UserFacingValueError("Say which job this one runs after (spec.job).")
+        spec["job"] = job.strip()
+        if "deadline_hour" not in spec:
+            raise UserFacingValueError("Give the latest time it may start (spec.deadline_hour and deadline_minute): "
+                                       "it runs then even if the job it follows has not finished.")
+        spec["deadline_hour"] = number("deadline_hour", 0, 0, 23)
+        spec["deadline_minute"] = number("deadline_minute", 0, 0, 59)
     if trigger == "on_idle":
         spec["idle_minutes"] = number("idle_minutes", 10, 1, 1440)
         spec["min_gap_minutes"] = number("min_gap_minutes", 60, 0, 10080)

@@ -41,6 +41,7 @@ from agent_friday.services.visible_jobs import visible_job
 from agent_friday.services.job_prompt import Job as _JobPromptJob
 from agent_friday.services import schedule_math as _sm
 from agent_friday.services import builtin_overrides
+from agent_friday.services import schedule_after
 
 # ── Storage ──────────────────────────────────────────────────────────────────
 SCHEDULES_FILE = FRIDAY_DIR / "schedules.json"
@@ -603,6 +604,8 @@ def _normalize_record(rec, *, source="user"):
 def register_schedule(record) -> dict:
     """Create a user-defined schedule from the API. Returns the stored record."""
     rec = _normalize_record(record, source="user")
+    if rec.get("trigger") == "after":
+        schedule_after.validate(rec.get("id"), rec.get("spec"), _read_store())
     return _upsert(rec)
 
 
@@ -693,6 +696,8 @@ def update_schedule(sid, patch, *, by="owner", _record=True) -> dict | None:
         if changed_run_fields and cur.get("quiet_deferred"):
             dropped = cur.get("quiet_deferred")
             cur["quiet_deferred"] = None
+        if cur.get("trigger") == "after":
+            schedule_after.validate(cur.get("id"), cur.get("spec"), _read_store())
         out = _upsert(cur)
         if builtin_before is not None and _record and by != "auto":
             _log_builtin_edit(sid, builtin_before, cur, by)
@@ -1357,6 +1362,18 @@ def on_idle_blocked_reason(rec=None, spec=None, now=None) -> str:
     return ""
 
 
+def _after_due(rec, now) -> bool:
+    """An ``after`` job is due when the job it runs after has succeeded today, or failed today, or its deadline has passed
+    (services/schedule_after). A run on stale data carries the facts to say so in ``rec["_stale"]``."""
+    spec = rec.get("spec") or {}
+    upstream = next((r for r in _read_store() if r.get("id") == spec.get("job")), None)
+    verdict = schedule_after.evaluate(spec, upstream, now)
+    if verdict is None:
+        return False
+    rec["_stale"] = verdict["stale"]
+    return True
+
+
 def _idle_window_ok(rec, spec, now) -> bool:
     reason = idle_work_blocked_reason(rec, spec, now)
     if not reason:
@@ -1632,6 +1649,8 @@ def _is_due_on_schedule(rec, now) -> bool:
     today = now.strftime("%Y-%m-%d")
     if rec.get("last_run_date") == today:
         return False
+    if trig == "after":
+        return _after_due(rec, now)
     if trig == "idle_daily":
         # Once a day, but WHILE THE USER IS AWAY rather than at a fixed hour.
         #
@@ -1677,6 +1696,12 @@ def _next_run_ts(rec, now):
         if trig == "once":
             at = float(spec.get("at") or 0)
             return at if (at > 0 and not rec.get("last_run_ts")) else None
+        if trig == "after":
+            from datetime import timedelta
+            deadline = schedule_after.deadline_of(spec, now)
+            if deadline <= now or rec.get("last_run_date") == now.strftime("%Y-%m-%d"):
+                deadline += timedelta(days=1)
+            return deadline.timestamp()           # the latest it starts; sooner when the job it follows finishes
         from datetime import timedelta
         hour, minute = _spec_hm(spec)
         cand = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
@@ -2158,6 +2183,8 @@ def _run_task_inner(rec):
     prompt = task.get("prompt") or ""
     if not prompt.strip():
         raise RuntimeError("agent_prompt schedule has no prompt")
+    if rec.get("_stale"):
+        prompt = schedule_after.stale_prompt(rec["_stale"]) + prompt
     if rec.get("email_send") is True:
         # services/email_jobs: this job was made to send its emails; draft_email is a send here.
         prompt += ("\n\n(This job sends the emails it writes: call draft_email with send=true. "
@@ -2483,6 +2510,8 @@ def dispatch(rec, *, manual=False, require_enabled=False):
             if isinstance(result, dict) and result.get("outcome"):
                 outcome = str(result["outcome"])
             summary = _summarize(result)
+            if rec.get("_stale"):
+                summary = schedule_after.stale_words(rec["_stale"]) + summary
             if _late_slot_day(rec):
                 summary = "Ran late: it came due in %s. " % _cause_words(_late_cause(rec)) + summary
             if rec.get("_missed_slot"):
@@ -2525,7 +2554,8 @@ def dispatch(rec, *, manual=False, require_enabled=False):
             _mode = rec.get("notify", "on_complete")
             _patch_record(sid, last_status=status, last_summary=summary,
                           retry_pending=False, retry_count=0, not_before=0,
-                          catch_up=None, held_retry=None)
+                          catch_up=None, held_retry=None,
+                          **({"last_success_ts": _time.time()} if status == "complete" else {}))
             try:
                 from agent_friday.services.voice_engine import _notif_engine as _ne_ok
                 if _ne_ok:

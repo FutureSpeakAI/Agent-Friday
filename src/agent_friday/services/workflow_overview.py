@@ -99,6 +99,10 @@ def describe_when(when) -> str:
         return f"Once, on {at.strftime('%A, %B')} {at.day} at {_clock(at.hour, at.minute)}"
     if trig == "idle_daily":
         return "Once a day, while you're away from the computer"
+    if trig == "after":
+        return ("After %s finishes, and no later than %s (it runs then even if that job is late or failed, and says its "
+                "data is stale)" % (spec.get("job") or "its job", _clock(int(spec.get("deadline_hour", 0)),
+                                                                           int(spec.get("deadline_minute", 0)))))
     if trig == "on_idle":
         minutes = max(1, int(spec.get("idle_minutes", 10)))
         gap = max(0, int(spec.get("min_gap_minutes", 60)))
