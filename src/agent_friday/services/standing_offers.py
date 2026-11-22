@@ -99,6 +99,14 @@ def offer_due(card: Dict[str, Any], now: Optional[float] = None) -> Optional[act
         return None
 
 
+def still_earned(fingerprint: str, now: Optional[float] = None) -> bool:
+    """The count that earned the offer still holds: enough approvals and none denied since."""
+    now = time.time() if now is None else now
+    rows = _recent_rows(fingerprint, now)
+    return (_approvals_since_last_denial(rows) >= OFFER_AFTER_APPROVALS
+            and not _denied_recently(fingerprint, now))
+
+
 def record_offer_raised(fingerprint: str, now: Optional[float] = None) -> None:
     with _LOCK:
         state = _load()
