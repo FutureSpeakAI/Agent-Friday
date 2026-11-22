@@ -45,7 +45,14 @@ def _squeezing_compressor(monkeypatch):
 
     asked = []
     comp = ContextCompressor(enabled=True, min_tokens_to_compress=1)
-    comp.asked = asked
+    comp.asked = asked                       # what the stand-in Headroom was handed
+    comp.ran = []                            # every compress() the chat route made
+    real_compress = comp.compress
+
+    def compress(messages, *a, **kw):
+        comp.ran.append(len(messages))
+        return real_compress(messages, *a, **kw)
+    monkeypatch.setattr(comp, "compress", compress)
     monkeypatch.setattr(comp, "_load_headroom", lambda: headroom)
     import agent_friday.routes.chat as chat_mod
     monkeypatch.setattr(chat_mod, "_get_context_compressor", lambda cfg: comp)
@@ -66,7 +73,7 @@ def test_the_reply_and_the_history_the_model_is_sent_are_exactly_as_written(clou
 
     nxt = _model(monkeypatch, call_tools=False, final=SECOND_REPLY)
     second = _turn(cloud_only, "And is the harbor as old as the rest of the town?")
-    assert comp.asked, "the compressor was never asked: this test would prove nothing"
+    assert comp.ran, "the route never ran compression on the history: this test would prove nothing"
     sent = nxt.sent[0]["messages"]
     assistant = [_text_of(m["content"]) for m in sent if m["role"] == "assistant"]
     user = [_text_of(m["content"]) for m in sent if m["role"] == "user"]

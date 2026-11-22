@@ -22,7 +22,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
 import pytest
 
-from agent_friday.pipeline.context_compressor import ContextCompressor, _CHARS_PER_TOKEN
+from agent_friday.pipeline.context_compressor import _CHARS_PER_TOKEN, _NOTHING_COMPRESSED_AFTER, ContextCompressor
 
 
 # ── helpers ───────────────────────────────────────────────────────────────────
@@ -217,7 +217,7 @@ class TestCompressGracefulPassthrough:
             raise RuntimeError("simulated headroom crash")
 
         cc._headroom = _bad_compress  # bypass lazy import
-        msgs = [_msg("large " * 300)]
+        msgs = [{"role": "tool", "content": "large " * 300}]   # tool output: what Headroom is asked to compress
         result = cc.compress(msgs)
         assert result is msgs
         assert cc._stats["errors"] == 1
@@ -246,19 +246,28 @@ class TestCompressGracefulPassthrough:
         assert cc._stats["tokens_before"] == before and cc._stats["tokens_after"] == after
         assert cc._stats["tokens_saved"] == before - after > 0
 
-    def test_a_result_that_only_clipped_conversation_text_is_a_passthrough(self):
+    def test_a_conversation_only_history_is_not_sent_to_headroom_and_counts_nothing(self):
+        """Every chat turn's history is the person's and Friday's words only: nothing there may be compressed, so Headroom is
+        not asked (no wasted call) and nothing is counted, so a healthy Headroom never reads as one that compresses nothing."""
         cc = ContextCompressor(enabled=True)
+        asked = []
 
         class FakeResult:
-            messages = [_msg("clipped")]
+            messages = [_msg("clipped"), {"role": "assistant", "content": "clipped"}]
             tokens_before = 100
             tokens_after = 20
             tokens_saved = 80
 
-        cc._headroom = lambda msgs, model=None: FakeResult()
-        original = [_msg("original " * 100)]
-        assert cc.compress(original) == original
-        assert cc._stats["calls"] == 0 and cc._stats["passthrough"] == 1
+        def headroom(msgs, model=None):
+            asked.append(len(msgs))
+            return FakeResult()
+        cc._headroom = headroom
+        original = [_msg("original " * 100), {"role": "assistant", "content": [{"type": "text", "text": "reply " * 100}]}]
+        for _ in range(_NOTHING_COMPRESSED_AFTER + 1):
+            assert cc.compress(original) == original
+        assert asked == [], "conversation-only text was sent to Headroom"
+        assert cc._stats["calls"] == 0 and cc._stats["passthrough"] == 0 and cc._stats["errors"] == 0
+        assert cc.get_stats()["available"] is True, "three chat turns made a working Headroom read as broken"
 
 
 # ════════════════════════════════════════════════════════════════════════

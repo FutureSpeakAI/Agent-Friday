@@ -31,7 +31,7 @@ def _fake_headroom(monkeypatch, *, with_core, compress=None):
 def test_missing_native_core_is_reported_as_unavailable(monkeypatch):
     _fake_headroom(monkeypatch, with_core=False)
     cc = ContextCompressor()
-    msgs = [{"role": "user", "content": "x" * 8000}]
+    msgs = [{"role": "tool", "content": "x" * 8000}]
     assert cc.compress(msgs) is msgs
     s = cc.get_stats()
     assert s["available"] is False
@@ -43,7 +43,7 @@ def test_a_passthrough_is_not_counted_as_a_compression():
     cc = ContextCompressor()
     cc._headroom = lambda msgs, model=None: types.SimpleNamespace(
         messages=msgs, tokens_before=0, tokens_after=0, tokens_saved=0)
-    msgs = [{"role": "user", "content": "x" * 8000}]
+    msgs = [{"role": "tool", "content": "x" * 8000}]
     assert cc.compress(msgs) is msgs
     s = cc.get_stats()
     assert s["calls"] == 0 and s["passthrough"] == 1 and s["tokens_saved"] == 0
@@ -101,7 +101,7 @@ def _unchanged_with_counts(msgs, model=None):
 def test_counts_without_a_saving_are_a_passthrough(monkeypatch):
     _fake_headroom(monkeypatch, with_core=True, compress=_unchanged_with_counts)
     cc = ContextCompressor()
-    msgs = [{"role": "user", "content": "x" * 8000}]
+    msgs = [{"role": "tool", "content": "x" * 8000}]
     assert cc.compress(msgs) is msgs
     s = cc.get_stats()
     assert s["calls"] == 0 and s["passthrough"] == 1 and s["tokens_saved"] == 0
@@ -110,7 +110,7 @@ def test_counts_without_a_saving_are_a_passthrough(monkeypatch):
 def test_a_headroom_that_never_compresses_stops_claiming_to_be_available(monkeypatch):
     _fake_headroom(monkeypatch, with_core=True, compress=_unchanged_with_counts)
     cc = ContextCompressor()
-    msgs = [{"role": "user", "content": "x" * 8000}]
+    msgs = [{"role": "tool", "content": "x" * 8000}]
     for _ in range(ccmod._NOTHING_COMPRESSED_AFTER):
         cc.compress(msgs)
     s = cc.get_stats()
@@ -124,7 +124,7 @@ def test_failures_count_toward_compressing_nothing(monkeypatch):
     _fake_headroom(monkeypatch, with_core=True, compress=boom)
     cc = ContextCompressor()
     for _ in range(ccmod._NOTHING_COMPRESSED_AFTER):
-        cc.compress([{"role": "user", "content": "x" * 8000}])
+        cc.compress([{"role": "tool", "content": "x" * 8000}])
     assert cc.get_stats()["available"] is False
 
 
@@ -192,10 +192,10 @@ def test_the_upload_beacon_is_switched_off_before_import(monkeypatch):
     def _compress(msgs, model=None):
         import os
         seen.update({k: os.environ.get(k) for k in _UPLOAD_SWITCHES})
-        return types.SimpleNamespace(messages=[{"role": "user", "content": "short"}],
+        return types.SimpleNamespace(messages=[{"role": "tool", "content": "short"}],
                                      tokens_before=2000, tokens_after=10, tokens_saved=1990)
     _fake_headroom(monkeypatch, with_core=True, compress=_compress)
-    ContextCompressor().compress([{"role": "user", "content": "x" * 8000}])
+    ContextCompressor().compress([{"role": "tool", "content": "x" * 8000}])
     assert seen == _UPLOAD_SWITCHES
 
 
