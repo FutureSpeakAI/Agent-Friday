@@ -32,6 +32,9 @@ const ARCHIVE = [
 test('recent lists only open jobs and the archive keeps the closed ones with their date', async ({ page }, info) => {
   await page.route('**/api/career/jobs?view=recent*', r => r.fulfill(json({ status: 'ok', view: 'recent', jobs: RECENT })));
   await page.route('**/api/career/jobs?view=archive*', r => r.fulfill(json({ status: 'ok', view: 'archive', jobs: ARCHIVE })));
+  // Past first run: its own screen covers the app (as in headings.spec.ts).
+  await page.route('**/api/setup/status', r => r.fulfill(json({ initialized: true })));
+  test.setTimeout(180_000);
   await bootApp(page);
   await openWorkspace(page, 'career');
   await page.getByRole('button', { name: 'scanner' }).click();
@@ -48,6 +51,7 @@ test('recent lists only open jobs and the archive keeps the closed ones with the
   const closedOn = new Date('2026-07-20T00:00:00').toLocaleDateString();
   await expect(archived.first()).toContainText('closed');
   await expect(archived.first()).toContainText(closedOn);
+  await expect(archived.nth(1)).toContainText('expired');
 
   const clipped = await page.evaluate(() => Array.from(document.querySelectorAll(
     '[data-testid="career-recent-job"], [data-testid="career-archived-job"]'))

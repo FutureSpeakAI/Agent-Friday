@@ -229,10 +229,14 @@ test('Review setup reopens a user-collapsed setup card before readiness',async()
   assert.equal(details().props.open,true);
 });
 
-const RECENT = [{key: 'k1', job_id: 'job_1', title: 'Staff Engineer', company: 'Acme Robotics', location: 'Remote', score: 0.5,
-                 status: 'open', last_seen: '2026-11-19T09:00:00', first_seen: '2026-11-18T09:00:00'}];
+const RECENT = [{key: 'k1', job_id: 'job_1', title: 'Staff Engineer', company: 'Acme Robotics', location: 'Denver, CO',
+                 remote: true, score: 0.5, status: 'open', last_seen: '2026-11-19T09:00:00', first_seen: '2026-11-18T09:00:00'},
+                {key: 'k5', job_id: 'job_5', title: 'Platform Lead', company: 'Gamma Works', location: 'Austin, TX',
+                 remote: false, score: 0.4, status: 'applied', last_seen: '2026-11-01T09:00:00', first_seen: '2026-10-01T09:00:00'}];
 const ARCHIVE = [{key: 'k2', title: 'Closed Back In July', company: 'Beta Labs', location: 'Remote', status: 'closed',
-                  closed_at: '2026-07-20T00:00:00', close_reason: 'closing date passed', last_seen: '2026-07-02T09:00:00'}];
+                  closed_at: '2026-07-20T00:00:00', close_reason: 'closing date passed', last_seen: '2026-07-02T09:00:00'},
+                 {key: 'k3', title: 'Quietly Gone', company: 'Delta Systems', location: 'Remote', status: 'expired',
+                  closed_at: '2026-07-05T00:00:00', close_reason: 'not seen for 30 days', last_seen: '2026-06-05T09:00:00'}];
 const jobsRequest = url => url === '/api/career/jobs?view=recent' ? response({status: 'ok', jobs: RECENT})
   : url === '/api/career/jobs?view=archive' ? response({status: 'ok', jobs: ARCHIVE}) : null;
 
@@ -242,8 +246,8 @@ test('the scanner view lists open recently seen jobs and puts closed ones in the
   const nodesNow = ui.all();
   const recent = nodesNow.filter(n => n.props['data-testid'] === 'career-recent-job');
   const archived = nodesNow.filter(n => n.props['data-testid'] === 'career-archived-job');
-  assert.equal(recent.length, 1); assert.match(JSON.stringify(recent[0]), /Staff Engineer/);
-  assert.equal(archived.length, 1);
+  assert.equal(recent.length, 2); assert.match(JSON.stringify(recent[0]), /Staff Engineer/);
+  assert.equal(archived.length, 2);
   assert.match(JSON.stringify(archived[0]), /Closed Back In July/);
   assert.match(JSON.stringify(archived[0]), /"closed"/); assert.match(JSON.stringify(archived[0]), /closing date passed/);
   assert.ok(JSON.stringify(archived[0]).includes(new Date('2026-07-20T00:00:00').toLocaleDateString()), 'the date it closed is shown');
@@ -263,4 +267,16 @@ test('Scan Now that scanned listings says it refreshed', async () => {
   await ui.button('scanner').props.onClick(); await flush();
   await ui.button('Scan Now').props.onClick(); await flush();
   assert.match(JSON.stringify(ui.render()), /Job scanner refreshed/);
+});
+
+test('a remote job says remote, an applied one says applied, and an expired archive row says expired not closed', async () => {
+  const ui = mount({request: jobsRequest}); await flush();
+  await ui.button('scanner').props.onClick(); await flush();
+  const text = node => JSON.stringify(node);
+  const [remoteJob, appliedJob] = ui.all().filter(n => n.props['data-testid'] === 'career-recent-job');
+  assert.match(text(remoteJob), / · remote/); assert.doesNotMatch(text(remoteJob), / · applied/);
+  assert.match(text(appliedJob), / · applied/); assert.doesNotMatch(text(appliedJob), / · remote/);
+  const [closedRow, expiredRow] = ui.all().filter(n => n.props['data-testid'] === 'career-archived-job');
+  assert.match(text(closedRow), /"closed"/); assert.doesNotMatch(text(closedRow), /"expired"/);
+  assert.match(text(expiredRow), /"expired"/); assert.doesNotMatch(text(expiredRow), /"closed"/);
 });
