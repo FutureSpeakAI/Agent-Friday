@@ -224,3 +224,65 @@ def test_the_proposal_fingerprint_is_canonical_json():
     from agent_friday.tv_gateway import ws_view
     assert ws_view.proposal_fp("knowledge", "r1", {"customization": {"b": 1, "a": "é"}}) == \
         fp("knowledge", "r1", {"customization": {"b": 1, "a": "é"}})
+
+
+# ── critic round 1 (PASS with should-fix): every outcome answers plainly, nothing half-written ────────
+
+def test_a_store_that_cannot_write_is_503_with_a_receipt_never_a_500(client, monkeypatch):
+    seen = []
+    monkeypatch.setattr(device_pairing, "_receipt", lambda kind, dev, **kw: seen.append((kind, kw.get("reason"))))
+    dev = Enrolled(client)
+
+    def boom(*a, **k):
+        raise OSError("disk full")
+    monkeypatch.setattr(aws, "apply_change", boom)
+    r, _ = propose(dev, {"customization": {"density": "compact"}})
+    assert r.status_code == 503 and r.get_json()["code"] == "pc_unavailable"
+    assert ("workspace_view_refused", "pc_unavailable") in seen
+
+
+def test_off_the_record_the_first_change_writes_nothing_at_all(client, monkeypatch):
+    dev = Enrolled(client)
+
+    def off():
+        raise PermissionError("off the record")
+    monkeypatch.setattr(store, "_admit_write", off)
+    r, _ = propose(dev, {"customization": {"density": "compact"}})
+    assert r.status_code == 423 and r.get_json()["code"] == "off_record"
+    assert store.load("knowledge") is None, "the builtin must not be stored on its own when the change is refused"
+
+
+def test_the_first_change_is_one_write_the_builtin_kept_as_its_earlier_version(client, monkeypatch):
+    writes = []
+    real = store._write_atomic
+    monkeypatch.setattr(store, "_write_atomic", lambda p, d: (writes.append(p), real(p, d)))
+    dev = Enrolled(client)
+    r, _ = propose(dev, {"customization": {"density": "compact"}})
+    assert r.status_code == 200 and len(writes) == 1
+    versions = store.load("knowledge")["versions"]
+    assert len(versions) == 1 and versions[0]["doc"] == aws.builtin("knowledge") and versions[0]["customization"] == {}
+
+
+def test_a_huge_time_is_refused_not_a_500(client):
+    dev = Enrolled(client)
+    r, _ = propose(dev, {"customization": {"density": "compact"}}, when=10 ** 400)
+    assert r.status_code in (400, 403)
+
+
+def test_restore_on_a_view_never_changed_is_refused_and_writes_nothing(client):
+    dev = Enrolled(client)
+    r, _ = propose(dev, {"restore": "abc123"})
+    assert r.status_code == 400 and r.get_json()["rule"] == "version"
+    assert store.load("knowledge") is None
+
+
+@pytest.mark.parametrize("kind", ["watch", "no_right"])
+def test_the_proposals_route_itself_refuses_a_device_that_may_not_approve(client, kind):
+    from tests.unit.test_tv_gateway import auth, open_session
+    dev = paired(kind="watch") if kind == "watch" else paired()
+    r = client.post(VIEW + "/proposals", json={"base_rev": aws.builtin_rev("knowledge"),
+                                              "change": {"customization": {"density": "compact"}},
+                                              "nonce": "n", "time": int(time.time()), "sig": "AAAA"},
+                    headers=auth(open_session(client, dev)))
+    assert r.status_code == 403
+    assert store.load("knowledge") is None

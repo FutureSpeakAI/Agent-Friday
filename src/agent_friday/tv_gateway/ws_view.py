@@ -81,7 +81,8 @@ def _body() -> tuple:
 
 def _verify(dev: dict, ws: str, body: dict, base_rev: str, change: dict, now: float) -> None:
     nonce, sig, when = body.get("nonce"), body.get("sig"), body.get("time")
-    if not (isinstance(nonce, str) and isinstance(sig, str) and isinstance(when, int) and not isinstance(when, bool)):
+    if not (isinstance(nonce, str) and isinstance(sig, str) and isinstance(when, int) and not isinstance(when, bool)
+            and 0 < when < 2 ** 41):                              # a huge int would overflow the window check (a 500)
         raise Rejected(Refusal.BAD_REQUEST, "send {base_rev, change, nonce, time, sig}")
     challenge = av.consume(dev["id"], SIGN_PREFIX + ws, nonce, now)            # spent before the signature is read
     if abs(now - when) > av.TIME_WINDOW_S:
@@ -163,7 +164,10 @@ def register(app: Flask) -> None:
         try:
             got = a2ui_workspaces.apply_change(ws, change, base_rev=base_rev, by=av.device_label(dev["id"]))
         except a2ui_store.ViewStale as stale:
-            current = a2ui_workspaces.current(ws) or {}
+            try:
+                current = a2ui_workspaces.current(ws) or {}
+            except (a2ui_store.ViewCorrupt, OSError):
+                current = {}
             _receipt("workspace_view_refused", dev, ws, reason="stale")
             return pc_read._refuse(409, "your PC's view changed since you read it", code="stale",
                                    current_rev=stale.current_rev,
@@ -175,5 +179,9 @@ def register(app: Flask) -> None:
         except PermissionError:
             _receipt("workspace_view_refused", dev, ws, reason="privacy")
             return pc_read._refuse(423, "your PC is off the record; nothing was saved", code="off_record")
+        except (a2ui_store.ViewCorrupt, OSError) as e:
+            _log.warning("workspace proposal %s could not be stored: %s", ws, type(e).__name__)
+            _receipt("workspace_view_refused", dev, ws, reason="pc_unavailable")
+            return pc_read._refuse(503, "your PC could not save that right now; nothing changed", code="pc_unavailable")
         _receipt("workspace_view_changed", dev, ws, rev=got["rev"], change=sorted(change))
         return jsonify({"ok": True, "rev": got["rev"], "version": got["version"]})

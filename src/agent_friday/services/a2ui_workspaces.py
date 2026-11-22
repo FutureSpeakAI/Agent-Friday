@@ -101,12 +101,24 @@ def apply_change(ws: str, change, *, base_rev: str, by: str) -> dict:
             raise store.ViewStale(view["rev"])
         if "restore" in change:
             raise store.ViewRefused("version", "there is no such version")
-        store._typed_look(change["customization"], view["doc"])          # refuse before anything is stored
-        first = store.save(ws, view["doc"], ctx=ctx(ws), base_rev=store.NEW_REVISION,
-                           label=LABELS.get(ws, ws), by="builtin")
-        base_rev = first["rev"]
+        return _first_change(ws, view["doc"], change["customization"], by)
     if "customization" in change:
         got = store.set_customization(ws, change["customization"], base_rev=base_rev, by=by)
     else:
         got = store.restore(ws, str(change["restore"]), base_rev=base_rev, by=by, ctx=ctx(ws))
+    return {"rev": got["rev"], "version": got["versions"]}
+
+
+def _first_change(ws: str, doc: list, patch, by: str) -> dict:
+    """The first change to a builtin view is ONE write: the builtin document kept as the earlier version and his
+    customization current. Nothing is stored when the change is refused, stale or off the record.
+    tests/unit/test_tv_ws_view.py: test_the_first_change_is_one_write_the_builtin_kept_as_its_earlier_version."""
+    store._validated(doc, ctx(ws))
+    look = store._typed_look(patch, doc)
+
+    def build(previous):
+        base = {"id": ws, "label": LABELS.get(ws, ws), "subject": subject(ws), "authorship": "builtin", "doc": doc,
+                "customization": {}, "versions": [], "updated_by": "builtin", "updated": None}
+        return {**base, "customization": look, "versions": [store._snapshot(base, store.KIND_CHANGE)], "updated_by": by}
+    got = store._commit(ws, build, store.NEW_REVISION)
     return {"rev": got["rev"], "version": got["versions"]}
