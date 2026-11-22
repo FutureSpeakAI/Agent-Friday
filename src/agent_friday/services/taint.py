@@ -868,11 +868,17 @@ def _payment_shaped(v: str) -> bool:
     return bool(m and len(re.sub(r"\D", "", m.group())) >= 13)
 
 
+#: learn_skill actions that only read: their `name` is a lookup, not text saved into memory.
+SKILL_READ_ACTIONS = frozenset({"read", "list"})
+
+
 def roles_for(tool_name: str, tool_input: dict) -> List[Tuple[str, str, Any]]:
     """[(arg_name, role, value)] for the arguments of this call that matter."""
     out: List[Tuple[str, str, Any]] = []
     table = TOOL_ROLES.get(tool_name)
     inp = tool_input or {}
+    if tool_name == "learn_skill" and str(inp.get("action") or "").strip().lower() in SKILL_READ_ACTIONS:
+        return out                               # reading or listing skills writes nothing: never gated
     if tool_name == "write_file" and inp.get("content") and _shapes_behaviour(inp.get("path")):
         # A file Friday reads back as instructions is memory, whatever tool
         # writes it.
