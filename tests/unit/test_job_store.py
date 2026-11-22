@@ -251,6 +251,13 @@ def test_a_posting_without_an_application_is_open_not_applied():
     assert js.list_recent(NOW)[0]["status"] == "open"
 
 
+@pytest.mark.parametrize("stage", ["discovered", "triaged"])
+def test_an_application_friday_only_prepared_leaves_the_posting_open(stage):
+    job_id = tracked_job(stage=stage)
+    js.upsert(listing(job_id=job_id), NOW)
+    assert js.list_recent(NOW)[0]["status"] == "open"
+
+
 # -- the file ------------------------------------------------------------------------------------------
 
 def test_a_batch_of_sightings_is_one_read_and_one_write(monkeypatch):
