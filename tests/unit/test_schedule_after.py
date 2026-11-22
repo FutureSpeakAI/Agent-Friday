@@ -80,22 +80,22 @@ RECORDS = [{"id": "sch_a", "trigger": "daily", "spec": {}}, {"id": "sch_b", "tri
 
 def test_a_job_cannot_run_after_itself():
     with pytest.raises(UserFacingValueError, match="after itself"):
-        sa.validate("sch_a", {"job": "sch_a"}, RECORDS)
+        sa.validate("sch_a", {"job": "sch_a", "deadline_hour": 6}, RECORDS)
 
 
 @pytest.mark.parametrize("own,target", [("sch_a", "sch_b"), ("sch_a", "sch_c")])
 def test_a_loop_is_refused_directly_or_through_others(own, target):
     with pytest.raises(UserFacingValueError, match="loop"):
-        sa.validate(own, {"job": target}, RECORDS)
+        sa.validate(own, {"job": target, "deadline_hour": 6}, RECORDS)
 
 
 def test_an_unknown_or_unnamed_job_is_refused_and_a_fine_chain_is_accepted():
     with pytest.raises(UserFacingValueError, match="no schedule"):
-        sa.validate("sch_x", {"job": "sch_nope"}, RECORDS)
+        sa.validate("sch_x", {"job": "sch_nope", "deadline_hour": 6}, RECORDS)
     with pytest.raises(UserFacingValueError, match="which job"):
-        sa.validate("sch_x", {}, RECORDS)
-    sa.validate("sch_d", {"job": "sch_c"}, RECORDS + [{"id": "sch_d", "trigger": "daily"}])      # a chain a <- b <- c <- d
-    sa.validate(None, {"job": "sch_a"}, RECORDS)                                               # a schedule not made yet
+        sa.validate("sch_x", {"deadline_hour": 6}, RECORDS)
+    sa.validate("sch_d", {"job": "sch_c", "deadline_hour": 6}, RECORDS + [{"id": "sch_d", "trigger": "daily"}])      # a chain a <- b <- c <- d
+    sa.validate(None, {"job": "sch_a", "deadline_hour": 6}, RECORDS)                                               # a schedule not made yet
 
 
 def test_the_timing_check_needs_the_job_and_a_deadline():
@@ -172,6 +172,68 @@ def test_the_runs_output_says_stale_with_the_age_when_a_failed(jobs, monkeypatch
     summary = scheduler.get_schedule("sch_digest")["last_summary"]
     assert seen.get("ran") and summary.startswith("Stale data:") and "Morning news" in summary
     assert "24 hours 15 minutes ago" in summary
+
+
+def _sync_dispatch(monkeypatch, fn):
+    monkeypatch.setattr(scheduler, "BUILTIN_TASKS", {"digest": {"fn": fn, "label": "Digest", "default_trigger": "daily",
+                                                                "default_spec": {}, "notify": "silent", "weekday_only": None,
+                                                                "default_enabled": True}})
+
+    class Sync(threading.Thread):
+        def start(self):
+            self.run()
+
+    monkeypatch.setattr(scheduler.threading, "Thread", Sync)
+
+
+def test_a_retry_or_a_wait_for_the_seat_still_says_the_data_is_stale(jobs, monkeypatch):
+    """The retry, catch-up and quiet-hours paths start a run without going through the due check: the run asks again."""
+    _sync_dispatch(monkeypatch, lambda: {"ok": True})
+    scheduler._patch_record("sch_news", last_success_ts=_at(5, 15, 21).timestamp(), last_status="failed",
+                            last_run_ts=_at(5, 16).timestamp())
+    rec = scheduler.get_schedule("sch_digest")
+    rec["retry_pending"] = True                                    # the run is a retry: no _after_due on this path
+    assert "_stale" not in rec
+    scheduler.dispatch(rec, manual=False)
+    assert scheduler.get_schedule("sch_digest")["last_summary"].startswith("Stale data:")
+
+
+def test_a_manual_run_before_the_job_it_follows_has_finished_says_so(jobs, monkeypatch):
+    _sync_dispatch(monkeypatch, lambda: {"ok": True})
+    scheduler.dispatch(scheduler.get_schedule("sch_digest"), manual=True)
+    assert "had not run today" in scheduler.get_schedule("sch_digest")["last_summary"]
+
+
+def test_a_run_after_the_job_it_follows_succeeded_today_is_not_called_stale(jobs, monkeypatch):
+    import time
+    _sync_dispatch(monkeypatch, lambda: {"ok": True})
+    scheduler._patch_record("sch_news", last_success_ts=time.time() - 60, last_status="complete", last_run_ts=time.time() - 90)
+    scheduler.dispatch(scheduler.get_schedule("sch_digest"), manual=True)
+    assert not scheduler.get_schedule("sch_digest")["last_summary"].startswith("Stale data:")
+
+
+def test_a_prompt_job_is_told_to_open_with_the_stale_line(jobs, monkeypatch):
+    """The prompt prefix reaches the agent that writes the output."""
+    import agent_friday.services.agent as agent
+    seen = {}
+    monkeypatch.setattr(agent, "_spawn_task", lambda name, prompt, **kw: seen.setdefault("prompt", prompt) and "task_1")
+    monkeypatch.setattr(agent, "_task_snapshot", lambda tid: {"status": "complete", "result": "ok"}, raising=False)
+    rec = dict(scheduler.get_schedule("sch_digest"), task={"kind": "agent_prompt", "prompt": "Write the digest"},
+               _stale={"job": "sch_news", "name": "Morning news", "why": "it failed today", "age_s": 24 * 3600 + 900})
+    try:
+        scheduler._run_task_inner(rec)
+    except Exception:
+        pass                                                       # what the run does after the spawn is not under test
+    assert seen["prompt"].startswith("IMPORTANT:") and "24 hours 15 minutes old" in seen["prompt"]
+    assert seen["prompt"].rstrip().endswith("Write the digest")
+
+
+def test_a_dependency_without_a_whole_number_deadline_is_refused_where_it_is_stored(jobs):
+    with pytest.raises(UserFacingValueError, match="deadline_hour"):
+        scheduler.register_schedule({"id": "sch_bad", "name": "Bad", "trigger": "after", "spec": {"job": "sch_news"},
+                                     "task": {"kind": "builtin", "ref": "x"}})
+    with pytest.raises(UserFacingValueError, match="deadline_hour"):
+        scheduler.update_schedule("sch_digest", {"spec": {"job": "sch_news", "deadline_hour": "six"}})
 
 
 def test_a_dependency_loop_or_self_dependency_is_refused_when_a_schedule_is_made_or_changed(jobs):

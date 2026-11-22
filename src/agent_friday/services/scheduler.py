@@ -2497,6 +2497,15 @@ def dispatch(rec, *, manual=False, require_enabled=False):
     def _body():
         status, summary, err = "complete", "", None
         outcome = None              # a job's own outcome word (the heartbeat's)
+        if rec.get("trigger") == "after" and not rec.get("_stale"):
+            # However this run came to start (a retry, a wait for the seat, quiet hours, run now), if the job it follows
+            # has not succeeded today its data is stale and the run says so.
+            try:
+                spec_after = rec.get("spec") or {}
+                up = next((r for r in _read_store() if r.get("id") == spec_after.get("job")), None)
+                rec["_stale"] = schedule_after.stale_now(spec_after, up, _in_zone(rec, _now_central()))
+            except Exception:
+                _log.debug("stale check of %s failed", sid, exc_info=True)
         rec_live = dict(rec, _active_run_id=run_id, _orb_id=orb_id, _manual=bool(manual))
         if orb_id:
             try:

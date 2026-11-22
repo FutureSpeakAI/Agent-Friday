@@ -34,6 +34,11 @@ def validate(own_id: Optional[str], spec: Dict[str, Any], records: Iterable[Dict
     target = str((spec or {}).get("job") or "").strip()
     if not target:
         raise UserFacingValueError("Say which job this one runs after (spec.job).")
+    for key, high in (("deadline_hour", 23), ("deadline_minute", 59)):
+        value = (spec or {}).get(key, 0 if key == "deadline_minute" else None)
+        if isinstance(value, bool) or not isinstance(value, int) or not 0 <= value <= high:
+            raise UserFacingValueError("Give the latest time it may start: spec.%s must be a whole number from 0 to %d."
+                                       % (key, high))
     if own_id and target == own_id:
         raise UserFacingValueError("A job cannot run after itself.")
     by_id = {r.get("id"): r for r in records}
@@ -93,6 +98,28 @@ def evaluate(spec: Dict[str, Any], upstream: Optional[Dict[str, Any]], now: date
         why = "it had not run by the deadline"
     return {"stale": {"job": spec.get("job"), "name": up.get("name") or spec.get("job"), "why": why,
                       "age_s": (stamp - last_ok) if isinstance(last_ok, (int, float)) else None}}
+
+
+def stale_now(spec: Dict[str, Any], upstream: Optional[Dict[str, Any]], now: datetime) -> Optional[Dict[str, Any]]:
+    """The stale facts for a run that is starting NOW, however it came to start (a retry, a wait for the seat, a deferral
+    through quiet hours, a manual run): None when the job it follows has succeeded today, else why its data is stale. The
+    decision to start was made earlier (``evaluate``); this is asked again at the start so the run says so too."""
+    today = now.replace(hour=0, minute=0, second=0, microsecond=0).timestamp()
+    up = upstream or {}
+    last_ok = up.get("last_success_ts")
+    if isinstance(last_ok, (int, float)) and last_ok >= today:
+        return None
+    ran_today = isinstance(up.get("last_run_ts"), (int, float)) and up["last_run_ts"] >= today
+    if upstream is None:
+        why = "the job it runs after no longer exists"
+    elif up.get("in_flight") or up.get("retry_pending"):
+        why = "it had not finished"
+    elif ran_today and str(up.get("last_status") or "") in ("failed", "timeout", "error"):
+        why = "it failed today"
+    else:
+        why = "it had not run today"
+    return {"job": spec.get("job"), "name": up.get("name") or spec.get("job"), "why": why,
+            "age_s": (now.timestamp() - last_ok) if isinstance(last_ok, (int, float)) else None}
 
 
 def stale_words(stale: Dict[str, Any]) -> str:
