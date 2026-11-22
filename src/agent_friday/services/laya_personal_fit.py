@@ -296,8 +296,10 @@ def refit(profile: str, *, now: Optional[float] = None, should_yield=None) -> di
     """Rebuild U1, fit U2 on the training rows, run the gate, and move a passing
     candidate through shadow to live. Needs the vault open. Returns a summary.
 
-    ``should_yield`` (the scheduled run passes ``yield_reason``) is asked at each checkpoint, before the step that
-    follows saves anything: a reason ends the refit there with status ``yielded`` and nothing half-applied."""
+    ``should_yield`` (the scheduled run passes ``yield_reason``) is asked at each checkpoint: a reason ends the refit
+    there with status ``yielded``. Each step between checkpoints is atomic (a rebuild writes its own result before the
+    ``after_rebuild`` checkpoint; the gate and the promotion below write only after ``before_gate``), so what is left is
+    never half-applied; a step already running finishes before the next checkpoint asks."""
     now = now if now is not None else now_fn()
 
     def _yield(stage):
@@ -343,6 +345,9 @@ def refit(profile: str, *, now: Optional[float] = None, should_yield=None) -> di
         if stopped:
             return stopped
         live_u2 = (live_art or {}).get("u2")
+        stopped = _yield("before_gate")
+        if stopped:
+            return stopped
         out = {"status": "ok", "u1": u1, "fitted": bool(fitted), "promoted": False, "pending": False}
         if fitted is None:
             st["pending_u2"] = None
@@ -493,7 +498,7 @@ def blocked_reason(profile: Optional[str] = None) -> str:
     if not ls["on"]:
         return ls["why"]
     if not store.vault_open():
-        return "the vault is locked (training waits for a time you are signed in)"
+        return "the vault is locked (training waits until it is open)"
     if not on_ac_power():
         return "the PC is on battery"
     from agent_friday.services import thermal

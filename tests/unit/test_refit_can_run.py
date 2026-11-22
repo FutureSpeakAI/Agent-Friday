@@ -116,6 +116,27 @@ def test_when_input_resumes_the_refit_yields_at_the_next_checkpoint_and_applies_
     assert later == []                                          # nothing after the checkpoint ran, so nothing was applied
 
 
+def test_the_refit_asks_before_the_gate_and_the_promotion_too(quiet, monkeypatch):
+    """The checkpoints include the one before anything the gate or the promotion would save."""
+    import threading
+    quiet["idle_s"] = 2 * HOUR
+    stages = []
+    monkeypatch.setattr(fit.lp, "_build_lock", threading.RLock())
+    monkeypatch.setattr(fit.lp, "rebuild", lambda profile, why: {"status": "ok"})
+    monkeypatch.setattr(fit.lp, "base_state", lambda: ({}, {}, {}))
+    monkeypatch.setattr(fit.store, "load_rows", lambda profile: [])
+    monkeypatch.setattr(fit.lp, "personal_sealed", lambda rows: ([], []))
+    monkeypatch.setattr(fit.lp, "_state", lambda profile: {"live": None})
+    monkeypatch.setattr(fit.lp, "adjusted_protos", lambda *a, **k: {})
+    monkeypatch.setattr(fit, "shipped_entry", lambda: {})
+    monkeypatch.setattr(fit, "fit_u2", lambda *a, **k: {"tau": 0.5, "act": None})
+    def ask():
+        stages.append(len(stages))
+        return "stop" if len(stages) >= 5 else ""
+    out = fit.refit("owner", should_yield=ask)
+    assert out["status"] == "yielded" and out["stage"] == "before_gate" and len(stages) == 5
+
+
 def test_a_refit_that_is_not_the_scheduled_run_does_not_yield(quiet, monkeypatch):
     """The owner pressing 'refit now' is at the PC by definition: only the scheduled run passes yield_reason."""
     import threading
