@@ -21,7 +21,7 @@ function mount({ready=true,failStatus=false,request,workflow=false,search=''}={}
     const custom=request&&request(url,options);if(custom)return await custom;
     const values={
       '/api/career-ops/status':{ready,configured:false,path:'/career',items:[],summary:ready?'Ready':'Add your profile'},
-      '/api/career-ops/tracker':{entries:[]},'/api/career-ops/reports':{reports:[]},'/api/career-ops/pipeline':{content:''},'/api/jobs':{content:''},'/api/pipeline/jobs':{jobs:[]},
+      '/api/career-ops/tracker':{entries:[]},'/api/career-ops/reports':{reports:[]},'/api/career-ops/pipeline':{content:''},'/api/jobs':{content:''},'/api/career/jobs?view=recent':{jobs:[]},'/api/career/jobs?view=archive':{jobs:[]},
       '/api/conversations':{status:'ok',conversation:{id:'career-test'}},'/api/chat':{response:'Evidence-backed evaluation'},
       '/api/workflows/templates/career-search/add':{status:'ok',slug:'career-search',created:true,schedule_id:null},
       '/api/workflows/overview':{status:'ok',workflows:[],routines:[],templates:[{id:'career-search',slug:'career-search',name:'Career search',description:'Find and evaluate roles.',step_count:3,installed:false}]},
@@ -227,4 +227,40 @@ test('Review setup reopens a user-collapsed setup card before readiness',async()
   assert.equal(details().props.open,false);
   ui.button('Review setup').props.onClick();
   assert.equal(details().props.open,true);
+});
+
+const RECENT = [{key: 'k1', job_id: 'job_1', title: 'Staff Engineer', company: 'Acme Robotics', location: 'Remote', score: 0.5,
+                 status: 'open', last_seen: '2026-11-19T09:00:00', first_seen: '2026-11-18T09:00:00'}];
+const ARCHIVE = [{key: 'k2', title: 'Closed Back In July', company: 'Beta Labs', location: 'Remote', status: 'closed',
+                  closed_at: '2026-07-20T00:00:00', close_reason: 'closing date passed', last_seen: '2026-07-02T09:00:00'}];
+const jobsRequest = url => url === '/api/career/jobs?view=recent' ? response({status: 'ok', jobs: RECENT})
+  : url === '/api/career/jobs?view=archive' ? response({status: 'ok', jobs: ARCHIVE}) : null;
+
+test('the scanner view lists open recently seen jobs and puts closed ones in the archive with their date', async () => {
+  const ui = mount({request: jobsRequest}); await flush();
+  await ui.button('scanner').props.onClick(); await flush();
+  const nodesNow = ui.all();
+  const recent = nodesNow.filter(n => n.props['data-testid'] === 'career-recent-job');
+  const archived = nodesNow.filter(n => n.props['data-testid'] === 'career-archived-job');
+  assert.equal(recent.length, 1); assert.match(JSON.stringify(recent[0]), /Staff Engineer/);
+  assert.equal(archived.length, 1);
+  assert.match(JSON.stringify(archived[0]), /Closed Back In July/);
+  assert.match(JSON.stringify(archived[0]), /"closed"/); assert.match(JSON.stringify(archived[0]), /closing date passed/);
+  assert.ok(JSON.stringify(archived[0]).includes(new Date('2026-07-20T00:00:00').toLocaleDateString()), 'the date it closed is shown');
+  assert.doesNotMatch(JSON.stringify(recent), /Closed Back In July/);
+});
+
+test('Scan Now with no feed connected says so instead of claiming a refresh', async () => {
+  const ui = mount({request: url => url === '/api/pipeline/scan' ? response({scanned: 0, errors: []}) : jobsRequest(url)}); await flush();
+  await ui.button('scanner').props.onClick(); await flush();
+  await ui.button('Scan Now').props.onClick(); await flush();
+  const text = JSON.stringify(ui.render());
+  assert.match(text, /no job feed is connected/); assert.doesNotMatch(text, /Job scanner refreshed/);
+});
+
+test('Scan Now that scanned listings says it refreshed', async () => {
+  const ui = mount({request: url => url === '/api/pipeline/scan' ? response({scanned: 3, errors: []}) : jobsRequest(url)}); await flush();
+  await ui.button('scanner').props.onClick(); await flush();
+  await ui.button('Scan Now').props.onClick(); await flush();
+  assert.match(JSON.stringify(ui.render()), /Job scanner refreshed/);
 });
