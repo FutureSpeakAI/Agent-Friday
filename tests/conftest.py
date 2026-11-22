@@ -1101,6 +1101,62 @@ def _put_back(path: Path, before: bytes | None) -> None:
         "this process would inherit the state it left" % (path, err))
 
 
+def _local_queue_ids() -> set:
+    """The ids on the Local AI queue right now (services/agent.local_queue_snapshot), or none if it is not loaded."""
+    ag = sys.modules.get("agent_friday.services.agent")
+    if ag is None:
+        return set()
+    try:
+        return {str(j.get("id")) for j in (ag.local_queue_snapshot() or {}).get("jobs") or [] if j.get("id")}
+    except Exception:
+        return set()
+
+
+def _drop_local_jobs(ids) -> None:
+    """Take these jobs off the Local AI queue: the seat supervisor's own records (a queued one is withdrawn, a
+    running one's seat is freed) and, for any other source (a lease, a waiting call), its own cancel."""
+    ag = sys.modules.get("agent_friday.services.agent")
+    sup = getattr(ag, "_SEAT_SUPERVISOR", None) if ag is not None else None
+    ls = sys.modules.get("agent_friday.services.local_scheduler")
+    for jid in ids:
+        if sup is not None:
+            with sup._lock:
+                rec = sup._records.pop(jid, None)
+                if rec is not None:
+                    try:
+                        sup.queue.cancel(jid)
+                        sup.queue.complete(jid)
+                    except Exception:
+                        pass
+                    rec["status"] = "cancelled"
+                    sup._started.discard(jid)
+                    ev = sup._inline_events.pop(jid, None)
+                    if ev is not None:
+                        ev.set()
+                    continue
+        if ls is not None:
+            try:
+                ls.cancel(jid)
+            except Exception:
+                pass
+
+
+@pytest.fixture(scope="module", autouse=True)
+def _local_queue_does_not_outlive_its_file():
+    """Each test file leaves the Local AI queue as it found it.
+
+    The seat supervisor is one per process (services/agent._SEAT_SUPERVISOR). A file that starts a local task and
+    never waits for it left that job counted on the top bar ("1 task in Activity; 1 local-queue job") for every later
+    file on the worker, and tests/api/test_workspace_job_card_ui.py errored at setup when it came after such a file
+    (b60 gate 2026-11-22; CI on #652 #810 #828 #974 #1041). Jobs a file added are taken off when it ends
+    (tests/unit/test_local_queue_does_not_leak_between_files.py)."""
+    before = _local_queue_ids()
+    yield
+    left = _local_queue_ids() - before
+    if left:
+        _drop_local_jobs(left)
+
+
 @pytest.fixture(scope="module", autouse=True)
 def _settings_do_not_outlive_their_file():
     """Each test file leaves settings.json as it found it.
