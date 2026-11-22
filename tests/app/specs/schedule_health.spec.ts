@@ -38,8 +38,10 @@ test('a missed run and a hung run are flagged in the System workspace', async ({
 test('nothing is drawn when every job is on time', async ({ page }, info) => {
   await page.route('**/api/setup/status', r => r.fulfill(json({ initialized: true })));
   await page.route('**/api/schedules/health', r => r.fulfill(json({ status: 'ok', flagged: [], checked: 5 })));
+  const answered = page.waitForResponse('**/api/schedules/health', { timeout: 60000 });
   await page.goto(`${BASE}/w/system`, { waitUntil: 'domcontentloaded' });
-  await page.waitForFunction(() => typeof (window as any).fridayRunActions === 'function', null, { timeout: 60000 });
+  await answered;
+  await expect(page.getByText('Weekly Self-Improvement')).toBeVisible({ timeout: 60000 });   // the workspace has loaded
   await expect(page.getByTestId('sys-schedule-health')).toHaveCount(0);
   await page.screenshot({ path: info.outputPath('system-schedule-health-clear.png') });
 });
