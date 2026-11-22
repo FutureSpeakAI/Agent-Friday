@@ -317,6 +317,8 @@ def runs_per_month(sid: str, rec: dict | None, cfg: dict) -> float:
         return 1440.0 / every * DAYS_PER_MONTH
     if trig == "once":
         return 0.0
+    if trig == "on_idle":            # at most once per gap
+        return 1440.0 / max(1, int(spec.get("min_gap_minutes", 60))) * DAYS_PER_MONTH
     return DAYS_PER_MONTH            # daily, idle_daily
 
 

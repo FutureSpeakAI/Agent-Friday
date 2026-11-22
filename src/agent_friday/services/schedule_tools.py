@@ -27,7 +27,7 @@ import json
 from datetime import datetime
 
 ACTIONS = ("list", "create", "pause", "resume", "delete")
-TRIGGERS = ("daily", "weekly", "monthly", "interval")
+TRIGGERS = ("daily", "weekly", "monthly", "interval", "on_idle")
 
 
 def _when_text(rec):
@@ -267,7 +267,11 @@ TOOL_SCHEMAS = [
              "weekdays": {"type": "array", "items": {"type": "integer"},
                           "description": "Monday=0 ... Sunday=6 (weekly)."},
              "day": {"type": "integer", "description": "Day of month 1-31, or -1 for the last day (monthly)."},
-             "every_minutes": {"type": "integer"}}},
+             "every_minutes": {"type": "integer"},
+             "idle_minutes": {"type": "integer",
+                              "description": "on_idle: run after this many minutes with no input from the owner."},
+             "min_gap_minutes": {"type": "integer",
+                                 "description": "on_idle: at least this long between runs (default 60)."}}},
          "model": {"type": "string", "description": "Pin every run to this model; held, never moved, if it is unavailable."},
          "missed": {"type": "string", "enum": ["run_once", "skip"],
                     "description": "A run missed while Friday was closed: run once at the next start (default) or skip."}},

@@ -1240,6 +1240,56 @@ def idle_work_blocked_reason(rec=None, spec=None, now=None):
     return ""
 
 
+#: ``on_idle``: a job that runs whenever the owner has been away for ``idle_minutes``, then not again for ``min_gap_minutes``.
+ON_IDLE_DEFAULT_MINUTES = 10
+ON_IDLE_DEFAULT_GAP_MINUTES = 60
+
+
+def on_idle_minutes(spec) -> int:
+    """How long the owner must have been away, in minutes: the spec's ``idle_minutes``, else the one Settings row for
+    background work."""
+    try:
+        value = int((spec or {}).get("idle_minutes"))
+        if value >= 1:
+            return value
+    except (TypeError, ValueError):
+        pass
+    try:
+        return max(1, int(round(_idle_settings()["after_s"] / 60.0)))
+    except Exception:
+        return ON_IDLE_DEFAULT_MINUTES
+
+
+def on_idle_blocked_reason(rec=None, spec=None, now=None) -> str:
+    """Why an ``on_idle`` job cannot start right now, or "" when it can. Every reason is "wait", never "fail".
+
+    Idle means no input from the owner for ``idle_minutes`` (the same signal all background work uses). On top of the
+    shared checks (the Settings switch, a stood-down Friday, an answer being given, another run, the GPU lease) it never
+    starts during an open voice session, and it waits while Battery Saver is on or the computer runs on its battery.
+    Guarded by tests/unit/test_on_idle_trigger.py."""
+    spec = dict(spec or {})
+    spec.setdefault("from_hour", 0)
+    spec.setdefault("to_hour", 24)
+    spec["idle_after_s"] = on_idle_minutes(spec) * 60.0
+    reason = idle_work_blocked_reason(rec, spec, now)
+    if reason:
+        return reason
+    try:
+        from agent_friday.services import background_gate as _bg
+        if _bg.KIND_VOICE_CALL in _bg.interactive_kinds():
+            return "a voice session is open"
+    except Exception:
+        pass
+    try:
+        from agent_friday.services import power_state as _ps
+        power = _ps.blocked_reason()
+        if power:
+            return power
+    except Exception:
+        pass
+    return ""
+
+
 def _idle_window_ok(rec, spec, now) -> bool:
     reason = idle_work_blocked_reason(rec, spec, now)
     if not reason:
@@ -1504,6 +1554,13 @@ def _is_due_on_schedule(rec, now) -> bool:
         except (TypeError, ValueError):
             return False
         return at > 0 and not rec.get("last_run_ts") and now.timestamp() >= at
+
+    if trig == "on_idle":
+        # Not once a day: each time the owner has been away long enough, then a quiet gap before the next.
+        gap = max(0, int(spec.get("min_gap_minutes", ON_IDLE_DEFAULT_GAP_MINUTES))) * 60
+        if now.timestamp() - (rec.get("last_run_ts") or 0) < gap:
+            return False
+        return not on_idle_blocked_reason(rec, spec, owner_now)
 
     today = now.strftime("%Y-%m-%d")
     if rec.get("last_run_date") == today:
