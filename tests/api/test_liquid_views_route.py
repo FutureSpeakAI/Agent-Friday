@@ -58,3 +58,7 @@ def test_the_page_loads_the_shared_renderer(client):
     html = r.get_data(as_text=True)
     assert "/static/friday_a2ui.js" in html and "__FRIDAY_API_TOKEN" in html
     assert r.headers.get("Cache-Control") == "no-store"
+    # Friday's own page, not a sandboxed one: a sandboxed page has an opaque origin and its fetch of the route fails
+    # (found on the scratch-server frame, tests/app/specs/liquid_view_knowledge.spec.ts)
+    csp = r.headers.get("Content-Security-Policy") or ""
+    assert "sandbox" not in csp and "connect-src 'self'" in csp
