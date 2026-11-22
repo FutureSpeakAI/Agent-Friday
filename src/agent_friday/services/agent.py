@@ -14254,7 +14254,8 @@ def _action_fingerprint(name, tool_input) -> str:
     """
     # An argument that says nothing (missing, None, "", [] or {}) is not part of the question: a model that
     # re-issues the call with `tab: ""` added is asking the same thing the owner just answered.
-    inp = {k: (v.strip() if isinstance(v, str) else v) for k, v in dict(tool_input or {}).items()
+    # Only the identifiers below are trimmed: a body that differs by a newline is a different action.
+    inp = {k: v for k, v in dict(tool_input or {}).items()
            if not (v is None or (isinstance(v, (str, list, dict, tuple)) and len(v) == 0)
                    or (isinstance(v, str) and not v.strip()))}
     for key in ("path", "target", "url", "workspace"):
@@ -14303,9 +14304,20 @@ def _record_pending_confirmation(session_id, name, tool_input, *, turn=None):
             entry["ts"] = _time.time()
             entry["seq"] = next(_PENDING_SEQ)
             entry["awaiting_reply"] = True
+            entry.pop("set_aside", None)
             if turn is None or entry.get("turn") != turn:
                 entry["asks"] = int(entry.get("asks") or 0) + 1
                 entry["turn"] = turn
+            if entry.get("which_asked") and (turn is None or entry.get("which_turn") != turn):
+                # After "which one?", the question asked again on a later turn is the one the owner named: the
+                # others are set aside (their cards stay in the tray), so the owner's next yes binds this one.
+                for other_fp, other in bucket.items():
+                    if other.get("which_asked"):
+                        other.pop("which_asked", None)
+                        if other_fp != fp:
+                            other["set_aside"] = True
+                            other["awaiting_reply"] = False
+                            other["granted"] = False
         return dict(entry, fingerprint=fp)
 
 
@@ -14467,7 +14479,7 @@ def prepare_confirmation_ctx(session_id, message, base_ctx=None):
         return ctx
 
     if _is_affirmative(message):
-        # A yes answers the question most recently ASKED, and only that one.
+        # A yes answers the one question waiting, and only that one (more than one: ask which).
         # It is not a session-wide permission slip: the gate below re-derives
         # the fingerprint of whatever the model actually tries next and will
         # refuse to spend this grant on a different action.
@@ -14475,12 +14487,22 @@ def prepare_confirmation_ctx(session_id, message, base_ctx=None):
                     if entry.get("awaiting_reply")]
         # Every question in this conversation still waiting for the owner: the one just asked, and any older one
         # whose card is still waiting in the tray (a new request disarms the chat question, not its card).
+        # A question the owner set aside by naming another one after "which one?" no longer counts here; its card
+        # still waits in the tray.
         waiting = [(fp, entry) for fp, entry in bucket.items()
-                   if entry.get("awaiting_reply") or _card_still_waiting(entry.get("approval_id"))]
+                   if entry.get("awaiting_reply")
+                   or (not entry.get("set_aside") and _card_still_waiting(entry.get("approval_id")))]
         if len(waiting) > 1:
             # More than one question is waiting and a bare yes does not say which. Never guess and never
             # approve them all: nothing is granted, and the gate tells the model to ask the owner which.
+            # The next question the model asks again from this set is the owner's answer (_record_pending_confirmation).
             ctx["confirm_which"] = sorted(fp for fp, _entry in waiting)
+            with _PENDING_LOCK:
+                for fp, _entry in waiting:
+                    live = (_PENDING_CONFIRMATIONS.get(session_id) or {}).get(fp)
+                    if live is not None:
+                        live["which_asked"] = True
+                        live["which_turn"] = ctx.get("confirm_turn")
             return ctx
         if not eligible:
             return ctx
