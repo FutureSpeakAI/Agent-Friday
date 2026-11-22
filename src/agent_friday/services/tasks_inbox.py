@@ -78,13 +78,8 @@ NEVER_POSTED_KINDS = frozenset({"caller_pair", "caller_release", "caller_spend",
 MAX_POSTS_PER_DAY = 30
 MAX_REPOSTS_PER_HOUR = 5
 
-HONEST_LIMIT = ("A tick in Google Tasks shows only that something could change your tasks: you, anyone "
-                "holding your phone, an app you gave Tasks access to, or Google's own assistant. So in this "
-                "version a tick approves nothing. It can bring a card to the top of Friday on your PC, and "
-                "deleting an item (or ticking its \"No, not now\") declines the kinds of card where no just "
-                "means don't do it. Whatever Friday posts is stored by Google and shows wherever your tasks show. "
-                "The fence that keeps Friday's own tools off the list covers the Tasks API; if you let Friday "
-                "drive a browser signed in to Google, the Google Tasks web page is not fenced.")
+HONEST_LIMIT = ("Friday no longer mirrors approvals to Google Tasks: nothing is posted there and nothing "
+                "there is read back. Approvals wait in the tray, which your phone, tablet and widget reach.")
 
 
 # ── files ────────────────────────────────────────────────────────────────────
@@ -568,6 +563,8 @@ def view() -> dict:
                   and not i["removed"] and not i["closed"]]
     recent = [e for e in extras["events"] if e.get("at") and _now() - float(e["at"]) < 7 * 86400][-20:]
     return {
+        # Retired (owner decision 2026-11-22): approvals live only in the tray. A machine that had it on may turn it off.
+        "retired": True,
         "enabled": bool(cfg.get("enabled")),
         "problem": cfg.get("problem") or ("" if ok else "The inbox record does not verify, so the phone list is paused."),
         "account": ({"id": acct.get("id"), "email": acct.get("email"), "label": acct.get("label")} if acct else None),
@@ -590,11 +587,7 @@ def view() -> dict:
         "last_poll": extras["last_poll"] or None,
         "record_ok": ok,
         "what_a_tick_does": [
-            "Tick an item: the card comes to the top of Friday on your PC. Nothing is approved.",
-            "Delete an item, or tick its \"No, not now\": the card is declined, if it is the kind where no "
-            "only means don't do it (an email, an action, a missed job). Other cards stay on your PC.",
-            "Change an item's words: nothing happens to the card, and a fresh item replaces it.",
-            "Anything in the list that Friday didn't write is never acted on.",
+            "Nothing: Friday no longer reads this list. Decide approvals in the tray.",
         ],
         "where_it_goes": "Google stores what is posted and shows it wherever your tasks show: your phone, "
                          "Gmail, Calendar, and any app you gave Tasks access to.",

@@ -23965,6 +23965,17 @@ function TasksInboxPanel() {
   }, E('div', {
     className: 'sc-sub'
   }, msg || 'Reading…'));
+  // Retired: approvals live only in the tray. A machine that had the list on can turn it off; nothing turns it on.
+  if (d.retired) return E(StSection, {
+    title,
+    desc: fridayName() + ' no longer mirrors approvals to Google Tasks. They wait in the tray, which your phone, tablet and widget reach.'
+  }, d.enabled ? E('button', {
+    type: 'button',
+    className: 'btn',
+    'data-testid': 'tasks-inbox-off',
+    disabled: busy,
+    onClick: () => run('/api/tasks-inbox/disable', { remove_list: false }, 'Turned off. Nothing is posted or read.')
+  }, 'Turn it off') : null, msg ? E('div', { className: 'sc-sub' }, msg) : null);
   const levelButtons = (current, onPick) => E('div', {
     role: 'group',
     'aria-label': 'How much text goes to Google',
