@@ -261,3 +261,10 @@ def test_the_tool_is_registered_read_only_grouped_and_named_in_her_prompt():
     assert set(spec["input_schema"]["properties"]["kind"]["enum"]) == set(da.KINDS)
     assert "devices_status" in eco.prompt_block()
     assert len(eco.prompt_block()) <= eco.PROMPT_BLOCK_MAX_CHARS
+
+
+def test_the_tool_has_a_decided_class_at_the_action_gate():
+    """Reading the PC's own device list is internal: decided, not left to the outward default."""
+    from agent_friday.governance import action_gate
+    assert action_gate.known("devices_status")
+    assert "devices_status" in action_gate.INTERNAL_TOOLS
