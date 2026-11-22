@@ -153,7 +153,9 @@ def _name_windows_trims(p: Path) -> bool:
 def _out_refusal(out: Path, root: Path) -> str:
     """Why the report may not be written at `out`, or "" when it may. Never inside the scanned root, never inside the owner's
     data root (FRIDAY_HOME or ~/.friday) whatever root is scanned, and never through a second name for an existing file (a
-    hard link would write through to it) or a stream on an existing folder or file."""
+    hard link would write through to it) or a stream on an existing folder or file. Every check reads `out` made absolute
+    without normalising its names (Path.absolute), so a relative one-name --out is checked name by name like any other."""
+    out = out.absolute()
     if _names_a_stream(out):
         return "names a stream on a folder or file (a ':' in a name); name a plain new file"
     if _name_windows_trims(out):
@@ -161,6 +163,8 @@ def _out_refusal(out: Path, root: Path) -> str:
     for guarded in (root, default_root()):
         if _inside(out, guarded):
             return "is inside the data root %s; this script never writes there" % guarded
+        if _inside(guarded, out):
+            return "is where a folder of the data root %s belongs; a file there would stop it being created" % guarded
     try:
         if out.exists() and (not out.is_file() or out.stat().st_nlink > 1):
             return "is not a plain file of its own (a link or a folder); name a new file"
