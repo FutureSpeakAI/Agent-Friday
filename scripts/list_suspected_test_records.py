@@ -101,11 +101,23 @@ def _write_report(path: Path, text: str) -> None:
 
 
 def _inside(path: Path, root: Path) -> bool:
+    """True when `path` is `root` or under it. Decided by which folder each existing ancestor IS (os.path.samefile), not by
+    how the path is spelled: an extended-length or localhost-UNC spelling of the root is the root. The text comparison
+    stays for a root that does not exist yet. Held by test_out_under_another_spelling_of_the_root_is_refused."""
     try:
         path.resolve().relative_to(root.resolve())
         return True
-    except ValueError:
+    except (ValueError, OSError):
+        pass
+    if not root.exists():
         return False
+    for ancestor in (path, *path.parents):
+        try:
+            if ancestor.exists() and os.path.samefile(ancestor, root):
+                return True
+        except OSError:
+            continue
+    return False
 
 
 def _out_refusal(out: Path, root: Path) -> str:
