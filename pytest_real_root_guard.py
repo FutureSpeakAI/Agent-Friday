@@ -14,7 +14,9 @@ it impossible instead of unlikely:
   C extension opening its own files) and by child processes that are not pytest runs of this suite.
 * The refusal is an exception, which code written as "best effort" can swallow. So every refusal is also recorded and
   reported: by the test that was running (it FAILS in teardown), by the next test's setup when it happened between tests
-  (import, collection, a background thread), or by the session when it happened after the last test.
+  (import, collection, a background thread), or by the session when it happened after the last test (under xdist the
+  worker hands it to the controller, which fails the run). Refused but NOT reported: a write after session finish (atexit,
+  unconfigure). Not matched: a path given relative to a directory handle (dir_fd) and a sqlite "file:" URI.
 * `snapshot(root)` is a digest of a tree (relative path, size, mtime) for tests and for a before/after check of a root.
 
 Off only when FRIDAY_ALLOW_REAL_ROOT_WRITES=1 is in the environment (a deliberate, visible choice for a live run).
@@ -176,10 +178,27 @@ def pytest_runtest_teardown(item):
                                     pytrace=False)
 
 
+#: workeroutput key an xdist worker hands its after-the-last-test refusals over in.
+WORKER_KEY = "real_root_refusals"
+_from_workers: list[tuple[str, str]] = []
+
+
+@pytest.hookimpl(optionalhook=True)
+def pytest_testnodedown(node, error):
+    """xdist controller: take what a finished worker refused after its last test (its own exit status never reaches here)."""
+    _from_workers.extend(tuple(pair) for pair in (getattr(node, "workeroutput", None) or {}).get(WORKER_KEY, ()))
+
+
 @pytest.hookimpl(trylast=True)
 def pytest_sessionfinish(session, exitstatus):
-    """What was refused after the last test belongs to no test: the run fails and says so."""
+    """What was refused after the last test belongs to no test: the run fails and says so. An xdist worker's exit status
+    is not forwarded, so a worker also hands the refusals to the controller in workeroutput (xdist sends it after every
+    sessionfinish impl has run), and the controller fails the run for them."""
     new = _unreported()
+    workeroutput = getattr(getattr(session, "config", None), "workeroutput", None)
+    if new and isinstance(workeroutput, dict):
+        workeroutput[WORKER_KEY] = [list(pair) for pair in new]
+    new = new + _from_workers
     if new:
         sys.stderr.write("\nREAL DATA ROOT: a write was refused after the last test (%s)\n" % _listed(new))
         if not session.exitstatus:
