@@ -24,6 +24,20 @@ def list_schedules():
         return api_error(e, "Couldn't load the schedules")
 
 
+@scheduler_bp.route('/api/schedules/health')
+def schedules_health():
+    """The scheduled jobs that are not keeping up (services/schedule_health): the System workspace lists them."""
+    try:
+        rows = _sched.list_schedules()
+        flagged = [{"id": r.get("id"), "name": r.get("name") or r.get("id"), "health": r.get("health"),
+                    "reason": r.get("health_reason") or ""}
+                   for r in rows if r.get("health") in ("overdue", "stalled")]
+        return jsonify({"status": "ok", "flagged": flagged, "checked": len(rows)})
+    except Exception as e:
+        traceback.print_exc()
+        return api_error(e, "Couldn't check the schedules")
+
+
 @scheduler_bp.route('/api/schedules', methods=['POST'])
 @login_required
 @withholds_request_body
