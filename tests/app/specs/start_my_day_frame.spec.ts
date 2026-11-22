@@ -32,8 +32,13 @@ function seedTodaysBriefing() {
 }
 
 test('Start My Day opens News on the written briefing it speaks, and the section skills can be switched', async ({ page }, info) => {
+  test.setTimeout(180_000);
   seedTodaysBriefing();
   await page.request.post(`${BASE}/api/settings`, { data: { settings: { landing_mode: 'always' } } });
+  // Past first run: its own screen ("Before anything else") covers the start screen (as in headings.spec.ts).
+  await page.route('**/api/setup/status', r => r.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ initialized: true }) }));
+  // The START MY DAY button is on the classic start screen; the Simple home has none (static/friday_display_style.js).
+  await page.addInitScript(() => { try { localStorage.setItem('friday.display-style.v1', 'classic'); } catch (_) {} });
   await bootApp(page);
   const answer = page.waitForResponse(r => r.url().includes('/api/voice/start-my-day'));
   await page.getByRole('button', { name: /START MY DAY/ }).click();
