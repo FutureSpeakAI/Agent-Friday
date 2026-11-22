@@ -2946,9 +2946,8 @@ def _afternoon_briefing_job():
     from agent_friday.services.news_engine import _finish_briefing
     content = _finish_briefing(content)
     date_str = datetime.now().strftime("%Y-%m-%d")
-    briefings_dir = FRIDAY_DIR / "wiki" / "briefings"
-    briefings_dir.mkdir(parents=True, exist_ok=True)
-    (briefings_dir / f"{date_str}.md").write_text(content, encoding="utf-8")
+    from agent_friday.services import briefing_files
+    briefing_files.write(date_str, content)
     try:
         _notify_briefing(date_str)
     except Exception:

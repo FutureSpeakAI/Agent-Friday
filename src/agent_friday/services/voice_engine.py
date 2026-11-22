@@ -3183,17 +3183,12 @@ def _build_live_context() -> str:
 
     # Latest briefing (plain-text excerpt)
     try:
-        briefings_dir = HOME / ".friday" / "wiki" / "briefings"
-        if briefings_dir.exists():
-            candidates = sorted(
-                (p for p in briefings_dir.iterdir() if p.suffix in ('.html', '.md')),
-                reverse=True,
-            )
-            if candidates:
-                latest = candidates[0]
-                raw = latest.read_text(encoding='utf-8', errors='ignore')
-                text = _strip_html(raw) if latest.suffix == '.html' else raw
-                parts.append(f"LATEST BRIEFING ({latest.name}):\n{text[:1800]}")
+        from agent_friday.services import briefing_files
+        latest = briefing_files.latest(HOME / ".friday" / "wiki" / "briefings")
+        if latest is not None:
+            raw = latest.read_text(encoding='utf-8', errors='ignore')
+            text = _strip_html(raw) if latest.suffix == '.html' else raw
+            parts.append(f"LATEST BRIEFING ({latest.name}):\n{text[:1800]}")
     except Exception as e:
         parts.append(f"(briefing load failed: {e})")
 
