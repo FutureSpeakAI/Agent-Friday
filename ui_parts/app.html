@@ -11104,7 +11104,6 @@ function SystemWS(){
   // {workspace:'system',tab:'approvals'}, and if nothing handles that tab every
   // gated action (Google connect, gated goal steps) waits until it expires. ──
   const approvals=useApprovalFeed();               // the page's one list of waiting cards
-  const [apBusy,setApBusy]=useState('');
   const apRef=useRef(null);
   const refreshApprovals=()=>fridayApprovalFeed.reload();
   const decideApproval=async(id,decision)=>{
@@ -27405,15 +27404,33 @@ function fridayMarkOutside(text, flags) {
   if (at < src.length) out.push(src.slice(at));
   return out;
 }
+// One action inside a grouped card. It shows everything its own card would (what it is, why it asks, the warning for
+// what came from outside, class and expiry with Inspect) and its own Reject; only Approve and Decline are the group's.
+// The action's arguments are shown whole, and every argument that came from outside content is marked where it
+// stands, by name: a flag's value is a cut-off copy and the action line is escaped JSON, so matching text against
+// text misses most real values.
 function LaneBatchItem({ it, onRejected }) {
   const h = React.createElement;
   const busy = useDeciding(it.approval_id);
-  const flags = ((it.provenance || {}).flags || []).filter(f => f && f.value);
+  const flags = ((it.provenance || {}).flags || []).filter(f => f && (f.value || f.arg));
+  const input = it.payload && it.payload.input && typeof it.payload.input === 'object' && !Array.isArray(it.payload.input) ? it.payload.input : null;
+  const outside = new Set(flags.map(f => f.arg).filter(Boolean));
+  const shown = input
+    ? Object.keys(input).map(k => {
+        const v = input[k], s = typeof v === 'string' ? v : JSON.stringify(v);
+        return h('div', { key: k, 'data-testid': 'lane-batch-arg', style: { whiteSpace: 'pre-wrap' } }, k + ': ',
+          outside.has(k) ? h('mark', { 'data-testid': 'outside-text' }, s) : s);
+      })
+    : fridayMarkOutside(it.action_description, flags);
   return h('div', { className: 'place-readonly', 'data-testid': 'lane-batch-item', 'data-approval-id': it.approval_id, style: { margin: '6px 0' } },
     h('div', { style: { fontSize: 12, color: '#ddd' } }, it.title),
-    it.action_description ? h('div', { style: { fontSize: 11, color: '#999', marginTop: 2, overflowWrap: 'anywhere' } }, fridayMarkOutside(it.action_description, flags)) : null,
-    flags.map((f, i) => h('div', { key: i, 'data-testid': 'outside-source', style: { fontSize: 11, color: '#fde68a', marginTop: 2, overflowWrap: 'anywhere' } },
-      'From ' + (f.source || 'outside content') + ': ', h('mark', null, String(f.value)))),
+    it.description ? h('div', { style: { fontSize: 11, color: '#bbb', marginTop: 2 } }, it.description) : null,
+    (input || it.action_description) ? h('div', { 'data-testid': 'lane-batch-action', style: { fontSize: 11, color: '#999', marginTop: 2, overflowWrap: 'anywhere' } },
+      input && it.payload.tool ? h('div', null, it.payload.tool) : null, shown) : null,
+    flags.filter(f => f.value).map((f, i) => h('div', { key: i, 'data-testid': 'outside-source', style: { fontSize: 11, color: '#fde68a', marginTop: 2, overflowWrap: 'anywhere' } },
+      'From ' + (f.source || 'outside content') + (f.arg ? ' (' + f.arg + ')' : '') + ': ', h('mark', null, String(f.value)))),
+    h(ApprovalProvenance, { p: it.provenance }),
+    h(ApprovalCardFacts, { a: it }),
     h('button', { type: 'button', className: 'btn', style: { fontSize: 11, padding: '2px 10px', color: 'var(--fr-deny)', marginTop: 4 }, disabled: busy,
       'data-testid': 'lane-batch-reject-one', onClick: () => { fridayDecideApproval(it.approval_id, 'deny').then(() => onRejected && onRejected()); } }, 'Reject this one'));
 }
