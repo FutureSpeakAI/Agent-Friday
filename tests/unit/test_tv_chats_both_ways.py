@@ -1,5 +1,5 @@
-"""Chats run both ways through ONE store on this PC (Stephen, 2026-11-22: "phone/tablet needs access to the chats on
-PC, and vice versa. Watch needs them too.").
+"""Chats run both ways through ONE store on this PC: the owner's phone, tablet and watch reach the PC's chats, and the
+desktop shows every chat a device starts or continues.
 
 What is guarded here:
 
@@ -278,7 +278,9 @@ def test_a_device_turn_never_rereads_under_a_desktop_stream():
     assert "if (m.type === 'conversation_changed' && loadingRef.current) { rereadAfterTurn.current = true; return; }" in page
     assert "if (!loading && rereadAfterTurn.current && cid) { rereadAfterTurn.current = false; openConvQuiet(cid); }" in page
     # docked chat: held while a turn is in flight, re-read when chatLoad clears
-    assert "if (ev.type === 'conversation_changed' && inFlightTurn.current) { dockRereadAfterTurn.current = convId; return; }" in page
+    assert "if (ev.type === 'conversation_changed' && dockLoading.current) { dockRereadAfterTurn.current = convId; return; }" in page
+    assert "dockLoading.current = chatLoad;" in page
+    # the behaviour itself (a device turn shows after a desktop turn has ended) is tests/app/specs/device_turn_rereads_dock.spec.ts
     assert "if (!chatLoad && dockRereadAfterTurn.current && dockRereadAfterTurn.current === convId) {" in page
 
 
@@ -286,3 +288,25 @@ def test_the_read_card_names_projects():
     from agent_friday.tv_gateway import pairing
     title, text = pairing.RIGHT_CARDS["pc_read"]
     assert "projects" in text and "cannot change anything" in text
+
+
+def test_a_started_chat_answers_with_its_id_and_nothing_of_the_pcs(client, desk, bus):
+    r = post(client, paired(), "/tv/v1/chats", {})
+    assert r.status_code == 201 and set(r.get_json()) == {"ok", "conversation_id"}     # no seat, no summary
+
+
+def test_starting_inside_a_project_needs_the_read_right(client, desk, bus):
+    # a project id that exists or not is project knowledge, which the pc_read card governs
+    dev = paired("phone", "stephen", right=False)
+    r = post(client, dev, "/tv/v1/chats", {"project": "proj-1"})
+    assert r.status_code == 403 and desk.created == []
+    assert post(client, dev, "/tv/v1/chats", {}).status_code == 201          # an empty chat is still an owner turn's power
+
+
+def test_a_device_cannot_flood_the_desktops_list(client, desk, bus):
+    pc_chats = importlib.import_module("agent_friday.tv_gateway.pc_chats")
+    dev = paired()
+    codes = [post(client, dev, "/tv/v1/chats", {}).status_code for _ in range(pc_chats.STARTS_PER_WINDOW + 1)]
+    assert codes[:-1] == [201] * pc_chats.STARTS_PER_WINDOW and codes[-1] == 429
+    assert len(desk.created) == pc_chats.STARTS_PER_WINDOW
+    assert post(client, paired("tablet"), "/tv/v1/chats", {}).status_code == 201        # per device, not for everyone

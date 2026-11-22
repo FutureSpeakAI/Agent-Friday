@@ -1,4 +1,4 @@
-"""The desktop's projects on the owner's phone and tablet (Stephen, 2026-11-22: "We also need projects ... on the phone and tablet").
+"""The desktop's projects on the owner's phone and tablet.
 
 Same data as the desktop, no device copy: the gateway reads the desktop's own /api/projects routes. Guarded here:
 
@@ -111,3 +111,17 @@ def test_only_an_owner_phone_or_tablet_with_pc_read_reads_projects(client, real_
     if right:
         device_pairing.set_right(dev.id, "pc_read", True)
     assert get(client, dev, path).status_code == 403 and calls == []
+
+
+def test_a_files_read_that_fails_is_a_refusal_not_an_empty_list(client, real_desk, monkeypatch):
+    dc, _ = real_desk
+    pid = dc.post("/api/projects", json={"name": "Garden"}).get_json()["project"]["id"]
+    real = pc_read._desk
+
+    def flaky(path, params=None):
+        if path.endswith("/files"):
+            raise TimeoutError("files")
+        return real(path, params)
+    monkeypatch.setattr(pc_read, "_desk", flaky)
+    r = get(client, paired(), "/tv/v1/projects/%s" % pid)
+    assert r.status_code == 503 and r.get_json()["code"] == "pc_unavailable"
