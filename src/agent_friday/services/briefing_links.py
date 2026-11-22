@@ -60,10 +60,12 @@ _MD_LINK = re.compile(r"\[([^\]\n]{1,300})\]\((https?://[^)\s]+)\)")
 _BARE_URL = re.compile(r"(?:https?://|www\.)[^\s<>\"'\])]*", re.I)
 _ANGLE_URL = re.compile(r"<((?:https?://|www\.)[^\s>]+)>", re.I)
 _SET_ASIDE = re.compile("\x00(\\d+)\x00")
+#: Control and invisible characters a briefing has no use for: removed first, so they can neither spoof a
+#: set-aside mark nor make an address look as though it ends where the renderer does not end it.
+_CONTROL = re.compile("[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f​-‏  ⁠﻿]")
 #: The target of ANY markdown link or image, whatever its label holds: what follows "](" up to the closing ")".
 _LINK_TARGET = re.compile(r"\]\(([^)\n]*)\)")
 #: A reference-style link definition ("[r]: //host/x"): a briefing never uses one, so the line goes.
-_REF_DEF = re.compile(r"^[ \t]*\[[^\]\n]+\]:[^\n]*(?:\n|$)", re.M)       # any indent: inside a list item too
 _HAS_WORDS = re.compile(r"[A-Za-z0-9]")
 #: A line that is only a bold label: a heading a section skill wrote, demoted (briefing_sections), so kept like one.
 _LABEL_LINE = re.compile(r"^\s*\*\*[^*\n]+\*\*\s*$")
@@ -125,7 +127,8 @@ def strip_unknown_links(text: str, known: Iterable[str]) -> str:
 
     It works by what is KNOWN, not by guessing where an address starts: the known links are set aside, then
     everything that could still make a link is taken away wherever it sits:
-      1. a reference-definition line goes (a briefing never uses one);
+      1. every "]:" becomes "]\\:" (the colon still shows): a briefing never uses a reference link, and this way no
+         definition can form anywhere, in a block quote or a list item or after a label over two lines;
       2. a typed link keeps its words; a link or image target that is exactly a known address, and a known address
          standing in the text up to a natural end, are set aside;
       3. every "<" becomes "&lt;" (no raw HTML: an anchor, however its address is spelled), every http(s):// or www.
@@ -138,13 +141,13 @@ def strip_unknown_links(text: str, known: Iterable[str]) -> str:
         kept.append(link)
         return "\x00%d\x00" % (len(kept) - 1)
 
-    text = _REF_DEF.sub("", (text or "").replace("\x00", ""))
+    text = _CONTROL.sub("", text or "").replace("]:", "]\\:")
     text = _MD_LINK.sub(lambda m: m.group(0) if m.group(2) in known else m.group(1), text)
     # A label with brackets in it ("[[draft] plan](...)") is no _MD_LINK match; its target is caught here.
     text = _LINK_TARGET.sub(lambda m: aside(m.group(0)) if m.group(1) in known else "]", text)
     for link in sorted(known, key=len, reverse=True):
         # only where it ends: closing punctuation at most, then a space, the end, or a bracket that closes it
-        text = re.sub(re.escape(link) + r"(?=[.,;:!?]*(?:\s|$|[)\]>]))", lambda m: aside(m.group(0)), text)
+        text = re.sub(re.escape(link) + r"(?=[.,;:!?]*(?:[ \t\r\n]|$|[)\]>]))", lambda m: aside(m.group(0)), text)
     text = _ANGLE_URL.sub("", text)
     text = _BARE_URL.sub("", text.replace("<", "&lt;"))
     text = text.replace("@", "&#64;")
