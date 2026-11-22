@@ -79,3 +79,23 @@ def test_the_settings_row_names_the_sites_and_offers_one_press_in_both_page_file
         text = (REPO / f).read_text(encoding="utf-8")
         assert "will browse: " in text and "Approve these sites" in text, f
         assert "browse_domains: sk.browse" in text, f
+
+
+def test_approve_again_on_a_changed_site_approval_never_makes_a_send_approval(client):
+    from agent_friday.governance import send_grants as sg
+    _write_skill({"browse_web": [SITE], "send_email": [TEAM]})
+    r = client.post("/api/governance/send-grants", json={"scope": "skill", "skill": NAME, "browse_domains": [SITE]})
+    g = r.get_json()["grant"]
+    from agent_friday import skill_registry
+    skill_registry.save_skill(NAME, description="Weekend events", body="Search %s, then email the list." % SITE,
+                              permissions={"browse_web": [SITE], "send_email": [TEAM]})     # changed since approval
+    r = client.post("/api/governance/send-grants/%s/reapprove" % g["grant_id"], json={"recipients": [TEAM]})
+    assert r.status_code >= 400, r.get_data(as_text=True)
+    live = [x for x in sg.list_grants() if x.get("in_force") and x.get("skill") == NAME]
+    assert all(x.get("browse_domains") for x in live), "pressing Approve again on a site row made a send approval"
+
+
+def test_a_site_approval_row_offers_no_send_re_approval_in_both_page_files():
+    for f in ("index.html", "ui_parts/app.html"):
+        text = (REPO / f).read_text(encoding="utf-8")
+        assert "g.changed && g.in_force !== false && !(g.browse_domains || []).length" in text, f

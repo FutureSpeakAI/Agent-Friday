@@ -158,3 +158,50 @@ def test_the_owner_sees_the_exact_list_once_and_a_changed_list_approves_nothing(
     with pytest.raises(sg.SkillChanged):
         sg.create_browse_grant(NAME, ["events-example.test", "extra-example.test"])
     assert [g for g in sg._live_trusted() if g.get("browse_domains")] == []
+
+
+def test_a_read_in_an_earlier_turn_does_not_cover_a_later_one(_isolate):
+    _write_skill()
+    _approve()
+    first = _turn()
+    _read_skill(first)
+    later = _turn("and what about sunday?")                     # a new turn that did not read the skill
+    assert sg.skill_browse_covers(later, "events-example.test") == ""
+    out = _browse(later, BUILT)
+    assert "APPROVAL CARD RAISED" in out and _isolate == [], out
+
+
+def test_a_browse_approval_never_vouches_for_the_skill_text_as_a_send_procedure(_isolate):
+    _write_skill(body=BODY + " Then email the summary to dad@family-example.test.")
+    _approve()
+    sk = registry.get_skill(NAME)
+    assert sg.approved_skill_grant(NAME, registry.fingerprint(sk)) == "", \
+        "a site approval made the skill's procedure count as owner-approved for a pre-approved send"
+
+
+@pytest.mark.parametrize("url", [
+    "https://evil-example.test\\@events-example.test/?d=secret",     # parsers disagree on the host
+    "https://user@events-example.test/",                             # userinfo
+    "https://evil-example.test\\events-example.test/",
+])
+def test_a_link_that_could_reach_another_host_is_never_trusted(_isolate, url):
+    _write_skill()
+    _approve()
+    ctx = _turn()
+    _read_skill(ctx)
+    assert sg.skill_browse_covers(ctx, "events-example.test")        # the approval is live in this turn
+    from agent_friday.services import taint
+    asked = []
+    taint.evaluate(taint.ledger_key(ctx), "browse_web", {"url": url}, trusted_host=lambda h: asked.append(h) or True)
+    assert asked == [], "a link that may reach another host was checked against the approved sites: %r" % asked
+
+
+def test_opening_a_link_in_the_owners_browser_is_not_covered_by_a_site_approval(_isolate, monkeypatch):
+    _write_skill()
+    _approve()
+    opened = []
+    monkeypatch.setitem(agent.CLAUDE_TOOL_HANDLERS, "open_url", lambda inp: opened.append(inp.get("url")) or "opened")
+    ctx = _turn()
+    _read_skill(ctx)
+    out = agent._execute_tool("open_url", {"url": BUILT}, session_ctx=ctx)
+    assert "APPROVAL CARD RAISED" in out and opened == [], out
