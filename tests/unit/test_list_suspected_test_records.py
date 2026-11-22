@@ -180,3 +180,19 @@ def test_nothing_found_is_status_zero_and_json_is_valid(tmp_path, capsys):
     capsys.readouterr()
     assert mod.main(["--root", str(empty), "--json"]) == 0
     assert json.loads(capsys.readouterr().out) == []
+
+
+@pytest.mark.skipif(__import__("os").name != "nt", reason="Windows path spellings")
+@pytest.mark.parametrize("spelling", ["extended", "unc"])
+def test_out_under_another_spelling_of_the_root_is_refused(tmp_path, monkeypatch, spelling):
+    r"""The same folder written another way (\?\C:\... or \localhost\C$\...) is still the data root: "inside" is decided by
+    which folder it IS, not by how the path is spelled."""
+    home = tmp_path / ".friday"
+    home.mkdir()
+    (tmp_path / "elsewhere").mkdir()
+    monkeypatch.setenv("FRIDAY_HOME", str(home))
+    text = str(home.resolve())
+    other = "\\?\\" + text if spelling == "extended" else "\\localhost\%s$%s" % (text[0], text[2:])
+    out = Path(other) / "report.txt"
+    assert _load().main(["--root", str(tmp_path / "elsewhere"), "--out", str(out)]) == 2
+    assert not (home / "report.txt").exists()
