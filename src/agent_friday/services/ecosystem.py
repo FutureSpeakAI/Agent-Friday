@@ -111,7 +111,7 @@ RIGHT_NOTES = {
 
 #: How a turn from each kind of device is answered (tv_gateway/turn.run, tv_gateway/inherit).
 OWNER_TURN = ("What it asks is answered as your own request at this PC would be, with my memory and "
-              "knowledge; anything I would do on this PC still needs a press here.")
+              "knowledge; anything that would need your approval at this PC still does.")
 HOUSEHOLD_TURN = ("Its questions are answered with none of your memory or files, and no tool of this PC "
                   "is run for it. It also receives the household profile's settings and chats.")
 
