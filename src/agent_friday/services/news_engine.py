@@ -1202,7 +1202,12 @@ def _gather_live_briefing_context():
             cal_events = _fetch_calendar_today()
             cal_err = _google_section_error(cal_events)
             if cal_err:
-                return f"## Today's Calendar\n({cal_err})"
+                # What the briefing says about Google comes from the live account state, not from the fetch's failure
+                # text (services/briefing_google): connected accounts are read directly.
+                from agent_friday.services import briefing_google
+                cal_events, note = briefing_google.recover("calendar")
+                if cal_events is None:
+                    return f"## Today's Calendar\n({note})"
             shown = [ev for ev in (cal_events or [])[:20] if isinstance(ev, dict)]
             _keep_briefing_sources(calendar=[
                 dict({k: ev.get(k) or "" for k in ("title", "start_time", "end_time", "location")},
@@ -1232,6 +1237,9 @@ def _gather_live_briefing_context():
         try:
             emails = _fetch_gmail_recent(limit=12)
             gmail_err = _google_section_error(emails)
+            if gmail_err:
+                from agent_friday.services import briefing_google
+                emails, gmail_err = briefing_google.recover("gmail")
             if gmail_err:
                 cached = _recent_unread_emails(limit=12)
                 if cached:
@@ -1345,10 +1353,12 @@ def _gather_live_briefing_context():
 
     sections.extend(_skill_blocks())
 
+    from agent_friday.services import briefing_google
     header = (
         f"=== LIVE DATA fetched {today_str} ===\n"
         "Base the briefing on THIS live data, not on any cached/remembered context. "
-        "If a section says data is unavailable, note that honestly rather than inventing it.\n\n"
+        "If a section says data is unavailable, note that honestly rather than inventing it.\n"
+        + briefing_google.live_line() + "\n\n"
     )
     return header + "\n\n".join(sections)
 

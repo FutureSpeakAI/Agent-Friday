@@ -5425,11 +5425,8 @@ def _tool_get_briefing(_inp):
     """Return the most recent daily briefing (HTML stripped, plus markdown)."""
     candidates = []
     briefings_dir = FRIDAY_DIR / "wiki" / "briefings"
-    if briefings_dir.exists():
-        for f in briefings_dir.iterdir():
-            # _index.md and other _-prefixed files are wiki bookkeeping, not briefings.
-            if f.is_file() and f.suffix in ('.html', '.md') and not f.name.startswith('_'):
-                candidates.append(f)
+    from agent_friday.services import briefing_files
+    candidates.extend(briefing_files.dated(briefings_dir))      # only the dated briefings (not _index.md or a supplement)
     creations_dir = CREATIONS_DIR
     if creations_dir.exists():
         for f in creations_dir.iterdir():

@@ -152,6 +152,30 @@ def wiki_read_text(path) -> str:
     return raw.decode("utf-8", errors="replace")
 
 
+def write_wiki_index(directory) -> bool:
+    """Rebuild ``_index.md`` in one wiki directory: each article's file name and its first line that is not a heading.
+    The index is what the agent reads before deciding which article to load, so it is rebuilt whenever an article is
+    written into the directory (services/briefing_files.write) and at start-up. Returns True when an index was
+    written; a directory with no articles gets none."""
+    directory = Path(directory)
+    files = sorted((f for f in directory.glob("*.md") if f.name != "_index.md"), key=lambda x: x.name)
+    if not files:
+        return False
+    lines = ["# Index: %s" % directory.name + chr(10)]
+    for f in files:
+        try:
+            text = wiki_read_text(f)
+            desc = next((l.strip() for l in text.splitlines() if l.strip() and not l.startswith("#")), f.stem)
+            lines.append("- %s: %s" % (f.name, desc[:120]))
+        except Exception:
+            lines.append("- %s" % f.name)
+    try:
+        wiki_write_text(directory / "_index.md", chr(10).join(lines))
+    except Exception:
+        return False
+    return True
+
+
 def wiki_write_text(path, text: str) -> None:
     """Write a wiki file, encrypting when its section is opted in and a vault
     key is available (silent plaintext fallback otherwise — the vault layer
