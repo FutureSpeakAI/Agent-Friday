@@ -95,7 +95,7 @@ def test_a_section_the_workspace_does_not_serve_is_unknown(client, desk):
 def test_a_workspace_with_no_device_block_or_no_adapter_is_unknown_not_empty(client, desk, monkeypatch):
     dev = paired()
     assert get(client, dev, "/tv/v1/workspaces/news/list").status_code == 404       # no block
-    monkeypatch.setitem(ws_content.ADAPTERS, "news", ws_knowledge)
+    monkeypatch.setitem(ws_content.ADAPTERS, "news", {"pages": ws_knowledge})
     assert get(client, dev, "/tv/v1/workspaces/news/list").status_code == 404       # an adapter but no block
     monkeypatch.delitem(ws_content.ADAPTERS, "knowledge")
     assert get(client, dev, "/tv/v1/workspaces/knowledge/list").status_code == 404       # a block but no adapter
@@ -166,9 +166,9 @@ def test_a_page_that_is_not_there_is_404_a_locked_one_is_423_and_a_down_wiki_is_
 def test_changes_says_whether_the_rev_moved(client, desk):
     dev = paired()
     rev = rows(client)["rev"]
-    assert get(client, dev, "/tv/v1/workspaces/knowledge/changes?since=" + rev).get_json()["changed"] is False
+    assert get(client, dev, "/tv/v1/workspaces/knowledge/changes?section=pages&since=" + rev).get_json()["changed"] is False
     desk.structure["entities"][0]["modified"] += 50
-    again = get(client, dev, "/tv/v1/workspaces/knowledge/changes?since=" + rev).get_json()
+    again = get(client, dev, "/tv/v1/workspaces/knowledge/changes?section=pages&since=" + rev).get_json()
     assert again["changed"] is True and again["rev"] != rev
 
 

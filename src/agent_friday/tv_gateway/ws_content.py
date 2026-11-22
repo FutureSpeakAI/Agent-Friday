@@ -1,24 +1,26 @@
 """The generic workspace content routes for an owner's phone or tablet (PW-G2; contract R2, R3, R4, R7).
 
     GET /tv/v1/workspaces/<ws>/list?section=&facet.<name>=&cursor=&limit=
-    GET /tv/v1/workspaces/<ws>/search?q=&cursor=&limit=
+    GET /tv/v1/workspaces/<ws>/search?q=&section=&cursor=&limit=
     GET /tv/v1/workspaces/<ws>/item/<ref>?cursor=
-    GET /tv/v1/workspaces/<ws>/changes?since=<rev>
+    GET /tv/v1/workspaces/<ws>/changes?section=&since=<rev>
 
-A workspace is served only when its manifest has an exposed `device` block (ws_device) AND an adapter is
-registered here; a block with no adapter answers 404, never an empty list. Each adapter is a module with the
-functions ws_knowledge has. tests/unit/test_tv_ws_content.py holds the limits and refusals below.
+A section of a workspace is served only when its manifest has an exposed `device` block that declares the section AND
+an adapter is registered here for it; otherwise 404, never an empty list. An adapter is a module with PREFIX (the
+start of the refs it makes), FACETS ({facet name: function of a row}), and pages(sensitivity), facets(rows),
+rev(rows), search(q, sensitivity), item(ref, sensitivity, offset, limit), each raising ws_adapter.Missing, Locked or
+Unavailable and nothing else the phone could read. Search with no section asks every adapter of the workspace.
+tests/unit/test_tv_ws_content.py holds the limits and refusals.
 """
 from __future__ import annotations
 
 import logging
 import time
 from datetime import datetime, timezone
-from typing import Optional
 
 from flask import Flask, Response, jsonify, request
 
-from agent_friday.tv_gateway import pc_read, ws_adapter, ws_calendar, ws_device, ws_knowledge
+from agent_friday.tv_gateway import pc_read, ws_adapter, ws_calendar, ws_device, ws_knowledge, ws_people
 
 _log = logging.getLogger(__name__)
 
@@ -27,7 +29,7 @@ BLOCKS_MAX = 60
 QUERY_MAX = 200
 MAX_BODY = 256 * 1024
 
-ADAPTERS = {"knowledge": ws_knowledge, "calendar": ws_calendar}
+ADAPTERS = {"knowledge": {"pages": ws_knowledge, "people": ws_people}, "calendar": {"agenda": ws_calendar}}
 
 
 def _now() -> str:
@@ -50,19 +52,19 @@ def _offset() -> int:
 
 
 def _serving(ws: str):
-    """(adapter, device block) for a workspace this PC serves to a phone, or None."""
+    """({section: adapter}, device block) for a workspace this PC serves to a phone, or None. Only sections the
+    manifest declares and an adapter exists for are in the dict."""
     from agent_friday.services import laya_manifests as lm
     from agent_friday.services import workspace_registry as reg
     entry = reg.get(ws) if pc_read.ID_PATTERN.match(ws) else None
     block = ws_device.device_block(lm.get(ws)) if entry is not None and not reg.is_held(entry) else None
-    adapter = ADAPTERS.get(ws)
-    return (adapter, block) if adapter is not None and block is not None else None
+    declared = (block or {}).get("sections") or {}
+    adapters = {name: a for name, a in ADAPTERS.get(ws, {}).items() if name in declared}
+    return (adapters, block) if adapters else None
 
 
-def _section(adapter, block: dict) -> Optional[str]:
-    name = request.args.get("section") or next(iter(adapter.SECTIONS))
-    section = (block.get("sections") or {}).get(name)
-    return name if name in adapter.SECTIONS and section is not None else None
+def _by_ref(adapters: dict, ref: str):
+    return next((a for a in adapters.values() if ref.startswith(a.PREFIX)), None)
 
 
 def _failed(e: Exception, area: str) -> Response:
@@ -81,10 +83,11 @@ def register(app: Flask) -> None:
         if denied is not None:
             return denied
         served = _serving(ws)
-        section = _section(*served) if served else None
-        if section is None:
+        adapters = served[0] if served else {}
+        section = request.args.get("section") or next(iter(adapters), None)
+        if section not in adapters:
             return _unknown()
-        adapter, block = served
+        adapter, block = adapters[section], served[1]
         limit, start = max(1, pc_read._int("limit", ROWS_MAX, ROWS_MAX)), _offset()
         try:
             rows = adapter.pages(block["sensitivity"])
@@ -104,17 +107,25 @@ def register(app: Flask) -> None:
         served = _serving(ws)
         if served is None:
             return _unknown()
-        adapter, block = served
+        adapters, block = served
+        section = request.args.get("section")
+        if section is not None and section not in adapters:
+            return _unknown()
         q = (request.args.get("q") or "").strip()
         if not q:
             return pc_read._refuse(400, "say what to look for", code="bad_query")
         if len(q) > QUERY_MAX:
             return pc_read._refuse(413, "that search is too long", code="too_large")
         limit, start = max(1, pc_read._int("limit", ROWS_MAX, ROWS_MAX)), _offset()
-        try:
-            rows = adapter.search(q, block["sensitivity"])
-        except Exception as e:
-            return _failed(e, "search")
+        rows, failure, answered = [], None, False
+        for adapter in ([adapters[section]] if section else adapters.values()):
+            try:
+                rows += adapter.search(q, block["sensitivity"])
+                answered = True
+            except Exception as e:                       # one section being down must not hide another's hits
+                failure = e
+        if not answered and failure is not None:
+            return _failed(failure, "search")
         return _out({"rev": None, "next": str(start + limit) if start + limit < len(rows) else None,
                      "total": len(rows), "facets": [], "rows": rows[start:start + limit]})
 
@@ -124,9 +135,10 @@ def register(app: Flask) -> None:
         if denied is not None:
             return denied
         served = _serving(ws)
-        if served is None:
+        adapter = _by_ref(served[0], ref) if served else None
+        if adapter is None:
             return _unknown()
-        adapter, block = served
+        block = served[1]
         try:
             body = adapter.item(ref, block["sensitivity"], _offset(), BLOCKS_MAX)
         except Exception as e:
@@ -143,9 +155,13 @@ def register(app: Flask) -> None:
         served = _serving(ws)
         if served is None:
             return _unknown()
-        adapter, block = served
+        adapters, block = served
+        section = request.args.get("section")
+        if section is not None and section not in adapters:
+            return _unknown()
         try:
-            now = adapter.rev(adapter.pages(block["sensitivity"]))
+            now = "+".join(a.rev(a.pages(block["sensitivity"])) for a in
+                           ([adapters[section]] if section else adapters.values()))
         except Exception as e:
             return _failed(e, "changes")
         return _out({"changed": request.args.get("since") != now, "rev": now})
