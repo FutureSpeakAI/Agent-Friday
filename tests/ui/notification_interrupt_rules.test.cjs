@@ -13,18 +13,19 @@ const RULES = [
 
 function render(block, rules) {
   const posted = [];
+  const changes = [];
   const context = vm.createContext({
     React: {
       createElement: (type, props, ...children) => ({type, props: props || {}, children}),
       // The first useState is `rules`; seed it.
-      useState: initial => [rules !== undefined ? rules : initial, () => {}],
+      useState: initial => [rules !== undefined ? rules : initial, change => { changes.push(change); }],
       useEffect: () => {},
     },
     StSection: 'StSection',
     apiFetch: (url, opts) => { posted.push({url, opts}); return {then: () => ({then: () => ({catch: () => {}})})}; },
   });
   vm.runInContext(block, context);
-  return {tree: context.SettingsNotificationInterrupts(), posted};
+  return {tree: context.SettingsNotificationInterrupts(), posted, changes};
 }
 
 function find(node, pred, out = []) {
@@ -62,6 +63,16 @@ for (const file of ['index.html', 'ui_parts/app.html']) {
     assert.deepEqual(posts.map(p => p.url), ['/api/notifications/interrupt-rules', '/api/notifications/interrupt-rules']);
     assert.deepEqual(JSON.parse(posts[0].opts.body), {id: 'daily_briefing', on: true});
     assert.deepEqual(JSON.parse(posts[1].opts.body), {id: 'scheduled_runs', on: false});
+  });
+
+  test(`${file}: the box changes at once, before the save comes back`, () => {
+    const {tree, changes} = render(block, RULES);
+    const boxes = find(tree, n => n.type === 'input' && n.props.type === 'checkbox');
+    boxes[1].props.onChange();
+    assert.equal(changes.length, 1, 'the rules were updated on the click');
+    const shown = changes[0](RULES);
+    assert.deepEqual(shown.map(r => [r.id, r.on]), [['scheduled_runs', true], ['daily_briefing', true]]);
+    assert.equal(RULES[1].on, false, 'the old list is not changed in place');
   });
 
   test(`${file}: nothing is drawn before the rules arrive`, () => {

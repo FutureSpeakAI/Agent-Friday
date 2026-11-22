@@ -66069,9 +66069,12 @@ function SettingsNotificationInterrupts() {
     .then(d => setRules((d && d.rules) || [])).catch(() => setRules([]));
   React.useEffect(() => { load(); }, []);
   const toggle = r => {
+    const next = !r.on;
+    // The box changes at once; the saved answer then replaces it, and a failed save puts it back.
+    setRules(rs => (rs || []).map(x => x.id === r.id ? Object.assign({}, x, { on: next }) : x));
     apiFetch('/api/notifications/interrupt-rules', { method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ id: r.id, on: !r.on }) })
-      .then(res => res.json()).then(d => { if (d && d.rules) setRules(d.rules); }).catch(() => {});
+      body: JSON.stringify({ id: r.id, on: next }) })
+      .then(res => res.json()).then(d => { if (d && d.rules) setRules(d.rules); else load(); }).catch(() => load());
   };
   return React.createElement(StSection, { title: 'What may interrupt you' },
     React.createElement('div', { style: { fontSize: 10, color: 'rgba(255,255,255,0.55)', marginBottom: 8, lineHeight: 1.5 } },

@@ -30,7 +30,8 @@ def test_the_panel_reads_and_writes_the_rules_through_the_routes(ui):
     flat = _flat(ui)
     assert "apiFetch('/api/notifications/interrupt-rules')" in flat, ui
     assert "apiFetch('/api/notifications/interrupt-rules',{method:'POST'" in flat, ui
-    assert "JSON.stringify({id:r.id,on:!r.on})" in flat, ui
+    assert "JSON.stringify({id:r.id,on:next})" in flat, ui
+    assert "constnext=!r.on;" in flat, ui
 
 
 @pytest.mark.parametrize("ui", UIS)
