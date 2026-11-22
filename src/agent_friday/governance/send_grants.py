@@ -940,9 +940,11 @@ def _current_turn(ctx=None) -> Optional[str]:
     one and a task alike."""
     try:
         from agent_friday.governance import outside_content
-        return outside_content.turn_id(ctx)
+        t = outside_content.turn_id(ctx)
     except Exception:
-        return None
+        t = None
+    # A chat turn with no plan id still has the id prepare_confirmation_ctx stamps on every turn.
+    return t or ((ctx or {}).get("confirm_turn") or None)
 
 
 def note_skill_read(name: str, ctx, fingerprint: str = "") -> None:
