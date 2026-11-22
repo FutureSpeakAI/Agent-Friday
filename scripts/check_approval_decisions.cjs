@@ -101,16 +101,20 @@ for (const file of FILES) {
     assert.match(w.toasts[0], /This one is approved with its own button on this PC\./);
     assert.deepEqual(w.dropped, [], 'a refused card is not dropped');
   });
-  check(file + ': a card that is gone, or an answer with no reason, still says something', async () => {
+  check(file + ': a card that is gone leaves the list and says so; an answer with no reason still says something', async () => {
     const w = pageWorld(), { fridayDecideApproval } = loadDecide(file, w);
     const p = fridayDecideApproval('a1', 'approve');
     w.pending.a1.resolve({ ok: false, error: 'not found' });
     await p;
+    assert.deepEqual(w.dropped, ['a1'], 'a card the server no longer has stays on the list');
+    assert.match(w.toasts[0], /no longer waiting/i);
+    assert.doesNotMatch(w.toasts[0], /still waiting/i, 'a gone card is told it is still waiting');
     const q = fridayDecideApproval('a2', 'approve');
     w.pending.a2.resolve(null);
     await q;
     assert.equal(w.toasts.length, 2);
-    assert.ok(w.toasts.every(t => /did not go through|still waiting/i.test(t)), w.toasts.join(' | '));
+    assert.match(w.toasts[1], /did not go through/i);
+    assert.deepEqual(w.dropped, ['a1'], 'an answer with no reason dropped the card');
   });
   check(file + ': no connection says so and leaves the card waiting, and the card can be tried again', async () => {
     const w = pageWorld(), { fridayDecideApproval, fridayDeciding } = loadDecide(file, w);
