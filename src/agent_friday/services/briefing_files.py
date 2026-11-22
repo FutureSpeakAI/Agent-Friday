@@ -24,7 +24,7 @@ DATED = re.compile(r"^\d{4}-\d{2}-\d{2}(-pm)?\.(md|html)$")
 
 
 def briefings_dir() -> Path:
-    from agent_friday.paths import FRIDAY_DIR
+    from agent_friday.core import FRIDAY_DIR
     return Path(FRIDAY_DIR) / "wiki" / "briefings"
 
 

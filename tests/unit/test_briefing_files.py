@@ -104,20 +104,12 @@ def test_a_generated_briefing_is_in_the_index_and_is_the_latest_the_agent_is_tol
     an old .html briefing for months) names it. The folder starts with an old index and an old .html briefing."""
     from agent_friday.services import model_router
     folder = _folder(tmp_path, ["2026-06-26-pm.html"])
-    (folder / "2026-07-21.md").write_text("# B
-
-July line
-", encoding="utf-8")
-    bf.write("2026-07-21", "# B
-
-July line", folder)                       # the index that stopped in July
+    bf.write("2026-07-21", "# B\n\nJuly line", folder)                       # the index that stopped in July
     monkeypatch.setattr(model_router, "FRIDAY_DIR", tmp_path)
     before = []
     model_router._load_latest_briefing_summary(before)
     assert "2026-07-21.md" in before[0]
-    bf.write("2026-11-21", "# B
-
-November line", folder)
+    bf.write("2026-11-21", "# B\n\nNovember line", folder)
     after = []
     model_router._load_latest_briefing_summary(after)
     index = (folder / "_index.md").read_text(encoding="utf-8")
