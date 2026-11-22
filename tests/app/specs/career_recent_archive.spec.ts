@@ -34,9 +34,11 @@ test('recent lists only open jobs and the archive keeps the closed ones with the
   await page.route('**/api/career/jobs?view=archive*', r => r.fulfill(json({ status: 'ok', view: 'archive', jobs: ARCHIVE })));
   // Past first run: its own screen covers the app (as in headings.spec.ts).
   await page.route('**/api/setup/status', r => r.fulfill(json({ initialized: true })));
+  // The Simple style hides the dock, so the Career workspace is reached from the classic one.
+  await page.addInitScript(() => { try { localStorage.setItem('friday.display-style.v1', 'classic'); } catch (_) {} });
   test.setTimeout(180_000);
   await bootApp(page);
-  await openWorkspace(page, 'career');
+  await openWorkspace(page, 'Career');
   await page.getByRole('button', { name: 'scanner' }).click();
 
   const recent = page.locator('[data-testid="career-recent-job"]');
