@@ -3064,6 +3064,10 @@ DEFAULT_SETTINGS = {
     # day) shows (unified-shell.md §10.4): "smart" when it is useful, "always"
     # whenever no workspace is open, "never" only when asked (show_my_day).
     "landing_mode": "smart",
+    # The skills Start My Day's briefing runs as sections (services/briefing_sections): an ordered list of
+    # {skill, heading, days ("daily", "fri-sun", "mon,wed"), enabled}. None means the default: events-horizon every
+    # day and family-outing Friday to Sunday. A skill that is not installed or approved shows "Didn't run: ...".
+    "briefing_sections": None,
     # Big mode (hand-cursor.md §2): large targets when hand tracking is on. auto | on | off.
     "big_mode": "auto",
     # Claude Sonnet 5 is the default orchestrator — best cost/quality ratio for

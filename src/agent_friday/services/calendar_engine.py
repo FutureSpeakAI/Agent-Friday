@@ -280,7 +280,7 @@ def _google_credentials():
 def _fetch_gmail_recent(limit=15):
     """Recent Gmail messages (last 24h, unread first) via the Gmail API.
 
-    Returns a list of {sender, subject, snippet, timestamp, thread_id, labels}.
+    Returns a list of {id (the message id), sender, subject, snippet, timestamp, thread_id, labels}.
     If Google isn't connected, returns a single-item list with an 'error' key
     pointing the caller at /api/google/auth — callers can detect that and fall
     back to the local cache.
@@ -318,6 +318,7 @@ def _fetch_gmail_recent(limit=15):
                 except Exception:
                     ts_iso = headers.get("date") or ""
                 out.append({
+                    "id": mid,
                     "sender": headers.get("from", "unknown"),
                     "subject": headers.get("subject", "(no subject)"),
                     "snippet": (msg.get("snippet") or "").strip(),
@@ -367,6 +368,8 @@ def _fetch_calendar_today():
             s, e = ev.get("start", {}), ev.get("end", {})
             attendees = [a.get("email", "") for a in ev.get("attendees", []) if a.get("email")]
             out.append({
+                "id": ev.get("id", ""),
+                "html_link": ev.get("htmlLink", ""),
                 "title": ev.get("summary", "(untitled)"),
                 "start_time": s.get("dateTime") or s.get("date") or "",
                 "end_time": e.get("dateTime") or e.get("date") or "",
