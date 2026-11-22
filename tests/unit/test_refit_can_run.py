@@ -64,6 +64,18 @@ def test_it_is_eligible_while_the_pc_is_idle_for_any_number_of_hours_there_is_no
         assert _due(rec) is True and fit.blocked_reason() == "", hours
 
 
+def test_it_is_eligible_overnight_when_the_pc_is_idle_the_scheduler_window_does_not_stop_it(quiet, monkeypatch):
+    """The scheduler's default idle window is 09:00-23:00; 'as many hours as the PC is idle' includes the small hours."""
+    from datetime import datetime
+    monkeypatch.setattr(scheduler, "_idle_settings", lambda: {"enabled": True, "after_s": 600.0, "from_hour": 9, "to_hour": 23})
+    rec = _refit_record(monkeypatch)
+    quiet["idle_s"] = 4 * HOUR
+    night = datetime(2026, 11, 22, 3, 30, tzinfo=scheduler._now_central().tzinfo)
+    assert scheduler._is_due_on_schedule(dict(rec), night) is True
+    other = {"trigger": "idle_daily", "enabled": True, "id": "sch_other", "spec": {"idle_after_s": 600}}
+    assert scheduler._is_due_on_schedule(dict(other), night) is False          # any other idle job keeps the window
+
+
 def test_it_is_not_eligible_while_the_owner_is_using_the_pc(quiet, monkeypatch):
     rec = _refit_record(monkeypatch)
     for seconds in (0, 5, 60, fit.IDLE_AFTER_S - 1):
@@ -115,7 +127,7 @@ def test_a_refit_that_is_not_the_scheduled_run_does_not_yield(quiet, monkeypatch
 
 def test_the_trigger_fires_the_moment_the_pc_is_idle_long_enough_so_it_can_never_contradict_the_rule(quiet, monkeypatch):
     rec = _refit_record(monkeypatch)
-    assert rec["spec"] == {"idle_after_s": fit.IDLE_AFTER_S}
+    assert rec["spec"] == fit.IDLE_SPEC
     eligible = []
     for minutes in range(0, 12 * 60, 5):
         quiet["idle_s"] = minutes * MINUTE
@@ -132,7 +144,7 @@ def test_an_untouched_old_default_moves_to_the_new_wait_once_and_an_edited_one_s
     old["spec"] = {"idle_after_s": fit.OLD_IDLE_AFTER_S}
     scheduler._write_store([old])
     scheduler._seed_and_reconcile()
-    assert scheduler.get_schedule("sch_" + fit.JOB_REF)["spec"] == {"idle_after_s": fit.IDLE_AFTER_S}
+    assert scheduler.get_schedule("sch_" + fit.JOB_REF)["spec"] == fit.IDLE_SPEC
     scheduler.update_schedule("sch_" + fit.JOB_REF, {"spec": {"idle_after_s": 900}}, by="owner")
     scheduler._seed_and_reconcile()
     assert scheduler.get_schedule("sch_" + fit.JOB_REF)["spec"] == {"idle_after_s": 900}

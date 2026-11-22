@@ -423,6 +423,9 @@ DECISION_10 = "Decision 10, amended by owner 2026-11-22"
 #: owner's words: "Allow it for as many hours as the PC is idle."), so a trigger that asks for this much quiet can always
 #: fire once the PC has been left alone (tests/unit/test_refit_can_run.py).
 IDLE_AFTER_S = 180
+#: The whole day: the scheduler's default idle window (09:00-23:00) would stop a PC left idle overnight, and the owner's
+#: words allow it ("as many hours as the PC is idle").
+IDLE_SPEC = {"idle_after_s": IDLE_AFTER_S, "from_hour": 0, "to_hour": 24}
 OLD_IDLE_AFTER_S = 600
 presence_override = None
 
@@ -573,7 +576,7 @@ def register() -> None:
     from agent_friday.services import scheduler
     scheduler.register_builtin_task(
         JOB_REF, run_scheduled, label=SCHEDULE_LABEL, default_trigger="idle_daily",
-        default_spec={"idle_after_s": IDLE_AFTER_S}, notify="silent")
+        default_spec=dict(IDLE_SPEC), notify="silent")
 
 
 # ---------------------------------------------------------------------------

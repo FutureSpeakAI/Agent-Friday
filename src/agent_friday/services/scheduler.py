@@ -2720,7 +2720,7 @@ def _seed_and_reconcile():
             if (r.get("trigger") == "idle_daily" and (r.get("spec") or {}) == {"idle_after_s": _lpf.OLD_IDLE_AFTER_S}
                     and not builtin_overrides.has_edits(r["id"])
                     and float(r.get("updated") or 0) - float(r.get("created") or 0) <= 1.0):
-                r["spec"] = {"idle_after_s": _lpf.IDLE_AFTER_S}
+                r["spec"] = dict(_lpf.IDLE_SPEC)
                 moved += 1
         adopted = 0
         for r in recs:
@@ -3039,12 +3039,12 @@ def _register_default_builtin_tasks():
     # the vault open, the owner present and the PC on AC power, and waits (never
     # fails) otherwise. CPU only: no GPU, no model seat.
     try:
-        from agent_friday.services.laya_personal_fit import IDLE_AFTER_S as _refit_idle_s
+        from agent_friday.services.laya_personal_fit import IDLE_SPEC as _refit_idle_spec
         from agent_friday.services.laya_personal_fit import run_scheduled as _laya_refit
         register_builtin_task("laya_personal_refit", _laya_refit,
                               label="Learning from your corrections",
                               default_trigger="idle_daily",
-                              default_spec={"idle_after_s": _refit_idle_s}, notify="silent")
+                              default_spec=dict(_refit_idle_spec), notify="silent")
     except Exception as e:
         print(f"  [scheduler] laya_personal_refit unavailable: {e}")
 
