@@ -21,9 +21,12 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 #: The fields an owner edit may change: the schedule, the enabled state, and the parameters.
-EDITABLE = ("trigger", "spec", "enabled", "timeout_seconds", "retry", "notify")
+EDITABLE = ("trigger", "spec", "enabled", "timeout_seconds", "retry", "notify", "task")
 #: What the job does: its prompt or action. A model's change here needs the owner's approval card.
 ACTION_FIELDS = ("task",)
+#: What an edit made before versions existed can have changed (the owner's screens change these; a difference in the others
+#: is an older shipped default, not an owner's choice, and is not adopted).
+ADOPT_FIELDS = ("trigger", "spec", "enabled")
 
 _LOCK = threading.Lock()
 MAX_HISTORY = 50
@@ -139,15 +142,15 @@ def revert(sid: str, current: Dict[str, Any], defaults: Dict[str, Any], by: str,
 def adopt(sid: str, current: Dict[str, Any], defaults: Dict[str, Any], path: Optional[Path] = None) -> bool:
     """A built-in that already differs from its shipped defaults and has no history was edited before this record existed:
     it is the owner's. Logged once as version 1 ("adopted")."""
-    now = fields_of(current)
-    if not _differs(now, defaults):
+    now = {k: v for k, v in fields_of(current).items() if k in ADOPT_FIELDS}
+    if not _differs(now, {k: v for k, v in defaults.items() if k in ADOPT_FIELDS}):
         return False
     with _LOCK:
         data = _load(path)
         job = _job(data, sid)
         if job["history"] or job["owner_fields"]:
             return False
-        _append(job, "adopted", "owner", fields_of(defaults), now,
+        _append(job, "adopted", "owner", {k: v for k, v in fields_of(defaults).items() if k in ADOPT_FIELDS}, now,
                 note="an edit made before edits were versioned")
         job["owner_fields"] = _differs(now, defaults)
         _save(data, path)

@@ -81,6 +81,7 @@ def delete_schedule(sid):
 
 
 @scheduler_bp.route('/api/schedules/<sid>/history', methods=['GET'])
+@login_required
 def schedule_edit_history(sid):
     """The versions of the owner's edits to a built-in job (newest last)."""
     from agent_friday.services import builtin_overrides
