@@ -182,17 +182,50 @@ def test_nothing_found_is_status_zero_and_json_is_valid(tmp_path, capsys):
     assert json.loads(capsys.readouterr().out) == []
 
 
+_BS = chr(92)   # one backslash; built, not escaped, so no layer can collapse the doubled prefixes below
+
+
+def _spelled(text: str, spelling: str) -> str:
+    """`text` (an absolute C:\\... path) written another way that names the same folder."""
+    if spelling == "extended":
+        return _BS * 2 + "?" + _BS + text                                   # \\?\C:\...
+    return _BS * 2 + "localhost" + _BS + text[0] + "$" + text[2:]          # \\localhost\C$\...
+
+
+def test_the_spellings_name_the_same_folder(tmp_path):
+    """Guard for the test below: each spelling really is the folder (two leading backslashes, resolvable)."""
+    if __import__("os").name != "nt":
+        pytest.skip("Windows path spellings")
+    import os
+    for spelling in ("extended", "unc"):
+        other = _spelled(str(tmp_path.resolve()), spelling)
+        assert other.startswith(_BS * 2) and os.path.samefile(other, tmp_path), spelling
+
+
 @pytest.mark.skipif(__import__("os").name != "nt", reason="Windows path spellings")
 @pytest.mark.parametrize("spelling", ["extended", "unc"])
-def test_out_under_another_spelling_of_the_root_is_refused(tmp_path, monkeypatch, spelling):
-    r"""The same folder written another way (\?\C:\... or \localhost\C$\...) is still the data root: "inside" is decided by
-    which folder it IS, not by how the path is spelled."""
+@pytest.mark.parametrize("home_exists", [True, False], ids=["home-exists", "home-not-yet"])
+def test_out_under_another_spelling_of_the_root_is_refused(tmp_path, monkeypatch, spelling, home_exists):
+    """The same folder written another way (extended-length or localhost UNC) is still the data root, whether or not the
+    data root exists yet: "inside" is decided by which folder it IS, not by how the path is spelled."""
+    home = tmp_path / ".friday"
+    if home_exists:
+        home.mkdir()
+    (tmp_path / "elsewhere").mkdir()
+    monkeypatch.setenv("FRIDAY_HOME", str(home))
+    spelled_home = _spelled(str(tmp_path.resolve()), spelling) + _BS + ".friday"
+    for out in (spelled_home + _BS + "report.txt", spelled_home):
+        assert _load().main(["--root", str(tmp_path / "elsewhere"), "--out", out]) == 2, out
+    assert not (home / "report.txt").exists()
+    assert home.is_dir() if home_exists else not home.exists()
+
+
+@pytest.mark.skipif(__import__("os").name != "nt", reason="NTFS streams")
+def test_out_naming_a_stream_is_refused(tmp_path, monkeypatch):
+    """`<folder>:name` writes a hidden stream ON that folder (on the data root itself): a report path never names one."""
     home = tmp_path / ".friday"
     home.mkdir()
     (tmp_path / "elsewhere").mkdir()
     monkeypatch.setenv("FRIDAY_HOME", str(home))
-    text = str(home.resolve())
-    other = "\\?\\" + text if spelling == "extended" else "\\localhost\%s$%s" % (text[0], text[2:])
-    out = Path(other) / "report.txt"
-    assert _load().main(["--root", str(tmp_path / "elsewhere"), "--out", str(out)]) == 2
-    assert not (home / "report.txt").exists()
+    for out in (str(home) + ":rep", str(tmp_path / "report.txt") + ":hidden"):
+        assert _load().main(["--root", str(tmp_path / "elsewhere"), "--out", out]) == 2, out
