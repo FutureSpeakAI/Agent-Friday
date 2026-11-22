@@ -13,6 +13,7 @@ def _home(tmp_path, monkeypatch):
     monkeypatch.setattr(ps, "_BEGUN", False)
     from agent_friday.routes import contacts
     monkeypatch.setattr(contacts, "FRIDAY_DIR", tmp_path)
+    (tmp_path / ".setup_complete").write_text("", encoding="utf-8")   # first run is over
     return tmp_path
 
 

@@ -16,6 +16,7 @@ def _home(tmp_path, monkeypatch):
     monkeypatch.setattr(core, "FRIDAY_DIR", tmp_path)
     monkeypatch.setattr(task_journal, "BASE_DIR_OVERRIDE", tmp_path / "tasks")
     monkeypatch.setattr(ps, "_BEGUN", False)
+    (tmp_path / ".setup_complete").write_text("", encoding="utf-8")   # first run is over
     return tmp_path
 
 
@@ -136,3 +137,58 @@ def test_concurrent_trait_changes_and_a_session_start_lose_nothing(_home):
 
 def test_there_is_no_state_to_show_before_the_first_session(_home):
     assert ps.summary() is None
+
+
+# -- review round 1 ------------------------------------------------------------------------------
+
+def test_a_fresh_install_gets_no_file_before_its_first_run_is_over(_home, monkeypatch):
+    # core._is_existing_install reads an existing personality.json as "setup finished": creating it at the first
+    # start would skip the first-run wizard.
+    (_home / ".setup_complete").unlink()
+    monkeypatch.setattr(core, "_load_settings", lambda: {})
+    assert ps.begin_session() is None and not (_home / "personality.json").exists()
+    monkeypatch.setattr(core, "_load_settings", lambda: {"setup_complete": True})
+    restart(monkeypatch)
+    assert ps.begin_session()["session_count"] == 1
+
+
+@pytest.mark.parametrize("value", ["nan", "inf", "-inf", float("nan"), float("inf"), True, False, "loud", None, [1]])
+def test_only_a_finite_number_is_written(_home, value):
+    ps.set_trait("humor", 0.4)
+    before = (_home / "personality.json").read_text(encoding="utf-8")
+    with pytest.raises(ValueError):
+        ps.set_trait("humor", value)
+    assert (_home / "personality.json").read_text(encoding="utf-8") == before
+
+
+def test_the_first_run_scene_choice_keeps_the_count_and_an_unreadable_file_is_not_replaced(_home):
+    ps.begin_session()
+    ps.update({"preferred_scene_index": 3})
+    assert state(_home)["session_count"] == 1 and state(_home)["preferred_scene_index"] == 3
+    with pytest.raises(ValueError):
+        ps.update({"session_count": 0})
+    (_home / "personality.json").write_text("{broken", encoding="utf-8")
+    with pytest.raises(ps.Unreadable):
+        ps.update({"preferred_scene_index": 1})
+    assert (_home / "personality.json").read_text(encoding="utf-8") == "{broken"
+
+
+@pytest.mark.parametrize("stored,sessions,maturity", [
+    ({"session_count": "7", "maturity": "0.9"}, 8, 0.9),
+    ({"session_count": 2, "maturity": float("nan")}, 3, ps.maturity_for(3, 0)),
+    ({"session_count": 2, "maturity": 5}, 3, 1.0),
+])
+def test_stored_numbers_written_as_text_or_out_of_range_are_read_sensibly(_home, stored, sessions, maturity):
+    (_home / "personality.json").write_text(json.dumps(stored), encoding="utf-8")
+    got = ps.begin_session()
+    assert got["session_count"] == sessions and got["maturity"] == pytest.approx(maturity)
+
+
+def test_the_server_counts_a_session_at_start_after_its_single_instance_lock():
+    import pathlib
+    source = (pathlib.Path(__file__).resolve().parents[2] / "src" / "agent_friday" / "server.py").read_text(encoding="utf-8")
+    main = source.rindex("if __name__ == '__main__':")
+    call = source.find("personality_state.begin_session()", main)
+    assert call > main, "server.py's start-up block must count the session"
+    lock = source.find("instance", main)
+    assert -1 < lock < call, "the session is counted after the single-instance check"
