@@ -2,7 +2,6 @@
 
 Covers:
   - _estimate_tokens: char-based token estimate for message lists.
-  - _coerce_int: type coercion with fallback for bad/bool/negative values.
   - _extract_messages: pulls list from .messages attribute or bare list.
   - should_compress: gating on enabled flag and token threshold.
   - compress: graceful-passthrough when headroom is absent or fails (the
@@ -70,6 +69,13 @@ class TestEstimateTokens:
         result = ContextCompressor._estimate_tokens(msgs)
         assert result == 600 // _CHARS_PER_TOKEN
 
+    def test_tool_result_content_is_counted(self):
+        block = {"type": "tool_result", "tool_use_id": "t1", "content": "x" * (_CHARS_PER_TOKEN * 10)}
+        nested = {"type": "tool_result", "tool_use_id": "t2",
+                  "content": [{"type": "text", "text": "y" * (_CHARS_PER_TOKEN * 5)}]}
+        msgs = [{"role": "user", "content": [block, nested]}]
+        assert ContextCompressor._estimate_tokens(msgs) == 15
+
     def test_non_dict_messages_ignored_gracefully(self):
         # A bare string in the list is not a dict — must not raise.
         result = ContextCompressor._estimate_tokens(["not a dict"])  # type: ignore[list-item]
@@ -84,37 +90,6 @@ class TestEstimateTokens:
         msgs = [{"role": "user", "content": 12345}]
         result = ContextCompressor._estimate_tokens(msgs)
         assert result == 0
-
-
-# ════════════════════════════════════════════════════════════════════════
-#  _coerce_int  (static method)
-# ════════════════════════════════════════════════════════════════════════
-
-class TestCoerceInt:
-    def test_valid_int_returned(self):
-        assert ContextCompressor._coerce_int(42, 0) == 42
-
-    def test_valid_float_truncated_to_int(self):
-        assert ContextCompressor._coerce_int(3.9, 0) == 3
-
-    def test_zero_is_valid(self):
-        assert ContextCompressor._coerce_int(0, 99) == 0
-
-    def test_negative_uses_fallback(self):
-        assert ContextCompressor._coerce_int(-1, 77) == 77
-
-    def test_none_uses_fallback(self):
-        assert ContextCompressor._coerce_int(None, 55) == 55  # type: ignore[arg-type]
-
-    def test_string_uses_fallback(self):
-        assert ContextCompressor._coerce_int("100", 33) == 33  # type: ignore[arg-type]
-
-    def test_bool_true_uses_fallback(self):
-        # booleans are technically ints in Python; the implementation explicitly rejects them
-        assert ContextCompressor._coerce_int(True, 10) == 10
-
-    def test_bool_false_uses_fallback(self):
-        assert ContextCompressor._coerce_int(False, 10) == 10
 
 
 # ════════════════════════════════════════════════════════════════════════
@@ -248,28 +223,42 @@ class TestCompressGracefulPassthrough:
         assert cc._stats["errors"] == 1
 
     def test_compression_with_stub_headroom_updates_stats(self):
-        """If a stub headroom is provided that returns a valid result object,
-        compress() should update stats and return the compressed list."""
+        """compress() returns what the compressor squeezed of the tool output and counts the saving on the list it returns.
+        Conversation text is put back as written (tests/unit/test_compressor_leaves_conversation_text_alone.py)."""
         cc = ContextCompressor(enabled=True)
-        compressed_msgs = [_msg("short")]
+        block = {"type": "tool_result", "tool_use_id": "t1", "content": "tool output " * 100}
+        original = [_msg("what did the search find?"), {"role": "user", "content": [block]}]
+        squeezed = [_msg("clipped"), {"role": "user", "content": [dict(block, content="short")]}]
 
         class FakeResult:
-            messages = compressed_msgs
+            messages = squeezed
             tokens_before = 100
             tokens_after = 20
             tokens_saved = 80
 
-        def _fake_compress(msgs, model=None):
-            return FakeResult()
-
-        cc._headroom = _fake_compress
-        original = [_msg("original " * 100)]
+        cc._headroom = lambda msgs, model=None: FakeResult()
         result = cc.compress(original)
-        assert result == compressed_msgs
+        assert result[0]["content"] == "what did the search find?", "conversation text is not the clipped text"
+        assert result[1]["content"][0]["content"] == "short"
+        before = ContextCompressor._estimate_tokens(original)
+        after = ContextCompressor._estimate_tokens(result)
         assert cc._stats["calls"] == 1
-        assert cc._stats["tokens_saved"] == 80
-        assert cc._stats["tokens_before"] == 100
-        assert cc._stats["tokens_after"] == 20
+        assert cc._stats["tokens_before"] == before and cc._stats["tokens_after"] == after
+        assert cc._stats["tokens_saved"] == before - after > 0
+
+    def test_a_result_that_only_clipped_conversation_text_is_a_passthrough(self):
+        cc = ContextCompressor(enabled=True)
+
+        class FakeResult:
+            messages = [_msg("clipped")]
+            tokens_before = 100
+            tokens_after = 20
+            tokens_saved = 80
+
+        cc._headroom = lambda msgs, model=None: FakeResult()
+        original = [_msg("original " * 100)]
+        assert cc.compress(original) == original
+        assert cc._stats["calls"] == 0 and cc._stats["passthrough"] == 1
 
 
 # ════════════════════════════════════════════════════════════════════════
