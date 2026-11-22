@@ -13,7 +13,8 @@ The rules, by what an item says rather than only where it sits:
 * an item that cites an id must have EVERY id resolve to a source of a kind its section accepts; one unknown or
   unlinkable id ([C9]) drops the item;
 * in a sourced section (a heading that names news, email, calendar, schedule, agenda, meetings or events) an item
-  with no citation and no verified link is dropped, and a line of prose there is an item too; items elsewhere
+  with no citation and no verified link is dropped, and a line of prose there is an item too (a line that is only
+  a bold label is a heading, as briefing_sections demotes a skill's headings to one); items elsewhere
   (tasks, an insight) are kept unless they cite;
 * a heading naming two kinds ("Schedule & Inbox") accepts both; a level-1 heading that opens the briefing is its
   title and names no section, so "# Morning: headlines & schedule" does not make "## Tasks" a news section;
@@ -61,6 +62,8 @@ _ANGLE_URL = re.compile(r"<((?:https?://|www\.)[^\s>]+)>", re.I)
 #: The target of ANY markdown link or image, whatever its label holds: what follows "](" up to the closing ")".
 _LINK_TARGET = re.compile(r"\]\(([^)\n]*)\)")
 _HAS_WORDS = re.compile(r"[A-Za-z0-9]")
+#: A line that is only a bold label: a heading a section skill wrote, demoted (briefing_sections), so kept like one.
+_LABEL_LINE = re.compile(r"^\s*\*\*[^*\n]+\*\*\s*$")
 LABELS = {EMAIL: "Open email", CALENDAR: "Calendar event", EVENT: "Event page"}
 
 
@@ -211,7 +214,8 @@ def validate(text: str, sources: dict) -> Validated:
             stack.append((level, set() if title else
                           (_section_kinds(heading.group(2)) or (stack[-1][1] if stack else set()))))
             out.append(line)
-        elif bullet or (_HAS_WORDS.search(line) and (kinds or _links_or_cites(line))):
+        elif bullet or (_HAS_WORDS.search(line) and _links_or_cites(line)) \
+                or (kinds and _HAS_WORDS.search(line) and not _LABEL_LINE.match(line)):
             # a list item; a line of prose in a sourced section; a line of prose that cites or links: an item
             if kinds or _links_or_cites(line):
                 item, item_kinds = [line], kinds
