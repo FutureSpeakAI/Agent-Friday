@@ -220,6 +220,22 @@ def test_out_under_another_spelling_of_the_root_is_refused(tmp_path, monkeypatch
     assert home.is_dir() if home_exists else not home.exists()
 
 
+@pytest.mark.skipif(__import__("os").name != "nt", reason="Windows name trimming")
+@pytest.mark.parametrize("tail", [".", " "], ids=["trailing-dot", "trailing-space"])
+@pytest.mark.parametrize("home_exists", [True, False], ids=["home-exists", "home-not-yet"])
+def test_out_with_a_name_windows_trims_is_refused(tmp_path, monkeypatch, tail, home_exists):
+    """Windows drops a trailing dot or space when it opens a name, so ".friday." IS ".friday": a report path whose names
+    end that way is refused outright rather than compared."""
+    home = tmp_path / ".friday"
+    if home_exists:
+        home.mkdir()
+    (tmp_path / "elsewhere").mkdir()
+    monkeypatch.setenv("FRIDAY_HOME", str(home))
+    for out in (str(home) + tail, str(home) + tail + _BS + "report.txt"):
+        assert _load().main(["--root", str(tmp_path / "elsewhere"), "--out", out]) == 2, repr(out)
+    assert home.is_dir() if home_exists else not home.exists()
+
+
 @pytest.mark.skipif(__import__("os").name != "nt", reason="NTFS streams")
 def test_out_naming_a_stream_is_refused(tmp_path, monkeypatch):
     """`<folder>:name` writes a hidden stream ON that folder (on the data root itself): a report path never names one."""
