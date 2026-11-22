@@ -84,6 +84,30 @@ def test_the_list_shaped_legacy_file_agrees_too(home):
     assert "Jane Smith" in voice_engine._build_live_context()
 
 
+def test_the_smart_context_names_a_person_by_the_same_store_and_naming_rule(home):
+    """_load_smart_context pulls the entry for a person the message names: from the canonical store (never a stale mirror),
+    found by display name, alias or key, and headed with the display name."""
+    _legacy(home, PEOPLE)
+    for asked in ("tell me about Jane Smith", "what about janey", "and jane_smith?"):
+        ctx = model_router._load_smart_context(asked)
+        assert "TRUST GRAPH: Jane Smith" in ctx, asked
+        assert "TRUST GRAPH: jane_smith" not in ctx
+    assert "TRUST GRAPH" not in model_router._load_smart_context("a trip to janeyville"), "an alias matched inside a word"
+    (home / "people_graph.json").write_text(json.dumps({"people": {"alice": {"name": "Alice Example"}}}), encoding="utf-8")
+    assert "TRUST GRAPH" not in model_router._load_smart_context("tell me about Jane Smith"), "a stale mirror was shown"
+    assert "TRUST GRAPH: Alice Example" in model_router._load_smart_context("how is Alice Example doing")
+
+
+def test_the_circle_is_in_name_order_whatever_the_scores(home):
+    """An order by score would be a ranking of people, which stays home."""
+    _legacy(home, {"z": {"name": "Zed Example", "scores": {"overall": 0.99}},
+                   "a": {"name": "Abe Example", "scores": {"overall": 0.01}},
+                   "m": {"name": "Mo Example", "scores": {"overall": 0.5}}})
+    assert [p["name"] for p in pg.get_people_graph().circle()] == ["Abe Example", "Mo Example", "Zed Example"]
+    section = voice_engine._build_live_context().split("TRUST CIRCLE")[1]
+    assert section.index("Abe Example") < section.index("Mo Example") < section.index("Zed Example")
+
+
 def test_an_empty_circle_lists_nobody_and_the_tool_says_so(home):
     context = voice_engine._build_live_context()
     assert "TRUST CIRCLE" not in context
