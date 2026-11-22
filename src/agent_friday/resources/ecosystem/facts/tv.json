@@ -1,0 +1,39 @@
+{
+  "app": "tv",
+  "facts": {
+    "abis": [],
+    "application_id": "ai.futurespeak.friday.tv",
+    "bound_services": [
+      "BIND_DREAM_SERVICE"
+    ],
+    "capabilities": {},
+    "debug_suffix": null,
+    "features_required": [],
+    "form": null,
+    "min_sdk": 28,
+    "pairing": {
+      "declares_kind": null,
+      "discovery": true,
+      "gateway": true,
+      "relay": false,
+      "reports_app_version": false
+    },
+    "permissions": [
+      "android.permission.INTERNET",
+      "android.permission.MODIFY_AUDIO_SETTINGS",
+      "android.permission.RECORD_AUDIO",
+      "org.tvprivacy.adbreak.permission.GROWN_UP"
+    ],
+    "release_signing": "debug_key",
+    "target_sdk": 34,
+    "version_code": 1,
+    "version_name": "0.1"
+  },
+  "fingerprint": "daf0ce6bcdf6cb24b90963e5028b8f045627cd70708e8fafbdfed2b59493fdbc",
+  "schema": 1,
+  "source": {
+    "commit": null,
+    "ref": "working tree",
+    "repo": "friday-tv"
+  }
+}

@@ -1,0 +1,282 @@
+{
+  "schema": 1,
+  "comment": "What Friday may say about her companion apps. services/ecosystem.py parses and renders this; tests/unit/test_ecosystem_knowledge.py ties every app to its facts snapshot in facts/. Capability status: shipped (needs evidence from the snapshot), built_off, planned. Evidence keys: permission:<name>, service:<BIND_...>, capability:<name>, pairing:gateway|relay, signing:<value>.",
+  "reviewed": "2026-11-22",
+  "apps": [
+    {
+      "id": "phone",
+      "label": "Agent Friday for Android phones",
+      "noun": "phone",
+      "status": "shipped",
+      "version": {"name": "0.12.27-p0u", "code": 60},
+      "facts_fingerprint": "ce350eda68850c942109424476ed909cc05ff66d50fa90c3af12940effe3b642",
+      "platform": {
+        "summary": "Android 12 or newer, on a 64-bit ARM phone",
+        "min_sdk": 31,
+        "abis": ["arm64-v8a"],
+        "needs": []
+      },
+      "adds": [
+        "You can talk or type to me from anywhere in the house, and I answer from this PC.",
+        "When I need a yes from you, the phone can show the request and take your answer.",
+        "It can do things on the phone itself when you ask, such as timers, calendar entries and starting a call."
+      ],
+      "capabilities": [
+        {"id": "talk", "text": "talk and type to me, with answers coming from this PC", "status": "shipped", "evidence": ["capability:talk", "permission:android.permission.RECORD_AUDIO", "pairing:gateway"]},
+        {"id": "approve", "text": "approve or decline what I ask, confirmed with your fingerprint or face", "status": "shipped", "evidence": ["capability:needs_you", "permission:android.permission.USE_BIOMETRIC"]},
+        {"id": "actions", "text": "carry out phone actions you ask for, such as timers, calendar entries and calls", "status": "shipped", "evidence": ["capability:actions"]},
+        {"id": "assistant", "text": "be the phone's assistant, opened with a long press", "status": "shipped", "evidence": ["service:BIND_VOICE_INTERACTION"]},
+        {"id": "tile", "text": "start a conversation from a Quick Settings tile", "status": "shipped", "evidence": ["service:BIND_QUICK_SETTINGS_TILE"]},
+        {"id": "pc_update", "text": "take a newer build from this PC once it is paired", "status": "shipped", "evidence": ["permission:android.permission.REQUEST_INSTALL_PACKAGES"]},
+        {"id": "widget", "text": "A home-screen widget", "status": "planned", "evidence": []},
+        {"id": "store", "text": "A Play Store listing", "status": "planned", "evidence": []}
+      ],
+      "install": [
+        {
+          "id": "pc_update",
+          "title": "Update from this PC",
+          "status": "shipped",
+          "advanced": false,
+          "evidence": ["permission:android.permission.REQUEST_INSTALL_PACKAGES"],
+          "for": "a phone that is already paired",
+          "steps": [
+            {"text": "On the phone, open Agent Friday, then Settings, then About."},
+            {"text": "If a newer build has been accepted on this PC, the app offers it and checks the file before anything is installed."},
+            {"text": "Android then asks you to confirm the install. Tap Update.", "needs_eyes": true}
+          ]
+        },
+        {
+          "id": "adb",
+          "title": "First install from a computer",
+          "status": "shipped",
+          "advanced": true,
+          "evidence": ["signing:none"],
+          "for": "a first install",
+          "steps": [
+            {"text": "You need the Agent Friday app file, an APK, on a computer that has Android's platform tools installed. There is no public download yet."},
+            {"text": "On the phone, open Settings, About phone, and tap Build number seven times. Menu names vary a little between phone makers.", "needs_eyes": true},
+            {"text": "Open Settings, System, Developer options, and switch on Wireless debugging. Tap Pair device with pairing code. The phone shows an address and a six-digit code.", "needs_eyes": true},
+            {"text": "On the computer, run this, then type the code from the phone into that same window. Never give that code to me.", "command": "adb pair <address shown on the phone>", "needs_eyes": true},
+            {"text": "Connect, using the address shown at the top of the Wireless debugging screen.", "command": "adb connect <address shown under Wireless debugging>", "needs_eyes": true},
+            {"text": "Install the app.", "command": "adb install -r <path to the Agent Friday APK>", "needs_eyes": true}
+          ]
+        }
+      ],
+      "pair": {
+        "method": "gateway_sas",
+        "status": "shipped",
+        "evidence": ["pairing:gateway"],
+        "steps": [
+          {"text": "Put the phone on the same home Wi-Fi as this PC, and switch off any VPN on the phone for a minute."},
+          {"text": "On this PC, open pairing: type \"Friday, add a device\" here, or open the Add a device page. It stays open for five minutes.", "when": "pairing_window", "needs_eyes": true},
+          {"text": "On the phone, open Agent Friday and tap Pair. It finds this PC by itself. There is nothing to type and nothing to scan.", "needs_eyes": true},
+          {"text": "Both screens now show six digits. If they are the same, press Approve on this PC's screen. If they differ, press Decline.", "needs_eyes": true},
+          {"text": "The phone says it is connected. From then on it works over your home Wi-Fi."}
+        ]
+      },
+      "limits": [
+        "It is not in the Play Store yet. A first install needs a computer and Android's developer tools.",
+        "Today's builds are test builds signed with a development key, not a store release.",
+        "A phone I pair becomes yours: it can see your chats and answer requests for you. I cannot yet give another person their own space on their own phone.",
+        "Pairing only works at home, on the same network as this PC. Away from home it needs Tailscale on both, which you set up yourself."
+      ]
+    },
+    {
+      "id": "tablet",
+      "label": "Agent Friday for Android tablets",
+      "noun": "tablet",
+      "status": "shipped",
+      "version": {"name": "0.12.27-p0u", "code": 60},
+      "facts_fingerprint": "ad97e37932d72af63a6eaf97ba747b737dd3d8ce9df3488e8d86094644528a2c",
+      "platform": {
+        "summary": "Android 12 or newer, on a 64-bit ARM tablet",
+        "min_sdk": 31,
+        "abis": ["arm64-v8a"],
+        "needs": []
+      },
+      "adds": [
+        "The same app as the phone, laid out for a larger screen.",
+        "You can talk or type to me from the sofa or the kitchen, and I answer from this PC."
+      ],
+      "capabilities": [
+        {"id": "talk", "text": "talk and type to me, with answers coming from this PC", "status": "shipped", "evidence": ["capability:talk", "permission:android.permission.RECORD_AUDIO", "pairing:gateway"]},
+        {"id": "approve", "text": "approve or decline what I ask, confirmed with your fingerprint or face", "status": "shipped", "evidence": ["capability:needs_you", "permission:android.permission.USE_BIOMETRIC"]},
+        {"id": "pc_update", "text": "take a newer build from this PC once it is paired", "status": "shipped", "evidence": ["permission:android.permission.REQUEST_INSTALL_PACKAGES"]},
+        {"id": "widget", "text": "A home-screen widget", "status": "planned", "evidence": []},
+        {"id": "store", "text": "A Play Store listing", "status": "planned", "evidence": []},
+        {"id": "own_space", "text": "A separate space for each person in the household", "status": "planned", "evidence": []}
+      ],
+      "install": [
+        {
+          "id": "pc_update",
+          "title": "Update from this PC",
+          "status": "shipped",
+          "advanced": false,
+          "evidence": ["permission:android.permission.REQUEST_INSTALL_PACKAGES"],
+          "for": "a tablet that is already paired",
+          "steps": [
+            {"text": "On the tablet, open Agent Friday, then Settings, then About."},
+            {"text": "If a newer build has been accepted on this PC, the app offers it and checks the file before anything is installed."},
+            {"text": "Android then asks you to confirm the install. Tap Update.", "needs_eyes": true}
+          ]
+        },
+        {
+          "id": "adb",
+          "title": "First install from a computer",
+          "status": "shipped",
+          "advanced": true,
+          "evidence": ["signing:none"],
+          "for": "a first install",
+          "steps": [
+            {"text": "You need the Agent Friday tablet app file, an APK, on a computer that has Android's platform tools installed. There is no public download yet."},
+            {"text": "On the tablet, open Settings, About tablet, and tap Build number seven times. Menu names vary a little between makers.", "needs_eyes": true},
+            {"text": "Open Settings, System, Developer options, and switch on Wireless debugging. Tap Pair device with pairing code. The tablet shows an address and a six-digit code.", "needs_eyes": true},
+            {"text": "On the computer, run this, then type the code from the tablet into that same window. Never give that code to me.", "command": "adb pair <address shown on the tablet>", "needs_eyes": true},
+            {"text": "Connect, using the address shown at the top of the Wireless debugging screen.", "command": "adb connect <address shown under Wireless debugging>", "needs_eyes": true},
+            {"text": "Install the app.", "command": "adb install -r <path to the Agent Friday APK>", "needs_eyes": true}
+          ]
+        }
+      ],
+      "pair": {
+        "method": "gateway_sas",
+        "status": "shipped",
+        "evidence": ["pairing:gateway"],
+        "steps": [
+          {"text": "Put the tablet on the same home Wi-Fi as this PC, and switch off any VPN on the tablet for a minute."},
+          {"text": "On this PC, open pairing: type \"Friday, add a device\" here, or open the Add a device page. It stays open for five minutes.", "when": "pairing_window", "needs_eyes": true},
+          {"text": "On the tablet, open Agent Friday and tap Pair. It finds this PC by itself. There is nothing to type and nothing to scan.", "needs_eyes": true},
+          {"text": "Both screens now show six digits. If they are the same, press Approve on this PC's screen. If they differ, press Decline.", "needs_eyes": true},
+          {"text": "The tablet says it is connected. From then on it works over your home Wi-Fi."}
+        ]
+      },
+      "limits": [
+        "It is not in the Play Store yet. A first install needs a computer and Android's developer tools.",
+        "Today's builds are test builds signed with a development key, not a store release.",
+        "A tablet I pair becomes yours: it can see your chats and answer requests for you. If it belongs to someone else in the house, it is safer to wait until each person can have their own space.",
+        "Pairing only works at home, on the same network as this PC."
+      ]
+    },
+    {
+      "id": "tv",
+      "label": "Agent Friday for Android TV and Google TV",
+      "noun": "TV",
+      "status": "shipped",
+      "version": {"name": "0.1", "code": 1},
+      "facts_fingerprint": "daf0ce6bcdf6cb24b90963e5028b8f045627cd70708e8fafbdfed2b59493fdbc",
+      "platform": {
+        "summary": "an Android TV or Google TV set running Android 9 or newer",
+        "min_sdk": 28,
+        "abis": [],
+        "needs": ["A small helper app on the TV, installed first. It holds the grown-up PIN and kids mode."]
+      },
+      "adds": [
+        "A big-screen home for the household, with its own voice.",
+        "After pairing, the TV can read the chat you send to it from this PC."
+      ],
+      "capabilities": [
+        {"id": "pair", "text": "pair with this PC from its Settings, behind the grown-up PIN", "status": "shipped", "evidence": ["pairing:gateway", "permission:org.tvprivacy.adbreak.permission.GROWN_UP"]},
+        {"id": "hear", "text": "listen when you hold the talk button", "status": "shipped", "evidence": ["permission:android.permission.RECORD_AUDIO"]},
+        {"id": "pc_answers", "text": "Getting answers from this PC", "status": "built_off", "until": "you allow it on this PC's screen, one request card at a time", "evidence": []},
+        {"id": "approvals", "text": "Approving my requests on the TV", "status": "planned", "evidence": []},
+        {"id": "store", "text": "A Play Store listing", "status": "planned", "evidence": []},
+        {"id": "pc_update", "text": "An update offered from this PC", "status": "planned", "evidence": []}
+      ],
+      "install": [
+        {
+          "id": "adb",
+          "title": "Install from a computer",
+          "status": "shipped",
+          "advanced": true,
+          "evidence": ["signing:debug_key"],
+          "for": "every install today",
+          "steps": [
+            {"text": "You need the Agent Friday TV app file and its helper app file, both APKs, on a computer that has Android's platform tools installed. There is no public download yet."},
+            {"text": "On the TV, open Settings, System, About, and press OK on Android TV OS build seven times. Menu names vary between TV makers.", "needs_eyes": true},
+            {"text": "Open Settings, System, Developer options, and switch on USB debugging or Network debugging, whichever the TV offers. The TV shows its network address under Settings, Network.", "needs_eyes": true},
+            {"text": "On the computer, connect. The TV asks whether to allow this computer: choose Allow.", "command": "adb connect <address of the TV>", "needs_eyes": true},
+            {"text": "Install the helper app first.", "command": "adb install -r <path to the helper APK>", "needs_eyes": true},
+            {"text": "Then install Agent Friday.", "command": "adb install -r <path to the Agent Friday TV APK>", "needs_eyes": true}
+          ]
+        }
+      ],
+      "pair": {
+        "method": "gateway_sas",
+        "status": "shipped",
+        "evidence": ["pairing:gateway"],
+        "steps": [
+          {"text": "Put the TV on the same home network as this PC."},
+          {"text": "On this PC, open pairing: type \"Friday, add a device\" here, or open the Add a device page. It stays open for five minutes.", "when": "pairing_window", "needs_eyes": true},
+          {"text": "On the TV, open Agent Friday, then Settings, and enter your grown-up PIN with the remote. Choose to pair with your PC.", "needs_eyes": true},
+          {"text": "Both screens now show six digits. If they are the same, press Approve on this PC's screen. If they differ, press Decline.", "needs_eyes": true},
+          {"text": "The TV is paired. It can read the chat you send it. Anything more, such as using my brain, asks you on this PC's screen first."}
+        ]
+      },
+      "limits": [
+        "It is not in the Play Store yet. Installing needs a computer and Android's developer tools.",
+        "The build is signed with a development key, not a store release.",
+        "A TV is a household device: it never signs in as you, and it starts with one permission only.",
+        "Kids mode on the TV starts and ends only on the TV itself, with the remote and your grown-up PIN. I cannot change it from here, and neither can a voice.",
+        "Pairing and use are home-network only."
+      ]
+    },
+    {
+      "id": "watch",
+      "label": "Agent Friday for Wear OS watches",
+      "noun": "watch",
+      "status": "developer_preview",
+      "version": {"name": "0.1.0-hack", "code": 1},
+      "facts_fingerprint": "f0f65fbd28bcda6c0b15f4de0880f7a759b4c075d76cd09a353b596a3a27b266",
+      "platform": {
+        "summary": "a Wear OS watch running Wear OS 3 or newer",
+        "min_sdk": 30,
+        "abis": [],
+        "needs": ["A separate helper program on this PC that has to be started by hand. I cannot see or start it."]
+      },
+      "adds": [
+        "A talk button on your wrist, and a buzz when something finishes or needs you."
+      ],
+      "capabilities": [
+        {"id": "talk", "text": "hold to talk from the wrist, through its helper program", "status": "shipped", "evidence": ["permission:android.permission.RECORD_AUDIO", "pairing:relay"]},
+        {"id": "buzz", "text": "buzz when something finishes or needs you", "status": "shipped", "evidence": ["permission:android.permission.VIBRATE"]},
+        {"id": "gateway", "text": "Pairing with this PC the way the phone does", "status": "planned", "evidence": []},
+        {"id": "store", "text": "A Play Store listing", "status": "planned", "evidence": []}
+      ],
+      "install": [
+        {
+          "id": "adb",
+          "title": "Developer install",
+          "status": "shipped",
+          "advanced": true,
+          "evidence": ["signing:none"],
+          "for": "developers trying the preview",
+          "steps": [
+            {"text": "This is a developer preview. It needs the watch app file, Android's platform tools, and the watch helper program running on this PC, none of which I can set up for you."},
+            {"text": "On the watch, open Settings, About watch, Software information, and tap Software version until developer options appear.", "needs_eyes": true},
+            {"text": "Open Developer options and switch on ADB debugging and Wireless debugging. Tap Pair new device. The watch shows an address and a six-digit code.", "needs_eyes": true},
+            {"text": "On the computer, run this, then type the code from the watch into that same window. Never give that code to me.", "command": "adb pair <address shown on the watch>", "needs_eyes": true},
+            {"text": "Connect, then install.", "command": "adb connect <address shown under Wireless debugging>", "needs_eyes": true},
+            {"text": "Install the watch app.", "command": "adb install -r <path to the Agent Friday watch APK>", "needs_eyes": true}
+          ]
+        }
+      ],
+      "pair": {
+        "method": "relay_code",
+        "status": "shipped",
+        "evidence": ["pairing:relay"],
+        "steps": [
+          {"text": "The watch does not pair with me directly yet. It pairs with its own helper program on this PC, which a developer starts by hand and which prints a six-digit code."},
+          {"text": "That code is typed on the watch. It works once and for about two minutes.", "needs_eyes": true},
+          {"text": "Because the helper is separate, I cannot tell you whether a watch is paired or connected."}
+        ]
+      },
+      "limits": [
+        "It is a developer preview, not something I would set up for a new user yet.",
+        "It connects through a separate helper program that I cannot see from here.",
+        "It is not in the Play Store."
+      ]
+    }
+  ],
+  "retired": [
+    {"id": "tablet_prototype", "text": "An earlier tablet-only prototype app. Both phone and tablet now use the one Android app."}
+  ]
+}
