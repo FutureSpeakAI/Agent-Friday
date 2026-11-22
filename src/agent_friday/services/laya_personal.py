@@ -2375,8 +2375,10 @@ def _notes(vault: str) -> list:
     out = []
     if not sensitivity_ready():
         out.append("Laya cannot tell on this PC whether something is sensitive, so she is keeping nothing until she can.")
-    out.append("She retunes herself only while you are signed in and at the PC (the Windows session unlocked and you "
-               "active in the last 30 minutes), on AC power, never overnight. Idle but present is fine.")
+    out.append("She retunes herself only while the PC is idle, for as long as it stays idle (your Windows session may be "
+               "locked, and there is no limit on the hours), on AC power with Battery Saver off. She never does it while "
+               "you are using the PC or in a voice session, and she stops at the next safe point when you start. "
+               "(Decision 10, amended by you on 2026-11-22.)")
     if vault != "open":
         out.append("While the vault key is not available, only the sealed buffer ages out; older corrections and saved "
                    "versions are deleted once it is.")

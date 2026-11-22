@@ -2577,6 +2577,12 @@ def dispatch(rec, *, manual=False, require_enabled=False):
             status, summary = "skipped", str(e)
             _patch_record(sid, last_status="skipped", last_summary=summary,
                           retry_pending=False, retry_count=0, not_before=0)
+        except SkippedRun as e:
+            # A run that did not happen on purpose (a built-in waiting on a rule of its own, such as the refit's
+            # presence rule) is a skip with its reason: not a failure, not retried every five minutes.
+            status, summary = "skipped", str(e)
+            _patch_record(sid, last_status="skipped", last_summary=summary,
+                          retry_pending=False, retry_count=0, not_before=0)
         except HeldRun as e:
             # Held on purpose under a named status (the heartbeat's
             # connector_unavailable / blocked / budget_cap): recorded as that
@@ -2701,6 +2707,21 @@ def _seed_and_reconcile():
         # `enabled: false`, so it never ran at all.
         # Applied only while the record still looks untouched on this point, so a
         # deliberate later choice is never overwritten.
+        moved = 0
+        for r in recs:
+            # The refit's shipped idle wait (10 minutes) was longer than its presence window allowed on a PC that locks
+            # sooner: a seed the owner never touched moves to the shorter wait once. An edited one stays.
+            if r.get("id") != "sch_laya_personal_refit" or r.get("source") != "builtin":
+                continue
+            try:
+                from agent_friday.services import laya_personal_fit as _lpf
+            except Exception:
+                break
+            if (r.get("trigger") == "idle_daily" and (r.get("spec") or {}) == {"idle_after_s": _lpf.OLD_IDLE_AFTER_S}
+                    and not builtin_overrides.has_edits(r["id"])
+                    and float(r.get("updated") or 0) - float(r.get("created") or 0) <= 1.0):
+                r["spec"] = dict(_lpf.IDLE_SPEC)
+                moved += 1
         adopted = 0
         for r in recs:
             defaults = builtin_defaults(r.get("id")) if r.get("source") == "builtin" else None
@@ -2734,7 +2755,7 @@ def _seed_and_reconcile():
             print(f"  [scheduler] {migrated} schedule(s) now default to the "
                   f"local seat (no cloud fallback).")
         reapplied = builtin_overrides.reapply(recs)     # whatever seeded or migrated above, the owner's fields win
-        if added or migrated or reapplied:
+        if added or migrated or reapplied or moved:
             _write_store(recs)
             if added:
                 print(f"  [scheduler] seeded {added} built-in schedule(s).")
@@ -3018,11 +3039,12 @@ def _register_default_builtin_tasks():
     # the vault open, the owner present and the PC on AC power, and waits (never
     # fails) otherwise. CPU only: no GPU, no model seat.
     try:
+        from agent_friday.services.laya_personal_fit import IDLE_SPEC as _refit_idle_spec
         from agent_friday.services.laya_personal_fit import run_scheduled as _laya_refit
         register_builtin_task("laya_personal_refit", _laya_refit,
                               label="Learning from your corrections",
                               default_trigger="idle_daily",
-                              default_spec={"idle_after_s": 600}, notify="silent")
+                              default_spec=dict(_refit_idle_spec), notify="silent")
     except Exception as e:
         print(f"  [scheduler] laya_personal_refit unavailable: {e}")
 

@@ -1903,22 +1903,21 @@ def test_a_sensitive_by_meaning_phrase_is_not_stored_and_an_unavailable_layer_me
     assert lp.sensitivity_ready() is False and any("cannot tell" in n for n in lp.report()["notes"])
 
 
-def test_training_needs_an_unlocked_session_and_the_owner_within_thirty_minutes(w):
+def test_training_runs_only_while_the_pc_is_idle_whether_or_not_the_session_is_locked(w):
+    """Decision 10, amended by the owner 2026-11-22: signed in, locked or unlocked, for as long as the PC stays idle."""
     from agent_friday.services import background_gate as bg
     fit.presence_override = None
-    state = {"unlocked": True, "idle": 600.0}
-    w.monkeypatch.setattr(fit, "session_unlocked", lambda: state["unlocked"])
-    w.monkeypatch.setattr(bg, "idle_state", lambda: {"idle_s": state["idle"]})
-    assert fit.owner_present() is True and fit.blocked_reason(lp.OWNER_PROFILE) == ""             # idle but present
-    state["idle"] = 31 * 60.0
-    assert fit.owner_present() is False and "not signed in and here" in fit.blocked_reason(lp.OWNER_PROFILE)    # overnight
-    state.update(idle=60.0, unlocked=False)
-    assert fit.owner_present() is False                                                           # the session is locked
+    state = {"idle": 600.0}
+    w.monkeypatch.setattr(bg, "idle_state", lambda: {"idle_s": state["idle"], "os_readable": True})
+    assert fit.blocked_reason(lp.OWNER_PROFILE) == ""                                            # idle for ten minutes
+    state["idle"] = 9 * 3600.0
+    assert fit.blocked_reason(lp.OWNER_PROFILE) == ""                                            # idle for nine hours: no cap
+    state["idle"] = 30.0
+    assert "amended by owner 2026-11-22" in fit.blocked_reason(lp.OWNER_PROFILE)                 # he is using the PC
     from agent_friday.services import scheduler
     with pytest.raises(scheduler.SkippedRun):
         fit.run_scheduled()
-    assert any("signed in" in n for n in lp.report()["notes"])
-    # red when: blocked_reason relies on the cached vault key alone
+    assert any("only while the PC is idle" in n and "amended by you" in n for n in lp.report()["notes"])      # the report card says so
 
 
 def test_the_sealed_rerun_uses_the_threshold_actually_in_force(w):
