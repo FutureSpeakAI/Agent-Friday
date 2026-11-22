@@ -128,6 +128,35 @@ def test_a_refusal_left_at_the_end_of_the_run_fails_the_session(real):
         guard._baseline[0] = len(guard.VIOLATIONS)
 
 
+def test_a_refusal_after_a_workers_last_test_fails_the_whole_xdist_run(real):
+    """Under xdist a worker's own exit status never reaches the run (the controller only reads its workeroutput, and only a
+    keyboard interrupt there stops the run). So the worker hands its unreported refusals over in workeroutput (sent by
+    xdist after every sessionfinish impl has run), the controller takes them in pytest_testnodedown and fails its own
+    session. The worker and controller halves are driven with the exact shapes xdist uses."""
+    import types
+    guard._baseline[0] = len(guard.VIOLATIONS)
+    try:
+        (real / "late.md").write_text("x", encoding="utf-8")
+    except Exception:
+        pass
+    worker = types.SimpleNamespace(exitstatus=0, config=types.SimpleNamespace(workeroutput={"exitstatus": 0}))
+    try:
+        guard.pytest_sessionfinish(worker, 0)
+    finally:
+        guard._baseline[0] = len(guard.VIOLATIONS)
+    handed = worker.config.workeroutput.get(guard.WORKER_KEY)
+    assert handed, "the worker kept its refusal to itself: xdist would end the run green"
+
+    controller = types.SimpleNamespace(exitstatus=0, config=types.SimpleNamespace())
+    node = types.SimpleNamespace(workeroutput=worker.config.workeroutput, gateway=types.SimpleNamespace(id="gw1"))
+    try:
+        guard.pytest_testnodedown(node, None)
+        guard.pytest_sessionfinish(controller, 0)
+    finally:
+        guard._from_workers.clear()
+    assert controller.exitstatus != 0, "a worker's refusal after its last test left the xdist run green"
+
+
 def test_snapshot_changes_exactly_when_the_tree_does(real):
     a = guard.snapshot(real)
     assert guard.snapshot(real) == a
