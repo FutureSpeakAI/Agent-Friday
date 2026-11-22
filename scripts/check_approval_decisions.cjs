@@ -358,6 +358,22 @@ for (const file of FILES) {
     assert.doesNotMatch(text[file], /apBusy/);
   });
 }
+for (const file of FILES) {
+  check(file + ': a group decide that some cards refused says so and keeps the ones still waiting', async () => {
+    const toasts = [], dropped = [];
+    const { fridayDeciding } = loadDecide(file, pageWorld());
+    const f = new Function('fetch', 'fridayToast', 'fridayName', 'fridayApprovalFeed', 'fridayDeciding',
+      fn(file, 'fridayDecideBatch', NL + '// The text with every detail') + NL + 'return fridayDecideBatch;')(
+      () => Promise.resolve({ json: () => Promise.resolve({ ok: true, decided: 1, refused: 2, results: [
+        { approval_id: 'w1', won: true, status: 'approved' }, { approval_id: 'w2', won: false, status: 'pending' },
+        { approval_id: 'w3', won: false, status: 'denied' }] }) }),
+      t => toasts.push(t), () => 'Friday', { drop: id => dropped.push(id) }, fridayDeciding);
+    await f({ batch_id: 'b1', approval_ids: ['w1', 'w2', 'w3'] }, 'approve');
+    assert.deepEqual(dropped.sort(), ['w1', 'w3'], 'a card still waiting was dropped, or a decided one kept');
+    assert.equal(toasts.length, 1, 'a part-refused group said nothing');
+    assert.match(toasts[0], /2 of 3 were not decided/);
+  });
+}
 check('index.html and ui_parts/app.html carry the same grouped-card code', () => {
   for (const [name, end] of [['fridayDecideBatch', NL + '// The text with every detail'], ['fridayMarkOutside', NL + 'function LaneBatchItem('],
     ['LaneBatchItem', NL + 'function LaneBatch('], ['LaneBatch', NL + '// How the tray\'s pending cards group'],
