@@ -60,11 +60,12 @@ def test_headroom_environment_is_pinned_before_import(monkeypatch, tmp_path):
         import os
         seen.update({k: os.environ.get(k) for k in
                      ("HEADROOM_TELEMETRY", "HEADROOM_CCR_BACKEND", "HEADROOM_WORKSPACE_DIR")})
-        return types.SimpleNamespace(messages=[{"role": "user", "content": "short"}],
+        return types.SimpleNamespace(messages=[{"role": "tool", "content": "short"}],
                                      tokens_before=2000, tokens_after=10, tokens_saved=1990)
     _fake_headroom(monkeypatch, with_core=True, compress=_compress)
     cc = ContextCompressor()
-    cc.compress([{"role": "user", "content": "x" * 8000}], seat="local")
+    # tool output: conversation text is never compressed (tests/unit/test_conversation_text.py)
+    cc.compress([{"role": "tool", "content": "x" * 8000}], seat="local")
     assert seen["HEADROOM_TELEMETRY"] == "off"
     assert seen["HEADROOM_CCR_BACKEND"] == "memory"
     assert seen["HEADROOM_WORKSPACE_DIR"].startswith(str(tmp_path))
@@ -140,7 +141,7 @@ def test_one_real_saving_keeps_it_available(monkeypatch):
     _fake_headroom(monkeypatch, with_core=True, compress=sometimes)
     cc = ContextCompressor()
     for _ in range(ccmod._NOTHING_COMPRESSED_AFTER + 2):
-        cc.compress([{"role": "user", "content": "x" * 8000}])
+        cc.compress([{"role": "tool", "content": "x" * 8000}])   # tool output, the only text compression may shorten
     s = cc.get_stats()
     assert s["available"] is True and s["calls"] == 1
 

@@ -18,6 +18,7 @@ from tests.api.test_eval_weekend_plan_calendar_text import (  # noqa: F401 - fix
 FIRST_MESSAGE = "Tell me about the river city and the people who live there, and what it was like when the harbor was built."
 REPLY = ("You are a journalist, after all, and the story that you are telling is about the city that was built on the river. "
          "It is the kind of place where the people who live there have been telling the same stories for a very long time. ") * 4
+REPLY = REPLY.strip()  # the chat route trims trailing space; the rule under test is about words, not whitespace
 SECOND_REPLY = "And the harbor is as old as the rest of the town, and it was the first thing that was built there."
 _FUNCTION_WORDS = re.compile(r"\b(?:the|a|an|is|are|was|were|be|been|am)\b\s*", re.I)
 
@@ -57,11 +58,11 @@ def _text_of(content):
     return "".join(b.get("text", "") for b in content if isinstance(b, dict) and b.get("type") == "text")
 
 
-def test_the_reply_and_the_history_the_model_is_sent_are_exactly_as_written(cloud_only, monkeypatch):
+def test_the_reply_and_the_history_the_model_is_sent_are_exactly_as_written(cloud_only, monkeypatch):  # noqa: F811 - pytest fixture
     comp = _squeezing_compressor(monkeypatch)
     _model(monkeypatch, call_tools=False, final=REPLY)
     first = _turn(cloud_only, FIRST_MESSAGE)
-    assert first["response"] == REPLY and first["friday_msg"]["content"] == REPLY
+    assert first["response"] == REPLY and first["friday_msg"]["text"] == REPLY
 
     nxt = _model(monkeypatch, call_tools=False, final=SECOND_REPLY)
     second = _turn(cloud_only, "And is the harbor as old as the rest of the town?")
