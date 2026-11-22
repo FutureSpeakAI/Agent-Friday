@@ -19,6 +19,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import tempfile
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -101,6 +102,29 @@ def configured(settings: Optional[dict] = None) -> list:
         out.append(Spec(skill=skill, heading=str(entry.get("heading") or skill)[:80],
                         days=str(entry.get("days") or "daily"), enabled=entry.get("enabled") is not False))
     return out
+
+
+def overview(now: datetime, settings: Optional[dict] = None) -> list:
+    """What the Customize Briefing panel lists: every configured section with its skill's state now (installed,
+    waiting, missing, unreadable) and whether it applies today."""
+    out = []
+    for spec in configured(settings):
+        out.append({"skill": spec.skill, "heading": spec.heading, "days": spec.days, "enabled": spec.enabled,
+                    "state": briefing_skills.load(spec.skill).state, "today": applies(spec, now)})
+    return out
+
+
+def set_enabled(skill: str, enabled: bool) -> list:
+    """Turn one configured section on or off, keeping the rest of the list as it is, and save the whole list
+    (the default list is written out the first time). Raises KeyError for a skill that is not in the list."""
+    from agent_friday.core import _load_settings, _save_settings
+    specs = configured(_load_settings() or {})
+    if not any(spec.skill == skill for spec in specs):
+        raise KeyError(skill)
+    rows = [{"skill": s.skill, "heading": s.heading, "days": s.days,
+             "enabled": bool(enabled) if s.skill == skill else s.enabled} for s in specs]
+    _save_settings({SETTING: rows})
+    return rows
 
 
 def didnt_run_line(skill: str, reason: str) -> str:
@@ -196,8 +220,38 @@ def age_words(made: datetime, now: datetime) -> str:
     return "just now" if minutes < 2 else "%d minutes ago" % minutes if minutes < 90 else "%d hours ago" % round(minutes / 60)
 
 
+_STAMP_FORMAT = "%A %Y-%m-%d %H:%M"
+_STAMP = re.compile(r"_Generated ([A-Za-z]+ \d{4}-\d{2}-\d{2} \d{2}:\d{2})_")
+
+
 def stamp(now: datetime) -> str:
-    return "_Generated %s_" % now.strftime("%A %Y-%m-%d %H:%M")
+    return "_Generated %s_" % now.strftime(_STAMP_FORMAT)
+
+
+def with_stamp(text: str, now: datetime) -> str:
+    """The briefing with its one generation line: under its level-1 heading when it has one, else first. A stamp
+    the model typed is removed, so the time shown is always the time code wrote it."""
+    lines = [line for line in (text or "").split("\n") if not _STAMP.fullmatch(line.strip())]
+    at = 1 if lines and lines[0].startswith("# ") else 0
+    return "\n".join(lines[:at] + [stamp(now), ""] + lines[at:])
+
+
+def generated_at(text: str) -> Optional[datetime]:
+    """When a stored briefing was generated, from its stamp; None for one with no stamp (made before it had one)."""
+    found = _STAMP.search(text or "")
+    if not found:
+        return None
+    try:
+        return datetime.strptime(found.group(1), _STAMP_FORMAT)
+    except ValueError:
+        return None
+
+
+def made_line(made: datetime, now: datetime) -> str:
+    """Sections kept from an earlier run say when they were made; sections made in this run need no line."""
+    if now - made < timedelta(minutes=2):
+        return ""
+    return "_Sections made %s (%s)_" % (made.strftime("%H:%M"), age_words(made, now))
 
 
 def current(now: datetime, calendar_rows, generate: Callable[[str], str], specs=None, first_index: int = 1):

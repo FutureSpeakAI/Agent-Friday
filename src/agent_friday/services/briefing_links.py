@@ -34,7 +34,10 @@ _HEADING_KIND = (
     (SECTION_CALENDAR, re.compile(r"\b(calendar|schedule)\b", re.I)),
     (SECTION_EVENTS, re.compile(r"\b(events?|outings?|trips?|festivals?|burns?|horizon|deadlines?|this week)\b", re.I)),
 )
-GMAIL_LINK = "https://mail.google.com/mail/u/0/#all/%s"
+#: /u/<address>/ opens the mailbox the message is in when several accounts are signed in (as gmail_send.draft_link);
+#: /u/0/ (the first signed-in account) only when the run did not say which account the message came from.
+GMAIL_LINK = "https://mail.google.com/mail/u/%s/#all/%s"
+_ACCOUNT = re.compile(r"^[A-Za-z0-9._%+-]{1,64}@[A-Za-z0-9.-]{1,190}\.[A-Za-z]{2,24}$")
 #: A Gmail message id as the API returns it: lowercase hex. Anything else is not an id.
 _MESSAGE_ID = re.compile(r"^[0-9a-f]{10,40}$")
 _HEADING = re.compile(r"^(#{1,6})\s+(.*\S)\s*$")
@@ -53,11 +56,15 @@ class Source:
     title: str = ""
     url: str = ""
     message_id: str = ""
+    account: str = ""
 
     def link(self) -> Optional[str]:
-        """The link this source supports, or None. Email: only from a real message id; the rest: their own URL."""
+        """The link this source supports, or None. Email: only from a real message id (in its own account's mailbox
+        when the account is known); the rest: their own URL."""
         if self.kind == EMAIL:
-            return GMAIL_LINK % self.message_id if _MESSAGE_ID.fullmatch(self.message_id or "") else None
+            if not _MESSAGE_ID.fullmatch(self.message_id or ""):
+                return None
+            return GMAIL_LINK % (self.account if _ACCOUNT.fullmatch(self.account or "") else "0", self.message_id)
         return self.url if news_links.working(self.url) else None
 
 
@@ -79,7 +86,8 @@ def collect(news=(), email=(), calendar=(), events=()) -> dict:
             if not isinstance(row, dict) or not isinstance(row.get("id"), str) or not row["id"]:
                 continue
             out[row["id"]] = Source(id=row["id"], kind=kind, title=str(row.get("title") or row.get("subject") or ""),
-                                    url=str(row.get("url") or ""), message_id=str(row.get("message_id") or ""))
+                                    url=str(row.get("url") or ""), message_id=str(row.get("message_id") or ""),
+                                    account=str(row.get("account") or ""))
     return out
 
 

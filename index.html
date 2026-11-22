@@ -36663,6 +36663,42 @@ function NewsArticleView({
     }
   }));
 }
+/* fridayBriefingSections:begin */
+// Start My Day's answer names the written briefing it speaks; open News on it.
+function fridayShowStartMyDayBriefing(d) {
+  const b = d && d.briefing;
+  if (!b || !b.filename || !window.fridayOpenWorkspace) return false;
+  window.fridayOpenWorkspace({workspace: 'news', tab: 'briefings', briefing: b.filename, date: b.date});
+  return true;
+}
+// The briefing's section skills (services/briefing_sections): each one's state and an on/off switch. A section
+// whose skill is not installed or not approved yet still shows in the briefing as "Didn't run" with the reason.
+const FRIDAY_SECTION_STATE_WORDS = {installed: 'ready', waiting: 'awaiting approval', missing: 'not installed',
+  unreadable: 'could not be read'};
+function NewsSectionSkills() {
+  const h = React.createElement;
+  const [rows, setRows] = useState(null);
+  const [err, setErr] = useState('');
+  const take = d => { if (d && d.status === 'ok') { setRows(d.sections || []); setErr(''); } else setErr((d && d.message) || 'Could not load the section skills.'); };
+  useEffect(() => { fetch('/api/briefing/sections').then(r => r.json()).then(take).catch(() => setErr('Could not load the section skills.')); }, []);
+  const toggle = s => fetch('/api/briefing/sections', {method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({skill: s.skill, enabled: !s.enabled})}).then(r => r.json()).then(take).catch(() => setErr('Could not save.'));
+  return h('div', {'data-testid': 'briefing-section-skills'},
+    h('div', {className: 'card-title', style: {marginTop: 14}}, 'Section skills'),
+    err ? h('div', {style: {fontSize: 11, color: '#f88'}}, err) : null,
+    rows === null && !err ? h('div', {style: {fontSize: 11, color: '#777'}}, 'Loading…') : null,
+    (rows || []).map(s => h('div', {key: s.skill, className: 'reorder-row', 'data-skill': s.skill},
+      h('span', {style: {flex: 1, fontSize: 12, color: s.enabled ? '#e0e4ee' : '#666'}},
+        s.heading, h('span', {style: {fontSize: 10, color: '#7fb6c9', marginLeft: 6}},
+          s.skill + ' · ' + (FRIDAY_SECTION_STATE_WORDS[s.state] || s.state) + ' · ' + (s.days === 'daily' ? 'every day' : s.days))),
+      h('span', {className: 'toggle-pill ' + (s.enabled ? 'on' : ''), role: 'switch', 'aria-checked': s.enabled ? 'true' : 'false',
+        tabIndex: 0, title: (s.enabled ? 'Turn off ' : 'Turn on ') + s.heading,
+        onClick: () => toggle(s), onKeyDown: e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle(s); } }},
+        s.enabled ? 'On' : 'Off'))),
+    h('div', {style: {fontSize: 10, color: '#777', marginTop: 6}},
+      'A section that is on but cannot run says "Didn\'t run" and why in the briefing.'));
+}
+/* fridayBriefingSections:end */
 function NewsLocalBeatSettings() {
   const h = React.createElement;
   const [area, setArea] = useState(null);
@@ -36828,6 +36864,14 @@ function NewsWS() {
     if (t.article || t.url) setArticleOpen({ id: t.article || '', url: t.url || '', title: t.title || '', source: t.source || '' });
     // A routine's episode lives beside its edition: open it in the player here.
     if (t.episode) fridayPodcast('open', t.episode);
+    // Start My Day names the briefing it is speaking: refresh the list (it may have just been written) and open it.
+    if (t.briefing) {
+      fetch('/api/briefings').then(r => r.json()).then(d => setBriefings(d.briefings || [])).catch(() => {});
+      openBriefing({
+        md: t.briefing,
+        date: t.date || String(t.briefing).slice(0, 10)
+      });
+    }
   });
 
   // Pull a page of the permanent archive (newest first). reset=true clears and
@@ -39483,7 +39527,7 @@ function NewsWS() {
     key: c,
     className: 'toggle-pill ' + (prefs.categories_enabled[c] ? 'on' : ''),
     onClick: () => toggleCat(c)
-  }, c))), /*#__PURE__*/React.createElement(NewsLocalBeatSettings, null), /*#__PURE__*/React.createElement("div", {
+  }, c))), /*#__PURE__*/React.createElement(NewsSectionSkills, null), /*#__PURE__*/React.createElement(NewsLocalBeatSettings, null), /*#__PURE__*/React.createElement("div", {
     style: {
       fontSize: 10,
       color: '#777',
@@ -72740,12 +72784,13 @@ function App() {
   // opens), then start voice. If voice is already live, the turn is sent
   // immediately so the running session pivots to the new context. Exposed on
   // window so the standalone FWin component (outside this scope) can call it.
-  const startVoiceWithPrompt = useCallback(async url => {
+  const startVoiceWithPrompt = useCallback(async (url, onData) => {
     let prompt = '';
     try {
       const r = await fetch(url);
       const d = await r.json();
       if (d && d.prompt) prompt = d.prompt;
+      if (onData) onData(d);
     } catch (_) {}
     if (!prompt) return;
     if (!voiceOn) {
@@ -72771,7 +72816,8 @@ function App() {
   }, [voiceOn]);
   useEffect(() => {
     window.fridayStartWorkspaceVoice = wsId => startVoiceWithPrompt('/api/voice-context/' + encodeURIComponent(wsId));
-    window.fridayStartMyDay = () => startVoiceWithPrompt('/api/voice/start-my-day');
+    // Start My Day speaks today's written briefing; the News workspace opens on that same briefing beside the voice.
+    window.fridayStartMyDay = () => startVoiceWithPrompt('/api/voice/start-my-day', fridayShowStartMyDayBriefing);
     return () => {
       try {
         delete window.fridayStartWorkspaceVoice;

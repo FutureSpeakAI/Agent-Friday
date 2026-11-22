@@ -1136,6 +1136,8 @@ def _finish_briefing(content):
         extra = "## Briefing sections\n_Didn't run: the section skills failed (%s)._" % type(exc).__name__
     if extra:
         body = body.rstrip() + "\n\n" + extra
+    from agent_friday.services import briefing_sections
+    body = briefing_sections.with_stamp(body, datetime.now())
     notice = _LAST_BRIEFING_SOURCES.get("skill_notices") or ""
     return (notice + "\n\n" + body) if notice else body
 
@@ -1169,10 +1171,12 @@ def _briefing_sections():
         now, rows, lambda prompt: _generate_text([{"role": "user", "content": prompt}], max_tokens=2000),
         first_index=len(_LAST_BRIEFING_SOURCES.get("calendar") or []) + 1)
     _keep_briefing_sources(sections={r.skill: r.state for r in results},
+                           sections_dropped={r.skill: r.dropped for r in results if r.dropped},
                            sections_made=made.isoformat())
     if not results:
         return ""
-    return briefing_sections.stamp(made) + "\n\n" + briefing_sections.render(results)
+    made_line = briefing_sections.made_line(made, now)
+    return (made_line + "\n\n" if made_line else "") + briefing_sections.render(results)
 
 
 def _gather_live_briefing_context():
@@ -1260,7 +1264,10 @@ def _gather_live_briefing_context():
                     snippet = str(m.get('snippet') or '').strip().replace('\n', ' ')[:160]
                     flag = '🔵 ' if 'UNREAD' in (m.get('labels') or []) else ''
                     lines.append(f"- [E{n}] {flag}**{sender}** — {subj}" + (f"\n  {snippet}" if snippet else ''))
-                    kept.append({"id": f"E{n}", "message_id": m.get('id') or "", "sender": sender, "subject": subj})
+                    # The legacy fetch names Gmail's id "id"; the connected-accounts read (briefing_google.recover)
+                    # names it "gmail_id" and says which account the message is in.
+                    kept.append({"id": f"E{n}", "message_id": m.get('id') or m.get('gmail_id') or "",
+                                 "account": m.get('account_email') or "", "sender": sender, "subject": subj})
                 _keep_briefing_sources(email=kept)
                 return "## Recent / Unread Email\n" + _ID_RULE.format(letter="E") + "\n" + "\n".join(lines)
             return "## Recent / Unread Email\n(No email in the last 24 hours.)"

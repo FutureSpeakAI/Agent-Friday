@@ -136,3 +136,46 @@ def test_the_stamp_says_when_it_was_made_and_age_is_in_plain_words():
     assert bsec.stamp(MONDAY) == "_Generated Monday 2026-11-23 09:00_"
     assert bsec.age_words(MONDAY, MONDAY + timedelta(minutes=30)) == "30 minutes ago"
     assert bsec.age_words(MONDAY, MONDAY + timedelta(hours=3)) == "3 hours ago"
+
+
+# -- the generation line, and the list the Customize Briefing panel shows --------------------------
+
+def test_the_generation_line_goes_under_the_title_once_and_replaces_one_the_model_typed():
+    text = "# Briefing\n_Generated Friday 2026-11-20 06:00_\n## News\n- A story."
+    out = bsec.with_stamp(text, MONDAY)
+    assert out.split("\n")[:2] == ["# Briefing", "_Generated Monday 2026-11-23 09:00_"]
+    assert out.count("_Generated ") == 1
+    assert bsec.with_stamp("## News\n- A story.", MONDAY).startswith("_Generated Monday 2026-11-23 09:00_\n")
+
+
+def test_the_time_is_read_back_from_the_line_and_a_briefing_without_one_has_none():
+    assert bsec.generated_at(bsec.with_stamp("# B\n- x", MONDAY)) == MONDAY
+    assert bsec.generated_at("# An old briefing\n- x") is None
+
+
+def test_kept_sections_say_when_they_were_made_and_new_ones_say_nothing():
+    assert bsec.made_line(MONDAY, MONDAY + timedelta(seconds=30)) == ""
+    assert bsec.made_line(MONDAY, MONDAY + timedelta(hours=2)) == "_Sections made 09:00 (2 hours ago)_"
+
+
+def test_the_panel_lists_every_section_with_its_skill_state_and_whether_it_runs_today(world):
+    world["skills"].pop("family-outing")
+    world["queued"].append("family-outing")
+    rows = bsec.overview(MONDAY, {})
+    assert [(r["skill"], r["state"], r["today"], r["enabled"]) for r in rows] == [
+        ("events-horizon", "installed", True, True), ("family-outing", "waiting", False, True)]
+    assert [r["today"] for r in bsec.overview(SUNDAY, {})] == [True, True]
+
+
+def test_turning_one_section_off_keeps_the_others_and_writes_the_whole_list(world, monkeypatch):
+    import agent_friday.core as core
+    saved = {}
+    monkeypatch.setattr(core, "_load_settings", lambda: dict(saved))
+    monkeypatch.setattr(core, "_save_settings", lambda data, **k: saved.update(data))
+    bsec.set_enabled("family-outing", False)
+    assert [(r["skill"], r["enabled"]) for r in saved[bsec.SETTING]] == [("events-horizon", True), ("family-outing", False)]
+    assert [s.skill for s in bsec.configured(saved) if bsec.applies(s, SUNDAY)] == ["events-horizon"]
+    bsec.set_enabled("family-outing", True)
+    assert all(r["enabled"] for r in saved[bsec.SETTING])
+    with pytest.raises(KeyError):
+        bsec.set_enabled("not-a-section", False)

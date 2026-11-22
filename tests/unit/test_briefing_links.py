@@ -61,6 +61,14 @@ def test_an_email_item_renders_a_link_built_from_its_real_message_id():
     assert "[E1]" not in got.text and got.dropped_total == 0
 
 
+def test_an_email_from_a_named_account_opens_in_that_accounts_mailbox_and_a_malformed_account_falls_back():
+    for account, segment in (("owner.two@example.test", "owner.two@example.test"), ("not an address", "0"),
+                             ("x@y.z/../../evil", "0"), ("", "0")):
+        sources = bl.collect(email=[{"id": "E1", "message_id": "18f3a1b2c3d4e5f6", "account": account}])
+        got = bl.validate("## Email\n- Dana asks. [E1]\n", sources)
+        assert "https://mail.google.com/mail/u/%s/#all/18f3a1b2c3d4e5f6" % segment in got.text, account
+
+
 def test_an_email_item_whose_message_id_is_missing_or_malformed_is_dropped_never_guessed():
     got = run("## Email\n- Sam wrote something. [E2]\n- Another one. [E7]\n")
     assert got.dropped == {"email": 2} and "mail.google.com" not in got.text

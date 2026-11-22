@@ -156,3 +156,21 @@ def test_the_run_records_what_was_dropped_and_the_state_of_each_skill_and_sectio
     assert ne._LAST_BRIEFING_SOURCES["dropped"] == {"news": 1}
     assert ne._LAST_BRIEFING_SOURCES["skills"] == {"daily-briefing-format": bs.INSTALLED}
     assert ne._LAST_BRIEFING_SOURCES["sections"]["events-horizon"] == "didnt_run"
+
+
+def test_items_read_through_the_connected_accounts_keep_their_links_in_the_right_mailbox(run, monkeypatch):
+    """#1095 reads Google through the connected accounts when the legacy fetch fails; those rows name Gmail's id
+    gmail_id and carry account_email, and their calendar rows carry html_link. Nothing is dropped for it."""
+    from agent_friday.services import briefing_google
+    from agent_friday.services import news_engine as ne
+    go, skills, _ = run
+    both_skills(skills)
+    monkeypatch.setattr(ne, "_fetch_calendar_today", lambda: [{"error": "Google not connected"}])
+    monkeypatch.setattr(ne, "_fetch_gmail_recent", lambda limit=12: [{"error": "Google not connected"}])
+    rows = {"calendar": [dict(TODAY_CAL[0], account_email="owner.two@example.test")],
+            "gmail": [{"gmail_id": "18f3a1b2c3d4e5f6", "account_email": "owner.two@example.test",
+                       "sender": "Dana Reyes", "subject": "Budget question", "snippet": "", "labels": []}]}
+    monkeypatch.setattr(briefing_google, "recover", lambda service: (rows[service], ""))
+    md, _ = go("# Briefing\n## Today's Calendar\n- Planning at ten. [C1]\n## Email\n- Dana wants to talk. [E1]\n")
+    assert "https://mail.google.com/mail/u/owner.two@example.test/#all/18f3a1b2c3d4e5f6" in md
+    assert "https://calendar.example.test/event?eid=ev1" in md and ne._LAST_BRIEFING_SOURCES["dropped"] == {}
