@@ -770,6 +770,12 @@ window.addEventListener('DOMContentLoaded',function(){
         }
         .greeting-ticker-item .cd-what { display: flex; flex-direction: column; align-items: flex-end; line-height: 1.25; }
         .cd-why { font-size: var(--fr-text-xs); color: var(--fr-label); letter-spacing: 0.02em; }
+        .cd-hide {
+            pointer-events: auto; align-self: center; margin-left: 2px; padding: 0 5px; min-width: 22px; min-height: 22px;
+            line-height: 1; font-size: 15px; color: rgba(255,255,255,0.55); background: transparent;
+            border: 1px solid transparent; border-radius: 50%; cursor: pointer;
+        }
+        .cd-hide:hover, .cd-hide:focus-visible { color: #fff; border-color: rgba(255,255,255,0.45); outline: none; }
         .greeting-ticker-sep {
             width: 3px; height: 3px; border-radius: 50%; background: rgba(255,255,255,0.45);
         }

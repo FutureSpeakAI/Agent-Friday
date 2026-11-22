@@ -1204,6 +1204,12 @@ window.addEventListener('DOMContentLoaded',function(){
         }
         .greeting-ticker-item .cd-what { display: flex; flex-direction: column; align-items: flex-end; line-height: 1.25; }
         .cd-why { font-size: var(--fr-text-xs); color: var(--fr-label); letter-spacing: 0.02em; }
+        .cd-hide {
+            pointer-events: auto; align-self: center; margin-left: 2px; padding: 0 5px; min-width: 22px; min-height: 22px;
+            line-height: 1; font-size: 15px; color: rgba(255,255,255,0.55); background: transparent;
+            border: 1px solid transparent; border-radius: 50%; cursor: pointer;
+        }
+        .cd-hide:hover, .cd-hide:focus-visible { color: #fff; border-color: rgba(255,255,255,0.45); outline: none; }
         .greeting-ticker-sep {
             width: 3px; height: 3px; border-radius: 50%; background: rgba(255,255,255,0.45);
         }
@@ -13409,15 +13415,35 @@ window.fridayTitleName = fridayTitleName;
 /* fridayHerName:end */
 // The start screen's countdowns: each one's label, when, and why it is there.
 // The words for when move on each minute; the list comes every five.
+/* fridayCountdownHide:begin */
+// When a countdown passes, in epoch seconds: its time, else the end of its day. A hidden countdown stays hidden
+// until then; the entry is dropped after that, so a yearly one comes back next year.
+function fridayCountdownPasses(c) {
+  if (c.at) return c.at;
+  const end = c.date ? new Date(c.date + 'T23:59:59').getTime() / 1000 : 0;
+  return end > 0 ? end : Date.now() / 1000 + 86400;
+}
+function fridayCountdownHidden(c, hidden, nowMs) {
+  return !!(hidden && hidden[c.id] > nowMs / 1000);
+}
+function fridayCountdownsHiding(hidden, c, nowMs) {
+  const kept = {};
+  for (const k of Object.keys(hidden || {})) if (hidden[k] > nowMs / 1000) kept[k] = hidden[k];
+  kept[c.id] = fridayCountdownPasses(c);
+  return kept;
+}
+/* fridayCountdownHide:end */
 function FridayCountdowns({
-  items
+  items,
+  hidden,
+  onHide
 }) {
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
     const t = setInterval(() => setNow(Date.now()), 60000);
     return () => clearInterval(t);
   }, []);
-  const shown = (items || []).filter(c => !c.at || c.at * 1000 > now - 60000);
+  const shown = (items || []).filter(c => (!c.at || c.at * 1000 > now - 60000) && !fridayCountdownHidden(c, hidden, now));
   if (!shown.length) return null;
   return /*#__PURE__*/React.createElement("div", {
     className: "greeting-ticker",
@@ -13439,7 +13465,13 @@ function FridayCountdowns({
     className: "cd-why"
   }, c.why)), /*#__PURE__*/React.createElement("span", {
     className: "days"
-  }, fridayCountdownWhen(c, now) || (c.days ?? '?') + 'd')))));
+  }, fridayCountdownWhen(c, now) || (c.days ?? '?') + 'd'), onHide && c.id && /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    className: "cd-hide",
+    "aria-label": 'Hide ' + (c.label || c.name),
+    title: "Hide this countdown",
+    onClick: () => onHide(c)
+  }, "\xD7")))));
 }
 // The wordmark, AGENT FRIDAY™ by FutureSpeak.AI: one definition for the top
 // bar, the start screen and the About card. `size` is the cap size in px; the
@@ -75132,6 +75164,9 @@ function App() {
   // least once a minute. A change is one line in the console and, through the
   // state this page reports, one line in the server's log.
   const landingMode = FRIDAY_LANDING_MODES.indexOf(agentSettings.landing_mode) >= 0 ? agentSettings.landing_mode : 'smart';
+  const hideCountdown = c => saveAgentSettings({
+    dismissed_countdowns: fridayCountdownsHiding(agentSettings.dismissed_countdowns, c, Date.now())
+  });
   const landingClock = useRef(null);
   if (!landingClock.current) landingClock.current = fridayLandingClock(Date.now());
   const landingSees = useRef({});
@@ -76901,8 +76936,8 @@ function App() {
     "data-testid": "landing-cluster",
     style: {
       position: 'fixed',
-      left: 0,
-      right: 0,
+      left: 'var(--fr-chat-dock-left,0px)',
+      right: 'var(--fr-chat-dock,0px)',
       bottom: 116,
       zIndex: 5,
       display: 'flex',
@@ -76945,7 +76980,9 @@ function App() {
   }, /*#__PURE__*/React.createElement(FridayLockup, {
     size: 11
   })), /*#__PURE__*/React.createElement(FridayCountdowns, {
-    items: countdowns
+    items: countdowns,
+    hidden: agentSettings.dismissed_countdowns,
+    onHide: hideCountdown
   }), countdowns.length === 0 && /*#__PURE__*/React.createElement("div", {
     style: {
       position: 'relative',

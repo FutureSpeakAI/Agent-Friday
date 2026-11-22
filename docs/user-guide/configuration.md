@@ -370,6 +370,7 @@ precedence over both.
 | `show_all_workspaces` | `true` (`false` on a new install) | The full dock, or the core set. |
 | `dock_custom` | no changes | Your own dock order and hidden workspaces. Once you arrange the dock, it wins over `show_all_workspaces`. |
 | `landing_mode` | `"smart"` | When the start screen's cluster shows: `smart`, `always` or `never`. |
+| `dismissed_countdowns` | `{}` | Start-screen countdowns you hid with their x button: countdown id to the time (epoch seconds) it passes. Entries are dropped after that, so a yearly one returns next year. |
 | `big_mode` | `"auto"` | Large targets for the hand cursor: `auto`, `on` or `off`. |
 | `workspace_layouts` | `{}` | Workspaces you set to fill the screen with the chat tray docked beside them. |
 | `held_features` | `federation` and `trust_agents` off | Features held back from this release. While a switch is off, nothing offers the feature. |
