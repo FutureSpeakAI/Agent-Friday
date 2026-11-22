@@ -3703,20 +3703,18 @@ def memory_head_blocks(workspace='', freeze_key=None, *, provider='local',
         _visible = False
     if not _visible:
         gate_key = "cloud-gated"
-        gate_fn = (lambda text: "")
-        if vault_control is not None:
-            try:
-                from agent_friday.privacy.vault_access import Tier as _Tier
 
-                def gate_fn(text):
-                    # Personal by default (fail closed, like the wiki). The vault gate decides by provider alone, so it
-                    # hands a local provider the raw text; this reader may not see it, so raw text is never kept.
-                    gated = vault_control.gate_content(
-                        text, provider, tier=_Tier.PRIVATE, fallback=vault_fallback,
-                        detail="core-memory", model=model)
-                    return "" if gated == text else gated
-            except Exception:
-                gate_fn = (lambda text: "")
+        def gate_fn(text):
+            # Personal by default (fail closed, like the wiki): the vault gate's redaction when there is one, else
+            # nothing. The gate decides by provider alone, so it hands a local provider the raw text; this reader may
+            # not see it, so raw text is never kept.
+            if vault_control is None:
+                return ""
+            from agent_friday.privacy.vault_access import Tier as _Tier
+            gated = vault_control.gate_content(
+                text, provider, tier=_Tier.PRIVATE, fallback=vault_fallback,
+                detail="core-memory", model=model)
+            return "" if gated == text else gated
 
     def _core():
         from agent_friday.services import core_memory
