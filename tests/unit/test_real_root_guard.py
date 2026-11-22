@@ -48,6 +48,13 @@ def _attempts(root):
         "shutil.move": lambda: shutil.move(str(root / "trust_graph.json"), str(root / "moved.json")),
         "shutil.rmtree": lambda: shutil.rmtree(root / "wiki"),
         "sqlite3.connect": lambda: sqlite3.connect(root / "store.db"),
+        "os.open O_CREAT": lambda: os.open(root / "made.txt", os.O_CREAT | os.O_WRONLY),
+        "os.replace": lambda: os.replace(root / "trust_graph.json", root / "moved.json"),
+        "os.makedirs": lambda: os.makedirs(root / "a" / "b"),
+        "os.truncate": lambda: os.truncate(root / "trust_graph.json", 0),
+        "Path.touch existing": lambda: (root / "trust_graph.json").touch(),
+        "os.utime": lambda: os.utime(root / "trust_graph.json", (1, 1)),
+        "os.chmod": lambda: os.chmod(root / "trust_graph.json", 0o444),
     }
 
 
@@ -83,6 +90,40 @@ def test_a_refusal_swallowed_by_best_effort_code_still_fails_the_test(real):
         with pytest.raises(pytest.fail.Exception) as e:
             guard.pytest_runtest_teardown(None)
         assert "leaked.md" in str(e.value)
+    finally:
+        guard._baseline[0] = len(guard.VIOLATIONS)
+
+
+def test_a_refusal_recorded_between_tests_fails_the_next_setup(real):
+    """A write refused at import, collection, in an earlier test's leftovers or a background thread is not wiped when the
+    next test starts: that test's setup fails and names the path."""
+    start = len(guard.VIOLATIONS)
+    guard._baseline[0] = start
+    try:
+        (real / "between.md").write_text("x", encoding="utf-8")
+    except Exception:
+        pass
+    try:
+        with pytest.raises(pytest.fail.Exception) as e:
+            guard.pytest_runtest_setup(None)
+        assert "between.md" in str(e.value)
+    finally:
+        guard._baseline[0] = len(guard.VIOLATIONS)
+
+
+def test_a_refusal_left_at_the_end_of_the_run_fails_the_session(real):
+    """After the last test (session finish, atexit-style writers) nothing is attributed to a test, so the run fails."""
+    import types
+    start = len(guard.VIOLATIONS)
+    guard._baseline[0] = start
+    try:
+        (real / "late.md").write_text("x", encoding="utf-8")
+    except Exception:
+        pass
+    session = types.SimpleNamespace(exitstatus=0)
+    try:
+        guard.pytest_sessionfinish(session, 0)
+        assert session.exitstatus != 0, "a refusal after the last test left the run green"
     finally:
         guard._baseline[0] = len(guard.VIOLATIONS)
 
