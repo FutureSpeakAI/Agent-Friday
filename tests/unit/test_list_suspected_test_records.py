@@ -236,6 +236,31 @@ def test_out_with_a_name_windows_trims_is_refused(tmp_path, monkeypatch, tail, h
     assert home.is_dir() if home_exists else not home.exists()
 
 
+@pytest.mark.skipif(__import__("os").name != "nt", reason="Windows name trimming and streams")
+@pytest.mark.parametrize("name", [".friday.", ".friday ", ".friday:rep"])
+@pytest.mark.parametrize("home_exists", [True, False], ids=["home-exists", "home-not-yet"])
+def test_a_relative_out_is_checked_like_an_absolute_one(tmp_path, monkeypatch, name, home_exists):
+    """Run from the folder that holds the data root, a one-name --out has no drive in front of it: every name is still
+    checked, so a trimmed or stream name never lands on (or as) the data root."""
+    home = tmp_path / ".friday"
+    if home_exists:
+        home.mkdir()
+    (tmp_path / "elsewhere").mkdir()
+    monkeypatch.setenv("FRIDAY_HOME", str(home))
+    monkeypatch.chdir(tmp_path)
+    assert _load().main(["--root", str(tmp_path / "elsewhere"), "--out", name]) == 2, repr(name)
+    assert home.is_dir() if home_exists else not home.exists()
+
+
+def test_out_naming_a_folder_the_data_root_will_be_made_in_is_refused(tmp_path, monkeypatch):
+    """A file where the data root's parent folder belongs would stop the data root from ever being created."""
+    home = tmp_path / "not-yet" / ".friday"
+    (tmp_path / "elsewhere").mkdir()
+    monkeypatch.setenv("FRIDAY_HOME", str(home))
+    assert _load().main(["--root", str(tmp_path / "elsewhere"), "--out", str(tmp_path / "not-yet")]) == 2
+    assert not (tmp_path / "not-yet").exists()
+
+
 @pytest.mark.skipif(__import__("os").name != "nt", reason="NTFS streams")
 def test_out_naming_a_stream_is_refused(tmp_path, monkeypatch):
     """`<folder>:name` writes a hidden stream ON that folder (on the data root itself): a report path never names one."""
