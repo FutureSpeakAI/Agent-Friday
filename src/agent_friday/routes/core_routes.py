@@ -1657,6 +1657,21 @@ def _check_podcast_length(new_settings):
                         % (", ".join(_pe.LENGTH_SHOWS), ", ".join(_pe.LENGTHS), val))}
 
 
+def _check_dismissed_countdowns(new_settings):
+    """`dismissed_countdowns` maps a countdown id to the epoch seconds when it passes (the start screen's hide
+    control writes it). Anything else would be read as nothing hidden, so a hidden countdown would come back.
+    An error dict, or None."""
+    if "dismissed_countdowns" not in (new_settings or {}):
+        return None
+    val = new_settings["dismissed_countdowns"]
+    ok = isinstance(val, dict) and len(val) <= 500 and all(
+        isinstance(k, str) and 0 < len(k) <= 300 and isinstance(v, (int, float)) and not isinstance(v, bool)
+        for k, v in val.items())
+    if ok:
+        return None
+    return {"status": "error", "message": "dismissed_countdowns maps a countdown id to the time it passes, in seconds"}
+
+
 def _check_interruption_settings(new_settings):
     """The interruption budget is a whole number from 0 (no limit) to 60, and quiet hours are two
     HH:MM times. A bad value would be read as the default, so the row would say one thing and the
@@ -1985,6 +2000,10 @@ def api_settings():
         interrupt_error = _check_interruption_settings(new_settings)
         if interrupt_error is not None:
             return jsonify(interrupt_error), 400
+
+        countdown_error = _check_dismissed_countdowns(new_settings)
+        if countdown_error is not None:
+            return jsonify(countdown_error), 400
 
         from agent_friday.services import owner_choices as _oc
         choice_error = _oc.validate(new_settings)

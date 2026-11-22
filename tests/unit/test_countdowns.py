@@ -356,7 +356,8 @@ def test_the_start_screen_shows_when_and_why_and_refreshes(rel):
     assert "c.why" in ticker and "fridayCountdownWhen(c" in ticker and "cd-why" in ticker, rel
     assert re.search(r"setInterval\(\(\) ?=> ?setNow\(Date\.now\(\)\), ?60000\)", ticker), rel
     assert re.search(r"setInterval\(load, ?FRIDAY_COUNTDOWNS_EVERY_MS\)", text), rel
-    assert re.search(r"FridayCountdowns, \{\n\s*items: countdowns|<FridayCountdowns items=\{countdowns\}/>",
+    # the start screen passes the polled list (and, since the hide control, what is hidden and how to hide)
+    assert re.search(r"FridayCountdowns, \{\n\s*items: countdowns|<FridayCountdowns items=\{countdowns\}[ /]",
                      text), rel
 
 

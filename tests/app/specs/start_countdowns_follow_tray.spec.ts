@@ -16,18 +16,21 @@ import { bootApp } from '../harness';
 const BASE = process.env.FRIDAY_BASE || '';
 test.skip(!BASE || /:3000(\/|$)/.test(BASE), 'set FRIDAY_BASE to a scratch server (never the live :3000)');
 test.use({ viewport: { width: 1280, height: 800 } });
+test.describe.configure({ timeout: 180_000 });
 
 const json = (body: unknown) => ({ status: 200, contentType: 'application/json', body: JSON.stringify(body) });
 const SOON = Math.floor(Date.now() / 1000) + 3 * 86400;
+const GUTTER = 16;                     // the side gutter the cluster keeps (no countdown touches the window edge)
+const inDays = (n: number) => new Date(Date.now() + n * 864e5).toISOString().slice(0, 10);
 const COUNTDOWNS = [
   { id: 'todo:t-grant', label: 'Send the grant report to the quarterly review panel', emoji: '', why: 'a deadline you set',
-    date: '2099-01-01', at: SOON, all_day: false, days: 3, kind: 'commitment', source: 'todo', short: 'in 3 days' },
+    date: inDays(3), at: SOON, all_day: false, days: 3, kind: 'commitment', source: 'todo', short: 'in 3 days' },
   { id: 'wiki:people/dana-reyes.md#0', label: "Dana's birthday", emoji: '🎂', why: 'from your wiki',
-    date: '2099-01-12', at: null, all_day: true, days: 12, kind: 'personal', source: 'wiki', short: 'in 12 days' },
+    date: inDays(12), at: null, all_day: true, days: 12, kind: 'personal', source: 'wiki', short: 'in 12 days' },
   { id: 'todo:t-lease', label: 'Renew the lease', emoji: '', why: 'a deadline you set',
-    date: '2099-01-20', at: null, all_day: true, days: 20, kind: 'commitment', source: 'todo', short: 'in 20 days' },
+    date: inDays(20), at: null, all_day: true, days: 20, kind: 'commitment', source: 'todo', short: 'in 20 days' },
   { id: 'wiki:people/sam-lee.md#0', label: "Sam's anniversary dinner at the harbour restaurant", emoji: '💍', why: 'from your wiki',
-    date: '2099-02-01', at: null, all_day: true, days: 31, kind: 'personal', source: 'wiki', short: 'in 31 days' },
+    date: inDays(31), at: null, all_day: true, days: 31, kind: 'personal', source: 'wiki', short: 'in 31 days' },
 ];
 
 async function seed(page: Page) {
@@ -37,6 +40,10 @@ async function seed(page: Page) {
 async function alwaysShow(page: Page) {
   const r = await page.request.post(`${BASE}/api/settings`, { data: { settings: { landing_mode: 'always' } } });
   expect(r.ok()).toBeTruthy();
+  // Past first run (its own screen covers the start screen, as in headings.spec.ts), on the classic start screen:
+  // the countdown cluster is not drawn in the Simple home (static/friday_display_style.js).
+  await page.route('**/api/setup/status', r => r.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ initialized: true }) }));
+  await page.addInitScript(() => { try { localStorage.setItem('friday.display-style.v1', 'classic'); } catch (_) {} });
 }
 
 async function openChat(page: Page) {
@@ -79,8 +86,8 @@ test('the countdowns sit in the space the tray leaves and nothing is cut off', a
   await page.screenshot({ path: info.outputPath('closed.png') });
   expect(closed.tray).toBeNull();
   for (const item of closed.items) {
-    expect(item.left, item.text).toBeGreaterThanOrEqual(0);
-    expect(item.right, item.text).toBeLessThanOrEqual(closed.viewport);
+    expect(item.left, item.text).toBeGreaterThanOrEqual(GUTTER - 1);
+    expect(item.right, item.text).toBeLessThanOrEqual(closed.viewport - GUTTER + 1);
     expect(item.clipped, item.text).toBe(false);
   }
 
@@ -91,8 +98,8 @@ test('the countdowns sit in the space the tray leaves and nothing is cut off', a
   expect(open.tray, 'the tray did not open').not.toBeNull();
   const freeRight = open.tray!.left;
   for (const item of open.items) {
-    expect(item.right, `${item.text} runs under the tray`).toBeLessThanOrEqual(freeRight + 1);
-    expect(item.left, item.text).toBeGreaterThanOrEqual(0);
+    expect(item.right, `${item.text} runs under the tray`).toBeLessThanOrEqual(freeRight - GUTTER + 1);
+    expect(item.left, item.text).toBeGreaterThanOrEqual(GUTTER - 1);
     expect(item.clipped, `${item.text} is cut off`).toBe(false);
   }
 });
@@ -111,6 +118,12 @@ test('a hidden countdown stays hidden after a reload and is written to the setti
     return Object.keys((got.settings || {}).dismissed_countdowns || {});
   }).toEqual(['wiki:people/dana-reyes.md#0']);
   await page.screenshot({ path: info.outputPath('hidden.png') });
+  const fewer = await layout(page);                                    // three fit on one row: still inside the gutter
+  for (const item of fewer.items) {
+    expect(item.left, item.text).toBeGreaterThanOrEqual(GUTTER - 1);
+    expect(item.right, item.text).toBeLessThanOrEqual(fewer.viewport - GUTTER + 1);
+    expect(item.clipped, item.text).toBe(false);
+  }
 
   await page.reload();
   await bootApp(page);
