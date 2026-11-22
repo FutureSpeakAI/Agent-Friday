@@ -9,7 +9,11 @@ PC conversation, in the desktop's own list, and every PC chat can be opened and 
   through the phone). The body is data: at most ``MAX_BODY`` bytes, a fixed shape, a project id checked against
   ID_PATTERN and against the desktop's own project list before it is used.
 
-Held by tests/unit/test_tv_chats_both_ways.py.
+* ``GET /tv/v1/projects`` and ``GET /tv/v1/projects/<id>``: the desktop's projects as its sidebar shows them, a project's
+  chats (rows like /tv/v1/chats) and its files by name and size. Read from the desktop's own /api/projects routes; no
+  device keeps a project list of its own. Same door (owner phone or tablet with ``pc_read``).
+
+Held by tests/unit/test_tv_chats_both_ways.py and tests/unit/test_tv_projects.py.
 """
 from __future__ import annotations
 
@@ -79,7 +83,70 @@ def _project_exists(pid: str) -> Optional[bool]:
     return True if status == 200 else None
 
 
+PROJECT_FIELDS = ("id", "name", "type", "color", "conversations", "files", "created_at", "updated_at", "archived")
+INSTRUCTIONS_MAX = 2000
+FILE_FIELDS = ("name", "bytes", "added_at")
+
+
+def _project_row(p: dict) -> dict:
+    """A project as the desktop sidebar summarises it, without its seat or codebases (the PC's business)."""
+    return {k: p[k] for k in PROJECT_FIELDS if k in p}
+
+
+def _desk_json(path: str, area: str) -> Tuple[Optional[dict], Optional[Response]]:
+    try:
+        status, body, _ = pc_read._desk(path)
+    except Exception as e:
+        _log.warning("pc_chats %s failed: %s", area, type(e).__name__)
+        return None, _refuse(503, "the PC could not answer that right now", code="pc_unavailable")
+    if status == 404:
+        return None, _refuse(404, "this PC has no such project", code="unknown_project")
+    try:
+        data = json.loads(body) if status == 200 else None
+    except ValueError:
+        data = None
+    if not isinstance(data, dict):
+        return None, _refuse(503, "the PC could not answer that right now", code="pc_unavailable")
+    return data, None
+
+
 def register(app: Flask) -> None:
+    @app.get("/tv/v1/projects")
+    def pc_projects():
+        """The desktop's projects, as its sidebar lists them (GET /api/projects). Held by test_tv_projects.py."""
+        denied = pc_read._guard("projects")
+        if denied is not None:
+            return denied
+        data, bad = _desk_json("/api/projects", "projects")
+        if bad is not None:
+            return bad
+        rows = [_project_row(p) for p in data.get("projects") or [] if isinstance(p, dict) and p.get("id")]
+        return pc_read._page_out({"ok": True, "projects": rows[:pc_read.CHATS_PAGE_MAX], "total": len(rows)})
+
+    @app.get("/tv/v1/projects/<pid>")
+    def pc_project(pid):
+        """One project: the desktop's own record, its chats (rows like /tv/v1/chats, newest first) and its files by name and
+        size. Files are listed, never their host paths. Held by test_tv_projects.py."""
+        denied = pc_read._guard("projects")
+        if denied is not None:
+            return denied
+        if not ID_PATTERN.match(pid):
+            return _refuse(400, "not a project id", code="bad_id")
+        data, bad = _desk_json("/api/projects/%s" % pid, "project")
+        if bad is not None:
+            return bad
+        proj = data.get("project") if isinstance(data.get("project"), dict) else {}
+        files, _ = _desk_json("/api/projects/%s/files" % pid, "project files")
+        names = {pid: proj.get("name")}
+        chats = [pc_read._chat_row(c, names) for c in (data.get("conversations") or [])[:pc_read.CHATS_PAGE_MAX]
+                 if isinstance(c, dict) and c.get("id")]
+        out = {"ok": True, "project": dict(_project_row(proj),
+                                           instructions=str(proj.get("instructions") or "")[:INSTRUCTIONS_MAX]),
+               "conversations": chats,
+               "files": [{k: f[k] for k in FILE_FIELDS if k in f}
+                         for f in ((files or {}).get("files") or []) if isinstance(f, dict) and f.get("name")]}
+        return pc_read._page_out(pc_read.hide_host_paths(out))
+
     @app.post("/tv/v1/chats")
     def pc_chat_start():
         denied = pc_read._guard("chats")
