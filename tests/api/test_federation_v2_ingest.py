@@ -19,6 +19,7 @@ VECTORS = json.loads((Path(__file__).resolve().parents[1] / "federation" / "bund
 KEYS = sorted(set(VECTORS["peer_keys"].values()))
 URL = "/api/federation/v2/events"
 ALLOW = {"federation": True, "fed_invited_jobs": True}
+FIRST_RECIPIENT = VECTORS["cases"][0]["envelope"]["body"]["recipient"]
 
 
 @pytest.fixture
@@ -48,6 +49,12 @@ def _isolated(tmp_path, monkeypatch):
     monkeypatch.setattr(approvals, "_notify_pending", lambda rec: None)
     monkeypatch.setattr(core, "_load_settings", lambda: {"held_features": dict(ALLOW)})
     monkeypatch.setattr(fed, "get_peers", lambda: [{"agent_id": k, "fed_pref": "allow"} for k in KEYS])
+    _be(monkeypatch, FIRST_RECIPIENT)
+
+
+def _be(monkeypatch, node_id):
+    """This PC's own federation id (the key peers address events to)."""
+    monkeypatch.setattr(fed, "get_identity", lambda: {"agent_id": node_id})
 
 
 def _raw(case):
@@ -66,9 +73,10 @@ def test_the_route_exists_and_the_first_signed_event_is_recorded(client):
     assert body["disposition"] == "enqueued" and body["event_id"] == VECTORS["cases"][0]["event_id"]
 
 
-def test_a_retry_is_200_and_every_vector_gets_the_spec_status(client):
+def test_a_retry_is_200_and_every_vector_gets_the_spec_status(client, monkeypatch):
     expected = {"verified_bytes": 202, "replay": 200, "equivocation": 409}
     for case in VECTORS["cases"]:
+        _be(monkeypatch, ((case.get("envelope") or {}).get("body") or {}).get("recipient") or FIRST_RECIPIENT)  # the addressed node
         r = _post(client, _raw(case))
         want = expected.get(case["expect"], 422)
         assert r.status_code == want, (case["name"], case["expect"], r.status_code, r.get_json())
@@ -105,9 +113,37 @@ def test_over_budget_is_429(client, monkeypatch):
     assert _post(client, _raw(VECTORS["cases"][0])).status_code == 429
 
 
-def test_recording_an_event_authorizes_and_runs_nothing(client):
+def test_recording_an_event_authorizes_and_runs_nothing(client, monkeypatch):
     from agent_friday.services import approvals
     for case in VECTORS["cases"]:
+        _be(monkeypatch, ((case.get("envelope") or {}).get("body") or {}).get("recipient") or FIRST_RECIPIENT)
         _post(client, _raw(case))
     assert approvals.list_approvals(status="pending") == [], "an event raised an approval card"
     assert approvals.list_approvals(status="approved") == []
+
+
+def test_an_event_addressed_to_another_node_is_refused_as_recipient_and_recorded_nowhere(client, monkeypatch):
+    # NS-40.2-13: the recipient is one of the cheap checks; the route used to accept any trusted peer's event whoever it was for
+    raw = _raw(VECTORS["cases"][0])
+    other = next(k for k in KEYS if k != FIRST_RECIPIENT)
+    _be(monkeypatch, other)
+    r = _post(client, raw)
+    assert r.status_code == 422 and r.get_json() == {"ok": False, "error": "recipient"}
+    _be(monkeypatch, FIRST_RECIPIENT)
+    assert _post(client, raw).status_code == 202, "nothing was recorded by the refused delivery: this is its FIRST arrival"
+
+
+def test_a_node_with_no_key_identity_accepts_no_v2_event(client, monkeypatch):
+    raw = _raw(VECTORS["cases"][0])
+    for unusable in ("", "unknown", "3f1c2a9e-7b1d-4c6e-9f2a-0d5e8b7a6c41"):
+        _be(monkeypatch, unusable)
+        r = _post(client, raw)
+        assert r.status_code == 422 and r.get_json()["error"] == "recipient", unusable
+
+
+def test_an_identity_that_cannot_be_read_accepts_no_v2_event(client, monkeypatch):
+    def broken():
+        raise RuntimeError("no identity")
+    monkeypatch.setattr(fed, "get_identity", broken)
+    r = _post(client, _raw(VECTORS["cases"][0]))
+    assert r.status_code == 422 and r.get_json()["error"] == "recipient"
