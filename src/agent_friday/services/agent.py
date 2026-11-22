@@ -16061,6 +16061,15 @@ def _hook_crew_access(ctx):
     return _hooks.ALLOW if allowed else _hooks.DENY("[CREW DENY] " + reason)
 
 
+def _skill_browse_trust(ctx):
+    """A host check for the skill the owner approved to read named domains and that is in use this turn, or None."""
+    try:
+        from agent_friday.governance import send_grants as _sg
+        return lambda host: bool(_sg.skill_browse_covers(ctx.session_ctx, host))
+    except Exception:
+        return None
+
+
 def _taint_clean(d, key, session_ctx=None) -> bool:
     """True only when nothing in this call came from outside content and
     nothing the work behind it read did. What a pre-approved send needs
@@ -16154,7 +16163,7 @@ def _hook_governance(ctx):
 
     from agent_friday.governance import action_gate as _gate
     key = _taint_mod.ledger_key(ctx.session_ctx)
-    d = _taint_mod.evaluate(key, ctx.tool_name, _taint_input(ctx))
+    d = _taint_mod.evaluate(key, ctx.tool_name, _taint_input(ctx), trusted_host=_skill_browse_trust(ctx))
     ctx.meta["taint"] = d
     if d.action == "deny":
         why = "; ".join(d.reasons) or "a detail came from outside content"

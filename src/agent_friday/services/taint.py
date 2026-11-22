@@ -1104,12 +1104,19 @@ def _url_decision(key: str, role: str, url: str) -> Tuple[str, Optional[Origin],
     return "allow", o, ""
 
 
-def evaluate(key: str, tool_name: str, tool_input: Optional[dict]) -> Decision:
-    """Decide what the provenance of this call's arguments requires."""
+def evaluate(key: str, tool_name: str, tool_input: Optional[dict], trusted_host=None) -> Decision:
+    """Decide what the provenance of this call's arguments requires.
+
+    `trusted_host(host) -> bool`: a host the owner approved a skill to read (governance/send_grants.
+    skill_browse_covers). Reading such a host is not asking for details from outside content, whether the link
+    is the skill's own or built on it. Sending to it (post_url) is never trusted this way."""
     d = Decision()
     for arg, role, value in roles_for(tool_name, tool_input or {}):
         if role in ("fetch_url", "open_url", "post_url"):
             for url in _atoms(role, value):
+                if trusted_host is not None and role != "post_url" and trusted_host(_host(url)):
+                    d._count("own")
+                    continue
                 act, o, why = _url_decision(key, role, url)
                 d._count(o.kind if o is not None else "model")
                 if o is not None and o.kind in ("content", "sender", "own"):
