@@ -116,7 +116,8 @@ def test_the_extractor_reads_identity_permissions_capabilities_and_pairing(world
     assert got["permissions"] == ["android.permission.INTERNET", "android.permission.RECORD_AUDIO"]
     assert got["features_required"] == ["android.hardware.type.watch"]
     assert got["bound_services"] == ["BIND_QUICK_SETTINGS_TILE"]
-    assert got["capabilities"]["actions"] == {"version": 1, "owner_only": True, "verbs": ["call.place", "timer.start"]}
+    assert got["capabilities"]["actions"] == {"version": 1, "owner_only": True,
+                                              "verbs": {"call.place": "A2", "timer.start": "A0"}}
     assert got["capabilities"]["talk"]["version"] == 2
     assert got["pairing"] == {"gateway": True, "relay": False, "discovery": False,
                               "declares_kind": "phone", "reports_app_version": False}
@@ -132,9 +133,10 @@ def test_groovy_build_files_and_debug_key_releases_are_read():
 def test_a_verb_with_no_name_is_refused_rather_than_recorded_blank(world):
     repos, source, _ = world
     file = repos / source.repo / "app/src/main/assets/capabilities/actions.json"
-    file.write_text(json.dumps({"capability": "actions", "verbs": [{"id": "timer.start"}]}), encoding="utf-8")
-    with pytest.raises(facts.MissingRepo, match="verb with no name"):
-        facts.extract(source, repos)
+    for verbs in ([{"id": "timer.start", "gate": "A0"}], [{"verb": "timer.start"}], ["timer.start"], [{"verb": ""}]):
+        file.write_text(json.dumps({"capability": "actions", "verbs": verbs}), encoding="utf-8")
+        with pytest.raises(facts.MissingRepo, match="no name or no gate"):
+            facts.extract(source, repos)
 
 
 def test_a_url_in_the_build_file_is_not_mistaken_for_a_comment():
@@ -165,6 +167,7 @@ def test_current_facts_report_no_difference(world):
     ("app/src/main/AndroidManifest.xml", "RECORD_AUDIO", "READ_CONTACTS", "permissions"),
     ("app/src/main/assets/capabilities/talk.json", '"version": 2', '"version": 3', "capabilities"),
     ("app/src/main/assets/capabilities/actions.json", "call.place", "door.unlock", "capabilities"),
+    ("app/src/main/assets/capabilities/actions.json", '"A2"', '"N"', "capabilities"),
     ("app/src/main/java/org/example/Pairing.java", "/tv/v1/pair/start", "/v1/pair/complete", "pairing"),
 ])
 def test_an_app_that_changed_since_its_snapshot_is_reported_by_name(world, path, old, new, field):

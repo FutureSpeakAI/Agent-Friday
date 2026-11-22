@@ -74,7 +74,8 @@ def test_each_entry_carries_the_fingerprint_and_version_of_its_snapshot(app_id):
     ("a new version", lambda f: f.update(version_code=61, version_name="0.13.0")),
     ("a new permission", lambda f: f["permissions"].append("android.permission.READ_SMS")),
     ("a dropped permission", lambda f: f["permissions"].remove("android.permission.CAMERA")),
-    ("a renamed action verb", lambda f: f["capabilities"]["actions"]["verbs"].append("door.unlock")),
+    ("a new action verb", lambda f: f["capabilities"]["actions"]["verbs"].update({"door.unlock": "A2"})),
+    ("a verb's gate changed", lambda f: f["capabilities"]["actions"]["verbs"].update({"timer.start": "A2"})),
     ("a new bound service", lambda f: f["bound_services"].append("BIND_REMOTEVIEWS")),
     ("a release key", lambda f: f.update(release_signing="release_key")),
     ("a new minimum Android", lambda f: f.update(min_sdk=33)),
@@ -106,7 +107,8 @@ def test_shipped_needs_evidence_that_is_in_the_snapshot():
 
 @pytest.mark.parametrize("gone,named", [
     (lambda f: f["permissions"].remove("android.permission.USE_BIOMETRIC"), "USE_BIOMETRIC"),
-    (lambda f: f["capabilities"]["actions"]["verbs"].remove("phone.call"), "verb:actions/phone.call"),
+    (lambda f: f["capabilities"]["actions"]["verbs"].pop("phone.call"), "verb:actions/phone.call"),
+    (lambda f: f["capabilities"]["actions"]["verbs"].update({"calendar.add": "N"}), "verb:actions/calendar.add"),
     (lambda f: f["pairing"].update(gateway=False), "pairing:gateway"),
 ])
 def test_a_claim_loses_its_footing_when_the_app_drops_what_it_rested_on(gone, named):
@@ -130,6 +132,7 @@ def test_built_but_off_must_say_until_when():
     ("service:BIND_QUICK_SETTINGS_TILE", True), ("service:BIND_APPWIDGET", False),
     ("capability:talk", True), ("capability:widget", False),
     ("verb:actions/timer.start", True), ("verb:actions/door.unlock", False), ("verb:talk/timer.start", False),
+    ("verb:actions/forbidden", False),
     ("pairing:gateway", True), ("pairing:reports_app_version", False), ("pairing:declares_kind", False),
     ("signing:none", True), ("signing:release_key", False),
     ("made_up:thing", False), ("", False), (None, False)])
@@ -140,7 +143,8 @@ def test_evidence_keys_against_the_phone_snapshot(key, holds):
 @pytest.mark.parametrize("broken", [
     "", "not json", "[]", "{}", '{"reviewed": "2026-11-22"}', '{"reviewed": "soon", "apps": []}',
     '{"reviewed": "2026-11-22", "apps": [{"id": "phone"}]}',
-    '{"reviewed": "2026-11-22", "apps": [1, 2, 3, 4]}'])
+    '{"reviewed": "2026-11-22", "apps": [1, 2, 3, 4]}',
+    '{"reviewed": "2026-11-22", "apps": [{"id": ["phone"]}, {"id": {}}, {"id": null}, {"id": 4}]}'])
 def test_a_broken_file_does_not_load_and_she_says_so_instead_of_guessing(tmp_path, monkeypatch, broken):
     bad = tmp_path / "ecosystem.json"
     bad.write_text(broken, encoding="utf-8")
@@ -155,7 +159,8 @@ def test_a_broken_file_does_not_load_and_she_says_so_instead_of_guessing(tmp_pat
     lambda a: a.update(capabilities="talk"), lambda a: a.update(install=[1]), lambda a: a.update(pair=[]),
     lambda a: a.update(limits="none"), lambda a: a["pair"].update(steps=[]),
     lambda a: a["pair"]["steps"][0].update(surprise=True), lambda a: a["capabilities"][0].update(evidence="x"),
-    lambda a: a.update(platform=None), lambda a: a.update(status="amazing"), lambda a: a.update(noun=7)])
+    lambda a: a.update(platform=None), lambda a: a.update(status="amazing"), lambda a: a.update(noun=7),
+    lambda a: a.update(id=["phone"])])
 def test_a_malformed_entry_is_refused_with_a_reason_not_a_crash(damage):
     raw = _raw("phone")
     damage(raw)
@@ -215,13 +220,41 @@ def test_every_permission_in_a_snapshot_has_a_note(app_id):
         sorted(set(facts.bound_services) - set(eco.SERVICE_NOTES))
 
 
-def test_what_a_device_sees_follows_its_pairing_role_and_permissions():
+def test_every_right_has_a_note():
+    from agent_friday.services import device_pairing
+    assert set(eco.RIGHT_NOTES) == set(device_pairing.ALL_RIGHTS)
+
+
+@pytest.mark.parametrize("app_id", ["phone", "tablet", "tv"])
+def test_what_the_pairing_press_grants_is_said_as_the_pairing_code_grants_it(app_id):
+    """The first sentence lists exactly the rights the press gives; the second, exactly the ones
+    that each need their own press. Neither list borrows from the other."""
+    from agent_friday.services import device_pairing
+    from agent_friday.tv_gateway import household, pairing
+    owner = pairing.owner_grant(app_id, household.member_for_kind(app_id))
+    at_once = set(device_pairing.RIGHTS) if owner else {device_pairing.BASE_RIGHT}
+    later = set(device_pairing.ALL_RIGHTS) - at_once if owner else set(device_pairing.RIGHTS) - at_once
+    first, second = eco.sees(eco.app(app_id))[:2]
+    assert first.startswith("Once you approve the pairing it is signed in as you") is owner
+    assert "off until you allow it" in second
+    for right, note in eco.RIGHT_NOTES.items():
+        assert (note in first) is (right in at_once), right
+        assert (note in second) is (right in later), right
+    assert owner is (app_id in ("phone", "tablet"))
+
+
+def test_what_a_device_sees_follows_its_permissions():
     phone, tv, watch = (" ".join(eco.sees(eco.app(i))) for i in ("phone", "tv", "watch"))
-    assert "it is your phone" in phone and "grants all of it" in phone
     assert "the microphone" in phone and "the camera" in phone and "contacts" in phone
-    assert "household device" in tv and "one permission" in tv and "it is your TV" not in tv
+    assert "household device, never signed in as you" in tv
     assert "camera" not in tv and "contacts" not in tv
-    assert "I grant it nothing" in watch
+    assert "I grant it nothing" in watch and not any(n in watch for n in eco.RIGHT_NOTES.values())
+
+
+def test_approving_from_a_phone_is_said_to_need_its_own_permission():
+    for app_id in ("phone", "tablet"):
+        cap = next(c for c in eco.app(app_id).capabilities if c.id == "approve")
+        assert "once you allow approvals from it on this PC's screen" in cap.text
 
 
 # ── Nothing false, secret or personal is rendered ───────────────────────────
@@ -269,9 +302,17 @@ def test_every_store_mention_says_it_is_not_there():
 
 
 def test_pairing_says_the_pc_side_is_off_with_no_switch_before_any_other_step():
-    """True of this build: nothing in the product switches the device gateway on."""
-    from agent_friday.services import device_pairing
-    assert not hasattr(device_pairing, "open_pairing_window")
+    """True of this build: nothing in the product switches the device gateway on. When a caller
+    of set_gateway appears anywhere in the package or its pages, this fails and the steps are rewritten."""
+    package = Path(eco.__file__).resolve().parents[1]
+    callers = []
+    for folder in (package, REPO / "static"):
+        for file in folder.rglob("*"):
+            if file.suffix in (".py", ".html", ".js") and file.is_file():
+                text = file.read_text(encoding="utf-8", errors="replace")
+                if "set_gateway(" in text.replace("def set_gateway(", "") or "/api/pairing-window" in text:
+                    callers.append(file.name)
+    assert callers == [], callers
     for app_id in ("phone", "tablet", "tv"):
         first = eco.app(app_id).pair.steps[0].text
         assert "device gateway on this PC" in first and "no switch for it in the app yet" in first
@@ -318,7 +359,7 @@ def test_the_companion_apps_reach_the_chat_prompt():
     block = eco.prompt_block()
     assert f"== {eco.SECTION_TITLE} ==\n{block}" in prompt
     assert len(block) <= eco.PROMPT_BLOCK_MAX_CHARS
-    for word in ("phone", "tablet", "TV", "watch", "ecosystem_info", "no QR code", "through ask_friday"):
+    for word in ("phone", "tablet", "TV", "watch", "ecosystem_info", "there is no QR code", "through ask_friday"):
         assert word in block
     assert eco.prompt_block() == block
 
