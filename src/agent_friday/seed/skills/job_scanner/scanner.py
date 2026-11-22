@@ -265,6 +265,20 @@ def dedup_key(listing: JobListing, strategies: Sequence[str]) -> str:
 Fetcher = Callable[[str], List[Dict[str, Any]]]
 
 
+def _record_sighting(listing) -> None:
+    """Tell the job store this posting was seen now, so the Career panel can tell what is open and recent from
+    what has gone. A failure is logged and never stops the scan."""
+    try:
+        from datetime import datetime
+        from agent_friday.services import job_store
+        job_store.upsert({"job_id": listing.job_id, "title": listing.title, "company": listing.company,
+                          "location": listing.location, "source": listing.source,
+                          "external_id": listing.external_id, "url": listing.source_url,
+                          "posted_at": listing.posted_at, "score": listing.relevance_score}, datetime.now())
+    except Exception:
+        log.exception("could not record a sighting in the job store")
+
+
 def default_fetcher(url: str) -> List[Dict[str, Any]]:
     """
     Default fetch — returns an empty list and logs the URL.
@@ -412,6 +426,7 @@ def scan(*, config: Optional[Dict[str, Any]] = None,
             listing.keywords_matched = [k for k in keyword_set
                                         if k.lower() in (listing.title or "").lower()]
             listing.dedup_key = dedup_key(listing, dedup_keys)
+            _record_sighting(listing)
             inserted = tracker.add_job(listing)
             if inserted is None:
                 result["deduped"] += 1

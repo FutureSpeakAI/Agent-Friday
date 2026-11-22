@@ -97,6 +97,30 @@ def api_jobs_list():
     return jsonify({"count": len(jobs), "jobs": [j.to_dict() for j in jobs]})
 
 
+@jobs_bp.route("/api/career/jobs", methods=["GET"])
+def api_career_jobs():
+    """The Career workspace's job lists, from the job store (services/job_store): ?view=recent (open, recently
+    seen postings, newest sighting first) or ?view=archive (closed and expired, with the date they closed)."""
+    from datetime import datetime
+    from agent_friday.services import job_store
+    view = request.args.get("view", "recent")
+    if view not in ("recent", "archive"):
+        return jsonify({"status": "error", "message": "view is recent or archive"}), 400
+    try:
+        limit = max(1, min(int(request.args.get("limit", job_store.DEFAULT_LIMIT)), 200))
+    except ValueError:
+        limit = job_store.DEFAULT_LIMIT
+    now = datetime.now()
+    try:
+        job_store.import_tracker(now)
+        rows = job_store.list_recent(now, limit) if view == "recent" else job_store.list_archive(now, limit)
+    except job_store.StoreUnreadable:
+        return jsonify({"status": "error", "code": "store_unreadable",
+                        "message": "The saved job list could not be read."}), 503
+    return jsonify({"status": "ok", "view": view, "as_of": now.isoformat(), "stale_days": job_store.STALE_DAYS,
+                    "count": len(rows), "jobs": rows})
+
+
 @jobs_bp.route("/api/pipeline/scan", methods=["POST"])
 def api_jobs_scan():
     data = request.get_json(silent=True) or {}
