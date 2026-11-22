@@ -107,3 +107,53 @@ def test_the_rule_is_one_function_both_halves_call():
     assert callable(cm.user_lines_visible)
     assert "user_lines_visible" in inspect.getsource(core_memory_tools)
     assert "user_lines_visible" in inspect.getsource(model_router.memory_head_blocks)
+
+
+# ── a phone or channel turn: the answer leaves this PC whichever model writes it ─────────────────────────────────────────────
+
+def _local_prompt(*, with_control: bool):
+    from agent_friday.services.model_router import _get_vault_control, memory_head_blocks
+    vc = _get_vault_control() if with_control else None
+    return memory_head_blocks("", None, provider="local", vault_control=vc, model="")
+
+
+def test_a_local_model_on_this_pc_sees_the_line_in_the_prompt(monkeypatch):
+    """The control for the cases below: the same local reader on a desktop turn gets the line."""
+    _posture(monkeypatch, local_only=True)
+    for with_control in (True, False):
+        assert LINE in _local_prompt(with_control=with_control)
+
+
+@pytest.mark.parametrize("origin", ["phone", "channel"])
+def test_a_remote_turn_on_a_local_model_never_gets_a_withheld_line_in_its_prompt(monkeypatch, origin):
+    """The tool withholds the lines from a phone or channel turn; the prompt built for that turn must agree. Before: the
+    prompt builder never heard the origin, and the vault gate passed the raw text to any local provider."""
+    _posture(monkeypatch, local_only=True)
+    assert cm.user_lines_visible("local", "", origin) is False    # what the tool asks (a phone turn is refused the tool outright)
+    tok = agent._CURRENT_ORIGIN.set(origin)
+    try:
+        for with_control in (True, False):
+            assert LINE not in _local_prompt(with_control=with_control), "a withheld line reached a %s prompt" % origin
+    finally:
+        agent._CURRENT_ORIGIN.reset(tok)
+
+
+@pytest.mark.parametrize("origin", ["phone", "channel"])
+def test_the_turn_origin_is_known_when_the_prompt_is_built(monkeypatch, origin):
+    """_generate_agent builds each leg's prompt through `system_builder`; the origin of the turn must already be set then,
+    not only inside each tool call."""
+    from agent_friday.services.model_router import _get_vault_control, memory_head_blocks
+    _posture(monkeypatch, local_only=True)
+    seen = {}
+
+    def one_leg(messages, **kw):
+        seen["origin"] = agent._CURRENT_ORIGIN.get()
+        seen["prompt"] = kw["system_builder"]("local")
+        return "ok", []
+    monkeypatch.setattr(agent, "_generate_agent_untraced", one_leg)
+    agent._generate_agent([{"role": "user", "content": "hello"}], session_ctx={"origin": origin}, workspace="chat",
+                          system_builder=lambda p: memory_head_blocks("", None, provider=p,
+                                                                      vault_control=_get_vault_control(), model=""))
+    assert seen["origin"] == origin
+    assert LINE not in seen["prompt"], "the %s turn's prompt carried a withheld line" % origin
+    assert agent._CURRENT_ORIGIN.get() == "", "the turn's origin outlived the turn"
