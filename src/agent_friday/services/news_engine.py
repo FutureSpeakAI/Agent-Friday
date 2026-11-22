@@ -74,8 +74,9 @@ def _find_briefing_path(filename):
         name = safe_name(filename, what="briefing name")
         # Location 1: Desktop/friday-creations (legacy daily-briefing-*.html files)
         p1 = contained(HOME / 'Desktop' / 'friday-creations', name)
-        # Location 2: ~/.friday/wiki/briefings (date-named files like 2026-04-14.html)
-        p2 = contained(HOME / '.friday' / 'wiki' / 'briefings', name)
+        # Location 2: the briefings folder briefing_files.write saves into (date-named files like 2026-04-14.md)
+        from agent_friday.services import briefing_files
+        p2 = contained(briefing_files.briefings_dir(), name)
     except ValueError:
         return None
     if p1.is_file() and p1.name.startswith('daily-briefing'):
