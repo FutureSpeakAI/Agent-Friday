@@ -61836,7 +61836,7 @@ function SendGrantsPanel() {
             'since ' + new Date(g.created_at * 1000).toLocaleString() + ' \xB7 used ' + (g.uses || 0) + ' time(s)' + (g.last_used_at ? ', last ' + new Date(g.last_used_at * 1000).toLocaleString() : '')),
           g.changed ? E('div', { 'data-testid': 'send-grant-changed', style: { fontSize: 11, color: '#ffb080' } }, 'Not in use: ' + g.changed + '. Sends ask until you approve it again.') : null),
         E('div', { style: { display: 'flex', gap: 6 } },
-          g.changed && g.in_force !== false && (g.scope === 'job' || skillFor(g.skill)) ? E('button', { className: 'settings-btn', style: { fontSize: 11 }, onClick: () => reapprove(g, g.scope === 'skill' ? skillRecipients(skillFor(g.skill)) : null) }, 'Approve again as it is now') : null,
+          g.changed && g.in_force !== false && !(g.browse_domains || []).length && (g.scope === 'job' || skillFor(g.skill)) ? E('button', { className: 'settings-btn', style: { fontSize: 11 }, onClick: () => reapprove(g, g.scope === 'skill' ? skillRecipients(skillFor(g.skill)) : null) }, 'Approve again as it is now') : null,
           E('button', { className: 'settings-btn', style: { fontSize: 11, color: '#ff8080' }, onClick: () => revoke(g.grant_id) }, 'Revoke')))),
     d.skills.length > 0 && E('div', { style: { marginTop: 10, fontSize: 12, color: '#ccc' } }, 'Skills that need to send or to read the web'),
     d.skills.map(sk => E('div', { key: sk.name, 'data-testid': 'send-grant-skill', style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, marginTop: 6, fontSize: 11, color: '#bbb' } },

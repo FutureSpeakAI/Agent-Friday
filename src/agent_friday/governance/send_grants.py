@@ -608,6 +608,9 @@ def reapprove(grant_id: str, seen_recipients=None, by: str = "owner") -> dict:
         raise _Refused("that pre-approval is not in force, so there is nothing to re-approve")
     if old.get("scope") not in ("skill", "job"):
         raise _Refused("only a job or skill pre-approval is re-approved")
+    if old.get("browse_domains"):
+        # A site approval is approved again from the skill's own row (create_browse_grant), never as a send.
+        raise _Refused("approve the skill's sites again from its row in Settings")
     limits = _carried_limits(old)
     try:
         carried = _carried_uses(old)
@@ -994,6 +997,10 @@ def approved_skill_grant(name: str, fingerprint: str) -> str:
     if not name or not fingerprint:
         return ""
     for g in _live_trusted():
+        # A site approval (browse_domains, no send actions) vouches for browsing only, never for the skill's
+        # text as a send procedure.
+        if g.get("browse_domains") or not g.get("actions"):
+            continue
         if (g.get("scope") == "skill" and g.get("skill") == name
                 and g.get("skill_hash") == fingerprint):
             return str(g["grant_id"])

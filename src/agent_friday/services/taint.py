@@ -1104,17 +1104,33 @@ def _url_decision(key: str, role: str, url: str) -> Tuple[str, Optional[Origin],
     return "allow", o, ""
 
 
+def _plain_web_url(url: str) -> bool:
+    """A link whose host every parser agrees on: http(s), no user part, no backslash, no space or control
+    character. Only such a link may be trusted as a site the owner approved (`evaluate`)."""
+    u = str(url or "")
+    if not u or "\\" in u or any(c.isspace() or ord(c) < 32 for c in u):
+        return False
+    try:
+        parts = urlsplit(u)
+    except Exception:
+        return False
+    return parts.scheme in ("http", "https") and bool(parts.hostname) and "@" not in parts.netloc
+
+
 def evaluate(key: str, tool_name: str, tool_input: Optional[dict], trusted_host=None) -> Decision:
     """Decide what the provenance of this call's arguments requires.
 
     `trusted_host(host) -> bool`: a host the owner approved a skill to read (governance/send_grants.
-    skill_browse_covers). Reading such a host is not asking for details from outside content, whether the link
-    is the skill's own or built on it. Sending to it (post_url) is never trusted this way."""
+    skill_browse_covers). Fetching such a host (browse_web, browser_open) is not asking for details from outside
+    content, whether the link is the skill's own or built on it, but only for a plain link (`_plain_web_url`)
+    that cannot reach another host. Opening it in the owner's browser (open_url) and sending to it (post_url)
+    are never trusted this way."""
     d = Decision()
     for arg, role, value in roles_for(tool_name, tool_input or {}):
         if role in ("fetch_url", "open_url", "post_url"):
             for url in _atoms(role, value):
-                if trusted_host is not None and role != "post_url" and trusted_host(_host(url)):
+                if (trusted_host is not None and role == "fetch_url" and _plain_web_url(url)
+                        and trusted_host(_host(url))):
                     d._count("own")
                     continue
                 act, o, why = _url_decision(key, role, url)
