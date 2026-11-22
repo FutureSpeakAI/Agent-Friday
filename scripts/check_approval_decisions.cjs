@@ -307,15 +307,27 @@ for (const file of FILES) {
     assert.doesNotMatch(src, /onDecide: \(\) => \{\}/, 'the group lists cards whose buttons do nothing');
     const calls = [];
     const decide = (id, d) => { calls.push(id + ':' + d); return { then: f => f() }; };
-    const item = { approval_id: 'w1', title: 'Fix a line', action_description: 'correct_wiki {"new_text":"mars is red"}',
-      provenance: { flags: [{ arg: 'new_text', value: 'mars is red', source: 'a web page' }] } };
+    // A real flag: the server cuts its value to 79 characters plus an ellipsis, and the action line is escaped JSON,
+    // so a long value with a quote, a newline or an accent never matches the action line as text.
+    const long = 'Mars is red because of iron oxide, the "rust" that covers its surface;\nsee the caf\u00e9 notes for more detail.';
+    const item = { approval_id: 'w1', title: 'Fix a line', description: 'A detail in this came from a web page.',
+      action_description: 'correct_wiki ' + JSON.stringify({ new_text: long }).replace(/[\u0080-\uffff]/g, c => '\\u' + c.charCodeAt(0).toString(16).padStart(4, '0')),
+      payload: { tool: 'correct_wiki', input: { title: 'Mars', new_text: long } },
+      provenance: { headline: 'Check this before approving', flags: [{ arg: 'new_text', value: long.slice(0, 79) + '\u2026', source: 'a web page', severity: 'warn', text: 'Saving it would let that text shape what Friday does later.' }] } };
+    const shownWith = [];
     const render = mount(fn(file, 'LaneBatchItem', NL + 'function LaneBatch('), 'LaneBatchItem', {
-      React: expandingReact, useDeciding: () => false, fridayDecideApproval: decide, fridayMarkOutside: fridayMark(file) });
+      React: expandingReact, useDeciding: () => false, fridayDecideApproval: decide, fridayMarkOutside: fridayMark(file),
+      ApprovalProvenance: p => { shownWith.push(['provenance', p.p]); return { type: 'div', props: { 'data-testid': 'approval-provenance' }, children: [] }; },
+      ApprovalCardFacts: p => { shownWith.push(['facts', p.a.approval_id]); return { type: 'div', props: { 'data-testid': 'facts' }, children: [] }; } });
     let rejected = 0;
     const tree = render({ it: item, onRejected: () => { rejected++; } });
-    const marked = nodes(tree, 'mark').map(m => m.children.join(''));
-    assert.ok(marked.includes('mars is red'), 'the outside text is not marked: ' + JSON.stringify(marked));
-    assert.match(words(tree), /From a web page: /);
+    const marked = nodes(tree, 'mark').filter(m => m.props && m.props['data-testid'] === 'outside-text').map(m => m.children.join(''));
+    assert.deepEqual(marked, [long], 'the outside text is not marked in place, whole: ' + JSON.stringify(marked));
+    assert.ok(!nodes(tree, 'mark').some(m => m.children.join('') === 'Mars'), 'an argument the owner wrote is marked as outside');
+    assert.match(words(tree), /From a web page \(new_text\): /);
+    assert.match(words(tree), /A detail in this came from a web page\./, 'the grouped card drops the card\'s why');
+    assert.deepEqual(shownWith.map(x => x[0]).sort(), ['facts', 'provenance'], 'the grouped card drops the warning or the facts a single card shows');
+    assert.equal(shownWith.find(x => x[0] === 'provenance')[1], item.provenance);
     const parts = fridayMark(file)('say mars is red now', [{ value: 'mars is red' }, { value: 'mars is red' }, { value: 'x' }]);
     assert.deepEqual(parts.map(x => typeof x === 'string' ? x : '<' + x.children.join('') + '>'), ['say ', '<mars is red>', ' now'], 'outside text is not marked in place');
     const reject = nodes(tree, 'button').find(b => b.props['data-testid'] === 'lane-batch-reject-one');
@@ -338,6 +350,12 @@ for (const file of FILES) {
     pending[0]({ ok: false, error: 'nope', message: 'That group is not what it was.' }); await tick(); await tick();
     assert.ok(toasts.includes('That group is not what it was.'), 'a refusal said nothing: ' + JSON.stringify(toasts));
     assert.equal(fridayDeciding.get(batchOf(['w1', 'w2']).batch_id), undefined, 'the group stays busy after it settled');
+  });
+}
+for (const file of FILES) {
+  check(file + ': the needs-you lane and System > Approvals keep no busy flag of their own (the card reads the shared tracker)', () => {
+    assert.doesNotMatch(fn(file, 'LaneNeedsYou', NL + 'function LaneActivity('), /setBusy|useState\(''\)/);
+    assert.doesNotMatch(text[file], /apBusy/);
   });
 }
 check('index.html and ui_parts/app.html carry the same grouped-card code', () => {
