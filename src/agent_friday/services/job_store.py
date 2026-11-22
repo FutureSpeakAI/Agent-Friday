@@ -196,10 +196,16 @@ def _note_job_id(record: dict, job_id) -> None:
 
 # -- the rules ---------------------------------------------------------------------------------
 
+#: The application stages that mean the owner has applied and it is still going. An application only prepared by
+#: Friday ("discovered", "triaged") is not one: the owner submits it themselves, so the job is still just open.
+APPLIED_STAGES = frozenset({"applied", "screening", "interview", "offer"})
+
+
 def _applied_job_ids() -> frozenset:
-    """Tracker job ids with an active application (job_tracker_schema.ACTIVE_STAGES)."""
+    """Tracker job ids with an application at APPLIED_STAGES."""
     from agent_friday.seed.data.job_tracker_schema import JobTracker
-    return frozenset(app.job_id for app in JobTracker().load().list_applications(active_only=True))
+    return frozenset(app.job_id for app in JobTracker().load().list_applications(active_only=True)
+                     if app.stage in APPLIED_STAGES)
 
 
 def _is_applied(record: dict, applied: frozenset) -> bool:

@@ -84,11 +84,17 @@ def test_after_a_rescan_every_recent_job_id_is_one_the_tracker_holds_so_prepare_
     assert prepared.status_code == 200
 
 
-def test_a_prepared_application_keeps_the_job_in_recent_as_applied(client):
+def test_a_prepared_application_is_still_open_and_one_the_owner_sent_shows_as_applied(client):
+    from agent_friday.seed.data.job_tracker_schema import JobTracker
     client.post("/api/pipeline/scan", json={"raw_listings": RAW_LISTINGS})
     row = next(j for j in get(client).get_json()["jobs"] if j["title"] == "Senior AI Engineer")
     assert row["status"] == "open"
     assert client.post("/api/pipeline/jobs/%s/apply" % row["job_id"], json={}).status_code == 200
+    statuses = {j["title"]: j["status"] for j in get(client).get_json()["jobs"]}
+    assert statuses["Senior AI Engineer"] == "open"                # prepared by Friday, not sent by the owner
+    tracker = JobTracker().load()
+    application = tracker.applications_for(row["job_id"])[0]
+    tracker.advance_application(application.application_id, "applied")
     statuses = {j["title"]: j["status"] for j in get(client).get_json()["jobs"]}
     assert statuses["Senior AI Engineer"] == "applied" and statuses["Junior Data Clerk"] == "open"
 
