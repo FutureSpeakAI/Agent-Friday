@@ -93,6 +93,22 @@ SERVICE_NOTES = {
 }
 
 
+#: The gate the apps give a verb that must never run.
+NEVER_GATE = "N"
+
+#: What each right lets a paired device do. The keys are device_pairing.ALL_RIGHTS
+#: (test_every_right_has_a_note); `sees` says which arrive with the pairing press.
+RIGHT_NOTES = {
+    "chat_read": "read the chat you send to it",
+    "tv_brain": "use me as its brain: talk with me and use my memory and models",
+    "studio": "start Studio jobs on this PC's paid providers, each showing its cost first",
+    "tv_channels": "share its channels with this PC",
+    "pc_read": "read your chats, workspaces and jobs on this PC",
+    "pc_act": "stop, resume or re-run a job on this PC",
+    "pc_approve": "approve my requests, one at a time, signed on the unlocked device",
+}
+
+
 class EcosystemError(ValueError):
     """The knowledge file or a facts snapshot is missing, malformed or untrue."""
 
@@ -108,7 +124,7 @@ class Facts:
     permissions: tuple
     bound_services: tuple
     capabilities: frozenset
-    verbs: frozenset           # "<capability>/<verb>"
+    verbs: frozenset           # "<capability>/<verb>", leaving out verbs the app gates as never
     pairing: frozenset         # the pairing markers found in the app's sources
     release_signing: str
 
@@ -134,7 +150,8 @@ def parse_facts(snapshot) -> Facts:
             version_code=int(facts["version_code"]), min_sdk=int(facts["min_sdk"]),
             abis=tuple(facts["abis"]), permissions=tuple(facts["permissions"]),
             bound_services=tuple(facts["bound_services"]), capabilities=frozenset(caps),
-            verbs=frozenset(f"{name}/{verb}" for name, cap in caps.items() for verb in cap["verbs"]),
+            verbs=frozenset(f"{name}/{verb}" for name, cap in caps.items()
+                            for verb, gate in cap["verbs"].items() if gate != NEVER_GATE),
             pairing=frozenset(k for k, v in facts["pairing"].items() if v is True),
             release_signing=str(facts["release_signing"]))
     except (KeyError, TypeError, ValueError, AttributeError) as e:
@@ -300,7 +317,7 @@ def parse(doc, facts_dir: Path = FACTS_DIR) -> tuple:
     if not isinstance(doc, dict) or not re.fullmatch(r"\d{4}-\d{2}-\d{2}", str(doc.get("reviewed"))):
         raise EcosystemError("the knowledge file needs a 'reviewed' date")
     entries = doc.get("apps") if isinstance(doc.get("apps"), list) else []
-    raws = {a.get("id"): a for a in entries if isinstance(a, dict)}
+    raws = {a.get("id"): a for a in entries if isinstance(a, dict) and isinstance(a.get("id"), str)}
     if set(raws) != set(APP_IDS) or len(entries) != len(APP_IDS):
         raise EcosystemError("the knowledge file must describe exactly: " + ", ".join(APP_IDS))
     return tuple(parse_app(raws[i], read_facts(i, facts_dir)) for i in APP_IDS)
@@ -354,19 +371,26 @@ def _numbered(steps) -> list:
 
 def sees(a: App) -> list:
     """What this device can reach, from its pairing role and declared permissions."""
-    from agent_friday.tv_gateway import household
+    from agent_friday.services import device_pairing
+    from agent_friday.tv_gateway import household, pairing
+
+    def listed(rights) -> str:
+        return "; ".join(RIGHT_NOTES[r] for r in rights)
     lines = []
     if a.pair.method == "relay_code":
         lines.append("It does not connect to me directly, so I grant it nothing: "
                      "what it reaches is decided by its own helper program.")
-    elif a.id in household.PERSONAL_KINDS:
-        lines.append(f"Once you approve the pairing it is your {a.noun}: it can read your chats with me, "
-                     "see what I am working on, and answer my requests for you. "
-                     "That one press grants all of it.")
+    elif pairing.owner_grant(a.id, household.member_for_kind(a.id)):
+        lines.append(f"Once you approve the pairing it is signed in as you, and that one press lets it: "
+                     f"{listed(device_pairing.RIGHTS)}.")
+        lines.append(f"Each of these is asked separately on this PC's screen, and is off until you allow it: "
+                     f"{listed(device_pairing.PC_RIGHTS)}.")
     else:
-        lines.append("It is a household device, never signed in as you. Pairing gives it one permission: "
-                     "reading the chat you send to it. Each wider permission is asked separately "
-                     "on this PC's screen.")
+        later = [r for r in device_pairing.RIGHTS if r != device_pairing.BASE_RIGHT]
+        lines.append(f"It is a household device, never signed in as you. Pairing lets it "
+                     f"{RIGHT_NOTES[device_pairing.BASE_RIGHT]}, and nothing else.")
+        lines.append(f"Each of these is asked separately on this PC's screen, and is off until you allow it: "
+                     f"{listed(later)}.")
     notes = []
     for name in a.facts.permissions:
         note = PERMISSION_NOTES.get(name, f"something I have no note about ({name.rsplit('.', 1)[-1]})")
@@ -440,8 +464,8 @@ def prompt_block() -> str:
     lines = ["You have companion apps. None is in an app store yet."]
     for a in apps():
         lines.append(f"- {a.label}: {status_phrase(a)} ({a.version_name}).")
-    lines.append("Pairing is a six-digit match on both screens plus Approve on this PC's screen; "
-                 "no QR code, nothing to type.")
+    lines.append("Phone, tablet and TV pair by a six-digit match on both screens plus Approve on this "
+                 "PC's screen; there is no QR code.")
     lines.append(f"For anything more about them, use {PROMPT_TOOLS} (in voice, through ask_friday) and "
                  "give its steps as written. State nothing about these apps from memory.")
     return "\n".join(lines)
