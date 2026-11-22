@@ -119,7 +119,8 @@ def _first(pattern: str, text: str) -> str | None:
 
 
 def _strip_comments(text: str) -> str:
-    return re.sub(r"//[^\n]*", "", text)
+    """Line comments removed; a `//` inside a URL (after a colon) is kept."""
+    return re.sub(r"(?<!:)//[^\n]*", "", text)
 
 
 def _block(text: str, opener: str) -> str:
@@ -162,7 +163,8 @@ def gradle_facts(text: str) -> dict:
         "version_code": int(code) if code else None,
         "min_sdk": int(min_sdk) if min_sdk else None,
         "target_sdk": int(target) if target else None,
-        "abis": sorted(set(re.findall(r"""abiFilters[^\n"']*["']([\w-]+)["']""", text))),
+        "abis": sorted({abi for line in text.splitlines() if "abiFilters" in line
+                        for abi in re.findall(r"""["']([\w-]+)["']""", line)}),
         "debug_suffix": _first(r"""\bdebug\s*\{[^}]*applicationIdSuffix\s*=?\s*["']([^"']+)["']""", text),
         "release_signing": signing,
         "form": _first(r"""\bval\s+form\s*=\s*["'](\w+)["']""", text),
@@ -197,13 +199,12 @@ def capability_facts(tree: Tree, folder: str | None) -> dict:
             continue
         doc = json.loads(tree.read(path))
         name = str(doc.get("capability") or Path(path).stem)
-        verbs = doc.get("verbs")
-        out[name] = {
-            "version": doc.get("version"),
-            "owner_only": bool(doc.get("owner_only")),
-            "verbs": sorted(str(v.get("id") if isinstance(v, dict) else v) for v in verbs)
-            if isinstance(verbs, list) else [],
-        }
+        verbs = doc.get("verbs") if isinstance(doc.get("verbs"), list) else []
+        names = [v.get("verb") if isinstance(v, dict) else v for v in verbs]
+        if not all(isinstance(n, str) and n for n in names):
+            raise MissingRepo(f"{path}: a verb with no name")
+        out[name] = {"version": doc.get("version"), "owner_only": bool(doc.get("owner_only")),
+                     "verbs": sorted(names)}
     return dict(sorted(out.items()))
 
 
