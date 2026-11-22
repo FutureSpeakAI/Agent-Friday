@@ -144,12 +144,20 @@ def _names_a_stream(p: Path) -> bool:
     return os.name == "nt" and any(":" in part for part in p.parts[1:])
 
 
+def _name_windows_trims(p: Path) -> bool:
+    """Windows drops a trailing dot or space when it opens a name, so ".friday." is ".friday": such a name is refused
+    outright, since no comparison of the text can be trusted to agree with what gets opened."""
+    return os.name == "nt" and any(part.rstrip(". ") != part for part in p.parts[1:] if part not in (".", ".."))
+
+
 def _out_refusal(out: Path, root: Path) -> str:
     """Why the report may not be written at `out`, or "" when it may. Never inside the scanned root, never inside the owner's
     data root (FRIDAY_HOME or ~/.friday) whatever root is scanned, and never through a second name for an existing file (a
     hard link would write through to it) or a stream on an existing folder or file."""
     if _names_a_stream(out):
         return "names a stream on a folder or file (a ':' in a name); name a plain new file"
+    if _name_windows_trims(out):
+        return "has a name ending in a dot or space, which Windows trims to another name; name a plain new file"
     for guarded in (root, default_root()):
         if _inside(out, guarded):
             return "is inside the data root %s; this script never writes there" % guarded
