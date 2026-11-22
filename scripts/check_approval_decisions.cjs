@@ -157,13 +157,21 @@ function mount(src, name, deps) {
   const f = new Function(...Object.keys(args), src + NL + 'return ' + name + ';')(...Object.values(args));
   return props => { cursor = 0; return f(props); };
 }
+// The tray's own list, run for real from a page file; `plan` stands in for the server's grouping.
+const expandingReact = { Fragment: 'Fragment', createElement: (type, p, ...children) => typeof type === 'function'
+  ? type(Object.assign({}, p, { children: children.flat() })) : { type, props: p || {}, children: children.flat() } };
+function trayList(file, decide, plan) {
+  const React = expandingReact;
+  return mount(fn(file, 'ApprovalTrayList', NL + 'function LaneNeedsYou('), 'ApprovalTrayList', {
+    React, useApprovalPlan: plan, LaneBatch: 'LaneBatch', ApprovalCardBody: 'ApprovalCardBody', fridayDecideApproval: decide });
+}
 const walk = (tree, visit) => { (function go(n) { if (!n || typeof n !== 'object') return; visit(n); (n.children || []).forEach(go); })(tree); };
 const bodies = tree => { const out = []; walk(tree, n => { if (n.type === 'ApprovalCardBody') out.push(n.props); }); return out; };
 const words = tree => { const out = []; walk(tree, n => (n.children || []).forEach(c => { if (typeof c === 'string') out.push(c); })); return out.join(''); };
 const feed = [1, 2, 3].map(n => ({ approval_id: 'a' + n, title: 'Card ' + n, payload: { conversation_id: 'c1' } }));
 const cardOnAnotherChat = { approval_id: 'a9', title: 'Elsewhere', payload: { conversation_id: 'c2' } };
 
-const TRAY_ALLOWED = ['SystemWS', 'LaneBatch', 'LaneNeedsYou', 'StandaloneApprovals', 'ApprovalPopups', 'ExperienceApprovals', 'ApprovalSlot'];
+const TRAY_ALLOWED = ['SystemWS', 'LaneBatch', 'LaneBatchItem', 'ApprovalTrayList', 'LaneNeedsYou', 'StandaloneApprovals', 'ApprovalPopups', 'ExperienceApprovals', 'ApprovalSlot'];
 for (const file of FILES) {
   check(file + ': no approval card renders in the chat: ChatApprovalCards is gone and the chat says one line', () => {
     assert.ok(!text[file].includes('ChatApprovalCards'), file + ' still has ChatApprovalCards');
@@ -246,7 +254,8 @@ check('index.html: the tray popup, run for real: three cards decided out of orde
   const w = pageWorld(), { fridayDecideApproval } = loadDecide('index.html', w);
   const win = { addEventListener() {}, removeEventListener() {}, __FRIDAY_STANDALONE__: false };
   const render = mount(fn('index.html', 'ApprovalPopups', NL + '// The context slot of the top bar'), 'ApprovalPopups', {
-    useApprovalFeed: () => feed, fridayDecideApproval, ApprovalCardBody: 'ApprovalCardBody', fridayApprovalQuiet: () => false,
+    useApprovalFeed: () => feed, fridayDecideApproval, ApprovalTrayList: trayList('index.html', fridayDecideApproval, () => []),
+    React: expandingReact, ApprovalCardBody: 'ApprovalCardBody', fridayApprovalQuiet: () => false,
     fridayAnnounce: () => {}, fridayName: () => 'Friday', window: win, document: {}, CSS: { escape: s => s }, setTimeout: () => 0,
   });
   const cards = () => bodies(render({}));
@@ -269,6 +278,74 @@ check('index.html and ui_parts/app.html carry the same tracker, decide function 
     assert.equal(fn('index.html', name, end), fn('ui_parts/app.html', name, end), name + ' differs between the page files');
   }
 });
+
+// ── one request, one tray card (several actions grouped, each still its own approval) ──────────────────────────
+const NEXT = NL + 'function LaneNeedsYou(';
+const nodes = (tree, type) => { const out = []; walk(tree, n => { if (n.type === type) out.push(n); }); return out; };
+const five = [1, 2, 3, 4, 5].map(n => ({ approval_id: 'w' + n, title: 'Edit ' + n, payload: {} }));
+const batchOf = ids => ({ batch_id: 'b-' + ids.join('+'), approval_ids: ids, count: ids.length, sentence: ids.length + ' wiki edits', items: [] });
+for (const file of FILES) {
+  check(file + ': a planned group is one tray card, the rest stay single, and no plan leaves every card single', () => {
+    const w = pageWorld(), { fridayDecideApproval } = loadDecide(file, w);
+    const render = plan => trayList(file, fridayDecideApproval, () => plan)({ items: five });
+    const grouped = render([batchOf(['w1', 'w2', 'w3', 'w4', 'w5'])]);
+    assert.equal(nodes(grouped, 'LaneBatch').length, 1, 'five edits must be one card');
+    assert.equal(bodies(grouped).length, 0, 'a grouped edit also drew its own card');
+    const mixed = render([batchOf(['w1', 'w2', 'w3'])]);
+    assert.equal(nodes(mixed, 'LaneBatch').length, 1);
+    assert.deepEqual(bodies(mixed).map(b => b.a.approval_id), ['w4', 'w5']);
+    assert.equal(bodies(render([])).length, 5, 'with no plan every card shows on its own');
+    assert.equal(nodes(render([batchOf(['w1', 'gone'])]), 'LaneBatch').length, 0, 'a group naming a card that is gone must not show');
+    assert.equal(bodies(render([batchOf(['w1', 'gone'])])).length, 5);
+  });
+  check(file + ': a grouped card lists each action with its own Reject, marks what came from outside text, and shows no dead buttons', () => {
+    const src = fn(file, 'LaneBatch', NEXT);
+    assert.doesNotMatch(src, /onDecide: \(\) => \{\}/, 'the group lists cards whose buttons do nothing');
+    const calls = [];
+    const decide = (id, d) => { calls.push(id + ':' + d); return { then: f => f() }; };
+    const item = { approval_id: 'w1', title: 'Fix a line', action_description: 'correct_wiki {"new_text":"mars is red"}',
+      provenance: { flags: [{ arg: 'new_text', value: 'mars is red', source: 'a web page' }] } };
+    const render = mount(fn(file, 'LaneBatchItem', NL + 'function LaneBatch('), 'LaneBatchItem', {
+      React: expandingReact, useDeciding: () => false, fridayDecideApproval: decide, fridayMarkOutside: fridayMark(file) });
+    let rejected = 0;
+    const tree = render({ it: item, onRejected: () => { rejected++; } });
+    const marked = nodes(tree, 'mark').map(m => m.children.join(''));
+    assert.ok(marked.includes('mars is red'), 'the outside text is not marked: ' + JSON.stringify(marked));
+    assert.match(words(tree), /From a web page: /);
+    const parts = fridayMark(file)('say mars is red now', [{ value: 'mars is red' }, { value: 'mars is red' }, { value: 'x' }]);
+    assert.deepEqual(parts.map(x => typeof x === 'string' ? x : '<' + x.children.join('') + '>'), ['say ', '<mars is red>', ' now'], 'outside text is not marked in place');
+    const reject = nodes(tree, 'button').find(b => b.props['data-testid'] === 'lane-batch-reject-one');
+    assert.ok(reject && !reject.props.disabled, 'no Reject this one button');
+    reject.props.onClick();
+    assert.deepEqual(calls, ['w1:deny']);
+    assert.equal(rejected, 1, 'the group did not refresh after one was rejected');
+    assert.ok(nodes(render({ it: item }), 'button').length >= 1);
+  });
+  check(file + ': deciding a group sends one request per group, other groups are free, and a refusal says why', async () => {
+    const posts = [], toasts = [], pending = {};
+    const { fridayDeciding } = loadDecide(file, pageWorld());
+    const f = new Function('fetch', 'fridayToast', 'fridayName', 'fridayApprovalFeed', 'fridayDeciding',
+      fn(file, 'fridayDecideBatch', NL + '// The text with every detail') + NL + 'return fridayDecideBatch;')(
+      (url, o) => new Promise(res => { posts.push(decodeURIComponent(url.split('/')[4])); pending[posts.length - 1] = body => res({ json: () => Promise.resolve(body) }); }),
+      t => toasts.push(t), () => 'Friday', { drop() {} }, fridayDeciding);
+    f(batchOf(['w1', 'w2']), 'approve'); f(batchOf(['w1', 'w2']), 'approve'); f(batchOf(['w3', 'w4']), 'deny');
+    assert.equal(posts.length, 2, 'one group sent twice, or another group was frozen');
+    assert.deepEqual(toasts, ['Already working on that one.']);
+    pending[0]({ ok: false, error: 'nope', message: 'That group is not what it was.' }); await tick(); await tick();
+    assert.ok(toasts.includes('That group is not what it was.'), 'a refusal said nothing: ' + JSON.stringify(toasts));
+    assert.equal(fridayDeciding.get(batchOf(['w1', 'w2']).batch_id), undefined, 'the group stays busy after it settled');
+  });
+}
+check('index.html and ui_parts/app.html carry the same grouped-card code', () => {
+  for (const [name, end] of [['fridayDecideBatch', NL + '// The text with every detail'], ['fridayMarkOutside', NL + 'function LaneBatchItem('],
+    ['LaneBatchItem', NL + 'function LaneBatch('], ['LaneBatch', NL + '// How the tray\'s pending cards group'],
+    ['useApprovalPlan', NL + '// The tray\'s list'], ['ApprovalTrayList', NEXT]]) {
+    assert.equal(fn('index.html', name, end), fn('ui_parts/app.html', name, end), name + ' differs between the page files');
+  }
+});
+function fridayMark(file) {
+  return new Function('React', fn(file, 'fridayMarkOutside', NL + 'function LaneBatchItem(') + NL + 'return fridayMarkOutside;')(expandingReact);
+}
 
 (async () => {
   let failed = 0;
