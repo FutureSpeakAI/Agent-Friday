@@ -54,9 +54,12 @@ test('Start My Day opens News on the written briefing it speaks, and the section
   await expect(reader.locator('a[href="https://calendar.example.test/event?eid=ev1"]')).toHaveCount(1);
   await expect(reader).not.toContainText('made up, with no id');
   await page.screenshot({ path: info.outputPath('briefing.png') });
+  await reader.getByText("Didn't run: events-horizon is not installed.").scrollIntoViewIfNeeded();
+  await page.screenshot({ path: info.outputPath('briefing-end.png') });   // the "Didn't run" and dropped-count lines
 
   await reader.getByRole('button', { name: '← Back' }).click();
-  await page.getByRole('button', { name: /Customize/ }).click();
+  // News' own "⚙ Customize" (the window's toolbar also has a "Customize News" button).
+  await page.getByRole('button', { name: '⚙ Customize', exact: true }).click();
   const list = page.getByTestId('briefing-section-skills');
   await expect(list).toContainText('events-horizon · not installed · every day');
   const outing = list.locator('[data-skill="family-outing"] [role="switch"]');
