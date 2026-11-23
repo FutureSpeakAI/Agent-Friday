@@ -113,9 +113,10 @@ def test_the_stated_numbers_keep_an_inference_that_agrees(monkeypatch):
 
 
 def test_when_two_stated_things_disagree_an_inference_either_one_contradicts_is_left_out(monkeypatch):
-    # Slider 22 but the Settings word is professional (changed later, or the first-run save never landed): the
-    # inference may not side with one statement against the other, so a casual reading is not put in the prompt.
-    monkeypatch.setattr(core, "_load_settings", settings("professional", "standard"))
+    # Slider 22 but the Settings word was changed to technical later: the inference may not side with one statement
+    # against the other, so a casual reading is not put in the prompt. (The default "professional" would state
+    # nothing: test_a_default_setting_is_not_a_statement.)
+    monkeypatch.setattr(core, "_load_settings", settings("technical", "standard"))
     monkeypatch.setattr(setup_profile, "load_profile", stated(22, 85))
     infer("casual", "detail")
     out = um.render_user_model_prompt()

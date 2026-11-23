@@ -13,7 +13,9 @@ from agent_friday.services import task_journal
 
 @pytest.fixture(autouse=True)
 def _home(tmp_path, monkeypatch):
+    from agent_friday.services import model_router
     monkeypatch.setattr(core, "FRIDAY_DIR", tmp_path)
+    monkeypatch.setattr(model_router, "FRIDAY_DIR", tmp_path)      # the FRIDAY STATE block reads its own copy
     monkeypatch.setattr(task_journal, "BASE_DIR_OVERRIDE", tmp_path / "tasks")
     monkeypatch.setattr(ps, "_BEGUN", False)
     (tmp_path / ".setup_complete").write_text("", encoding="utf-8")   # first run is over
