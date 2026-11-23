@@ -42,8 +42,21 @@ def test_a_change_with_the_brain_parked_says_it_waits_for_the_end_of_the_call(mo
     ack = plan["ack"].lower()
     assert plan["tool"] == "delegate_to_friday"
     assert plan["ack"] == rv.PARKED_ACK
-    assert "after" in ack and "call" in ack and "approval" in ack
+    assert "after" in ack and "call" in ack
     assert "report back" not in ack
+
+
+@pytest.mark.parametrize("reason", [
+    "an imperative that changes something",
+    "a follow-up with no earlier look-up",
+    "Laya's own learning controls",
+])
+def test_the_parked_line_promises_no_approval_step_whatever_the_defer_reason(monkeypatch, spawned, reason):
+    monkeypatch.setattr(ve, "_brain_serving", lambda: None)
+    route = lambda text, **kw: lr.Route("defer", layer="rule", confidence=0.95, reason=reason)
+    plan = rv._voice_route_plan("any from Sam", ["delegate_to_friday"], route_fn=route, session=PRIVATE)
+    assert plan["ack"] == rv.PARKED_ACK
+    assert "approval" not in plan["ack"].lower(), "a deferred read raises no card, so the line may not promise one"
 
 
 @pytest.mark.parametrize("session,serving", [

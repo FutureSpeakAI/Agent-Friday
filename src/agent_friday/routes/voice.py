@@ -3043,10 +3043,10 @@ def _build_front_speaker_prompt(settings=None, model_label=None):
 #: is the deeper mind's business (it may wait for the call to end), so the
 #: words promise a report, not an outcome.
 DEFER_ACK = "I'll hand that to my deeper mind; it'll report back."
-#: The same hand-off while the call has the brain parked: nothing runs until the call ends. Held by
+#: The same hand-off while the call has the brain parked: nothing runs until the call ends. It promises only the
+#: wait, since a deferred turn may be a read that raises no card. Held by
 #: tests/unit/test_voice_parked_brain_is_honest.py.
-PARKED_ACK = ("I can't do that during this call. I'll do it after we finish, once my deeper mind is back, "
-              "and it will ask for your approval first.")
+PARKED_ACK = "I can't do that during this call. I'll do it after we finish, once my deeper mind is back."
 
 
 def _lr_follow_turns() -> int:
