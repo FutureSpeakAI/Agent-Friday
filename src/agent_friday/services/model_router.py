@@ -3654,7 +3654,7 @@ def _log_policy_failure():
 
 
 def memory_head_blocks(workspace='', freeze_key=None, *, provider='local',
-                       vault_control=None, vault_fallback='redact', model='') -> str:
+                       vault_control=None, vault_fallback='redact', model='', origin=None) -> str:
     """The memory section of the prompt head: KINDS OF INFORMATION (the
     standing instruction on how to speak about each kind, NS-3.4-1; always
     first, gate-exempt), then CORE MEMORY, USER MODEL and LEARNED HEURISTICS.
@@ -3687,22 +3687,34 @@ def memory_head_blocks(workspace='', freeze_key=None, *, provider='local',
         pass
     out = "\n\n" + _kk.KINDS_SECTION + "\n"
 
+    # ONE rule (core_memory.user_lines_visible) says whether this reader sees the lines about the owner; the
+    # update_core_memory tool asks the same function, so the prompt and the tool cannot disagree. Not visible: the lines
+    # are gated as TIER_2 when a vault control is at hand, and withheld outright when none is (never raw).
+    # The origin of the turn counts too: an answer that leaves by text message or a chat service is withheld from whichever
+    # model writes it. `origin` None reads the turn's (agent._generate_agent sets it before any prompt is built).
     gate_fn, gate_key = None, "ungated"
-    if vault_control is not None:
-        try:
-            if not vault_control.can_access(provider, model):
-                from agent_friday.privacy.vault_access import Tier as _Tier
+    try:
+        from agent_friday.services import core_memory as _cm
+        if origin is None:
+            from agent_friday.services import agent as _agent
+            origin = _agent._CURRENT_ORIGIN.get() or ""
+        _visible = _cm.user_lines_visible(provider, model, origin)
+    except Exception:
+        _visible = False
+    if not _visible:
+        gate_key = "cloud-gated"
 
-                def gate_fn(text):
-                    # Personal by default (fail closed, like the wiki).
-                    return vault_control.gate_content(
-                        text, provider, tier=_Tier.PRIVATE, fallback=vault_fallback,
-                        detail="core-memory", model=model)
-                gate_key = "cloud-gated"
-        except Exception:
-            def gate_fn(text):
+        def gate_fn(text):
+            # Personal by default (fail closed, like the wiki): the vault gate's redaction when there is one, else
+            # nothing. The gate decides by provider alone, so it hands a local provider the raw text; this reader may
+            # not see it, so raw text is never kept.
+            if vault_control is None:
                 return ""
-            gate_key = "cloud-gated"
+            from agent_friday.privacy.vault_access import Tier as _Tier
+            gated = vault_control.gate_content(
+                text, provider, tier=_Tier.PRIVATE, fallback=vault_fallback,
+                detail="core-memory", model=model)
+            return "" if gated == text else gated
 
     def _core():
         from agent_friday.services import core_memory

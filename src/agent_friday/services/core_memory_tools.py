@@ -146,10 +146,12 @@ def _owner_decided() -> bool:
 
 
 def _cloud_reader() -> bool:
-    """The result goes to a model that is not KNOWN to be on this PC."""
+    """The lines about the owner are withheld from the model reading this turn. Asks the ONE rule the prompt builder uses
+    (core_memory.user_lines_visible), with this turn's provider, model and origin."""
     try:
-        from agent_friday.services.library.tools import _loop_is_local
-        return not _loop_is_local()
+        from agent_friday.services import agent as _agent
+        return not core_memory.user_lines_visible(
+            _agent._CURRENT_PROVIDER.get(), _agent._CURRENT_MODEL.get() or "", _agent._CURRENT_ORIGIN.get() or "")
     except Exception:
         return True
 
@@ -210,6 +212,9 @@ def _tool_update_core_memory(inp=None) -> str:
         return "NOT DONE: action is add, replace, remove or show."
     if target not in core_memory.TARGETS:
         return "NOT DONE: target is user or friday."
+    if cloud and target == "user" and action in ("replace", "remove"):
+        # The line may well exist; this reader may not see it. Never "no entry contains that text".
+        return "NOT CHANGED: " + core_memory.WITHHELD_ERROR
     if (action in ("add", "replace") and not _owner_decided()
             and _off_record_turn(_ctx(), "update_core_memory")):
         # NS-15.8-2: an off-record turn teaches Friday nothing. Nothing is

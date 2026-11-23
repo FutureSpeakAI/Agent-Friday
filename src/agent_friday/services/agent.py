@@ -705,8 +705,17 @@ def _generate_agent(*args, **kwargs):
     """
     from agent_friday.services import reasoning_trace as _rt_scope
     _label = kwargs.get("orb_label") or kwargs.get("workspace") or "Background model call"
-    with _cloud_intent.preserve_scope(), _rt_scope.scope("background", str(_label)):
-        return _generate_agent_untraced(*args, **kwargs)
+    # Where this turn came from (a text message, a chat service) is known for the WHOLE turn, not only inside each tool
+    # call: the prompt each leg's `system_builder` builds asks it too (core_memory.user_lines_visible), so the lines a
+    # tool withholds from this turn never reach its prompt.
+    _origin = str((kwargs.get("session_ctx") or {}).get("origin") or "")
+    _origin_tok = _CURRENT_ORIGIN.set(_origin) if _origin else None
+    try:
+        with _cloud_intent.preserve_scope(), _rt_scope.scope("background", str(_label)):
+            return _generate_agent_untraced(*args, **kwargs)
+    finally:
+        if _origin_tok is not None:
+            _CURRENT_ORIGIN.reset(_origin_tok)
 
 
 # ── Claude Tool-Use Agent ─────────────────────────────────────
