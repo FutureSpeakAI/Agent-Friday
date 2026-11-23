@@ -35,6 +35,7 @@ def _clean(tmp_path, monkeypatch):
     household.ensure_default_members()
     monkeypatch.setattr(tailnet, "_cli", lambda *a, **k: None)
     tailnet.stop()
+    device_pairing.open_pairing_window(900)          # the owner has opened pairing at the PC
     yield
     tailnet.stop()
     device_pairing._reset_for_tests()
