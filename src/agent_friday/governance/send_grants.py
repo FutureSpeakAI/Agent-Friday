@@ -1263,7 +1263,9 @@ def use_refusal(tool_name: str, args, ctx=None) -> str:
     try:
         tier = content_tier(args)
     except Exception as e:
-        return "the sensitivity check could not run (%s), so the pre-approval does not cover it" % e
+        # the exception's type, never its text: the text can quote the message being screened, and this reason is
+        # written to the ledger (tests/unit/test_send_grants_use_refusal_text.py)
+        return "the sensitivity check could not run (%s), so the pre-approval does not cover it" % type(e).__name__
     if tier != 1:
         return SENSITIVE_WHY % ({2: "TIER_2", 3: "TIER_3"}.get(tier, "TIER_%s" % tier))
     return ""

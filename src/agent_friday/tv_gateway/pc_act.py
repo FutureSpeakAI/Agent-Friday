@@ -185,6 +185,11 @@ def register(app: Flask) -> None:
             return refuse(400, "not a job id", code="bad_id")
         return pc_read._json_from_desk("/api/tasks/%s/resumable" % jid, None, "job_resumable")
 
+    from agent_friday.tv_gateway import pc_wiki      # wiki edits ride this same owner-act door
+    pc_wiki.register(app)
+    from agent_friday.tv_gateway import pc_userws    # and the saved workspaces
+    pc_userws.register(app)
+
     @app.get("/tv/v1/jobs/<jid>/events")
     def pc_job_events(jid):
         denied = pc_read._guard("jobs")
