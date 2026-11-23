@@ -266,7 +266,13 @@ def wiki_edit():
             return jsonify({"status": "error", "locked": True,
                             "message": "This page is encrypted and the vault is locked. "
                                        "Unlock the vault before editing it."}), 409
-        _mirror_wiki_file(file, content)
+        from agent_friday.services.agent import VaultKeyMissing
+        try:
+            _mirror_wiki_file(file, content)
+        except VaultKeyMissing as exc:
+            # a locked section with no key: nothing was written, and the owner gets the one plain line
+            # (tests/api/test_wiki_encryption.py)
+            return jsonify({"status": "error", "message": exc.user_message}), 409
     return jsonify({"status": "ok", "saved": file, "bytes": len(content)})
 
 

@@ -93,3 +93,13 @@ def test_wiki_search_finds_text_in_encrypted_files(health_encrypted, client):
     hits = resp.get_json().get("results", [])
     assert any("searchable" in (h.get("file") or h.get("path") or "")
                for h in hits), f"encrypted file missing from search: {hits}"
+
+
+def test_the_page_editor_save_says_it_did_not_save_when_the_locked_section_has_no_key(health_encrypted, client, monkeypatch):
+    # follow-up from the #1051 critic: the refusal reached the editor as a generic 500; it is the owner's plain line, 409
+    monkeypatch.setattr(agent_mod, "_get_vault_key", lambda: None)
+    r = client.put("/api/wiki/edit", json={"file": "health/nokey-editor.md", "content": "# a private note\n"})
+    assert r.status_code == 409, r.get_data(as_text=True)[:300]
+    body = r.get_json()
+    assert body["status"] == "error" and "plain text" in body["message"] and "Not saved" in body["message"]
+    assert not (WIKI_DIR / "health" / "nokey-editor.md").exists()
