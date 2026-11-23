@@ -5355,6 +5355,7 @@ OWN_PAGE_ENDPOINTS = frozenset({
     "core_routes.serve_friday_live",
     "doctor.doctor_page",
     "ledger.ledger_page",
+    "laya_labels_page.labels_page",
     "login",
 })
 

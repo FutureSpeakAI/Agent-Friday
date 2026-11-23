@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Teach Laya</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  body { background:#04070e; color:#dfe7ef; font:16px/1.5 system-ui, sans-serif; margin:0; padding:20px 16px; }
+  main { max-width:640px; margin:0 auto; }
+  h1 { font-size:20px; color:#00d4ff; margin:0 0 4px; }
+  p.lead { color:#9aa8b8; margin:0 0 16px; }
+  .bar { height:6px; background:rgba(255,255,255,0.08); border-radius:3px; margin:0 0 6px; }
+  .bar > i { display:block; height:100%; background:#00d4ff; border-radius:3px; width:0; }
+  .count { color:#9aa8b8; font-size:13px; margin:0 0 16px; }
+  .card { border:1px solid rgba(0,212,255,0.25); border-radius:10px; padding:16px; }
+  .item { font-size:17px; margin:0 0 6px; word-break:break-word; }
+  .kind { color:#9aa8b8; font-size:12px; margin:0 0 14px; }
+  .ask { font-size:18px; font-weight:600; margin:0 0 14px; }
+  .row { display:flex; gap:10px; }
+  button { flex:1; min-height:52px; font:inherit; font-weight:600; border-radius:8px; cursor:pointer;
+           background:rgba(0,212,255,0.12); color:#00d4ff; border:1px solid rgba(0,212,255,0.45); }
+  button.skip { background:transparent; color:#9aa8b8; border-color:rgba(255,255,255,0.2); }
+  button:focus-visible { outline:2px solid #fbbf24; outline-offset:2px; }
+  button[disabled] { opacity:0.5; cursor:default; }
+  .note { color:#9aa8b8; font-size:12px; margin:14px 0 0; min-height:1.4em; }
+  .err { color:#fbbf24; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Teach Laya</h1>
+  <p class="lead">A few real items from your own notifications and news. Your answers stay on this PC.
+    There is no wrong answer; skip anything you are unsure of.</p>
+  <div class="bar" aria-hidden="true"><i id="fill"></i></div>
+  <p class="count" id="count" role="status">Loading…</p>
+  <section class="card" id="card" hidden>
+    <p class="item" id="item" aria-live="polite"></p>
+    <p class="kind" id="kind"></p>
+    <p class="ask" id="ask"></p>
+    <div class="row">
+      <button id="yes" type="button">Yes</button>
+      <button id="no" type="button">No</button>
+      <button id="skip" type="button" class="skip">Skip</button>
+    </div>
+    <p class="note" id="note" role="status"></p>
+  </section>
+</main>
+<script>
+(function () {
+  var tok = window.__FRIDAY_API_TOKEN || '';
+  var $ = function (id) { return document.getElementById(id); };
+  var items = [], total = 0, answered = 0, busy = false;
+  var KIND = { disagree: 'Laya and the usual rules read this differently.', edge: 'A close call for Laya.' };
+
+  function api(path, opts) {
+    var o = opts || {};
+    o.cache = 'no-store';
+    o.headers = Object.assign({ 'X-Friday-Token': tok, 'Content-Type': 'application/json' }, o.headers || {});
+    return fetch(path, o).then(function (r) { return r.json(); });
+  }
+  function say(text, bad) { var n = $('note'); n.textContent = text; n.className = 'note' + (bad ? ' err' : ''); }
+  function show() {
+    var done = total ? Math.round(100 * answered / total) : 0;
+    $('fill').style.width = done + '%';
+    if (!items.length) {
+      $('card').hidden = true;
+      $('count').textContent = total ? ('All ' + total + ' answered. Thank you.') : 'Nothing is waiting for an answer.';
+      return;
+    }
+    var it = items[0];
+    $('card').hidden = false;
+    $('count').textContent = (answered + 1) + ' of ' + total;
+    $('item').textContent = it.text;
+    $('kind').textContent = KIND[it.kind] || '';
+    $('ask').textContent = it.question;
+  }
+  function load() {
+    return api('/api/decisions/triage_queue').then(function (d) {
+      if (d.status !== 'ok') throw new Error(d.message || 'Could not load the questions.');
+      items = d.items || []; total = d.total || 0; answered = d.answered || 0; show();
+    }).catch(function (e) { $('count').textContent = ''; say(e.message || 'Could not load the questions.', true); });
+  }
+  function send(choice) {
+    if (busy || !items.length) return;
+    busy = true; say('');
+    ['yes', 'no', 'skip'].forEach(function (id) { $(id).disabled = true; });
+    var body = JSON.stringify({ subject: items[0].id, answer: choice });
+    api('/api/decisions/triage_labels', { method: 'POST', body: body })
+      .then(function (d) {
+        if (d.status !== 'ok') throw new Error(d.message || 'Could not save that answer.');
+        items.shift(); answered += 1; show(); say('Saved. Receipt ' + d.receipt + '.');
+      })
+      .catch(function (e) { say(e.message || 'Could not save that answer.', true); })
+      .then(function () {
+        busy = false;
+        ['yes', 'no', 'skip'].forEach(function (id) { $(id).disabled = false; });
+        if (items.length) $('yes').focus();
+      });
+  }
+  $('yes').addEventListener('click', function () { send('yes'); });
+  $('no').addEventListener('click', function () { send('no'); });
+  $('skip').addEventListener('click', function () { send('skip'); });
+  load();
+})();
+</script>
+</body>
+</html>
