@@ -20,8 +20,8 @@ from datetime import datetime, timezone
 
 from flask import Flask, Response, jsonify, request
 
-from agent_friday.tv_gateway import (pc_read, ws_adapter, ws_calendar, ws_device, ws_knowledge, ws_news, ws_news_later,
-                                     ws_people)
+from agent_friday.tv_gateway import (pc_read, ws_adapter, ws_calendar, ws_crew, ws_device, ws_knowledge, ws_news,
+                                     ws_news_later, ws_people)
 
 _log = logging.getLogger(__name__)
 
@@ -31,6 +31,7 @@ QUERY_MAX = 200
 MAX_BODY = 256 * 1024
 
 ADAPTERS = {"knowledge": {"pages": ws_knowledge, "people": ws_people}, "calendar": {"agenda": ws_calendar},
+            "crew": {"roster": ws_crew},
             "news": {"latest": ws_news, "later": ws_news_later}}
 
 
