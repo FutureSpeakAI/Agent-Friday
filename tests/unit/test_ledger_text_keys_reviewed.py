@@ -3,7 +3,7 @@
 FREE_TEXT_KEYS is a deny list; a new writer that puts words under a new key would leak them into an export unless the key is
 added there. This test reads every `<ledger>.append("kind", {...})` call in src/ and fails on a key that is in neither set, so
 the author has to decide (hide it, or say here why it is structure). A key in STRUCTURE that holds text is a review error. It sees literal dicts handed to append/try_append and to the ledger's own
-_append_locked; a record built in a variable (decision `entry`, goal `receipt`) or passed as keyword arguments
+_append_locked / _guarded_append (literal lists); a record built in a variable (decision `entry`, goal `receipt`) or passed as keyword arguments
 (send_grants._log) is not seen, so those writers are reviewed by hand.
 It can fail: remove a key from STRUCTURE and it names it (test_the_guard_names_an_unclassified_key)."""
 import ast
@@ -22,6 +22,8 @@ STRUCTURE = frozenset({
     # `kept_as` the digest-named copy it was set aside as; none carries owner text
     "after_days", "file_sha256", "finished", "first_seq", "imported", "kept_as", "last_hash", "last_seq", "lines",
     "records", "segments", "store", "through", "unreadable",
+    # integrity_ack (_guarded_append): `problems` is [{key, seq, reason}], the ledger problems the owner accepted: names and numbers
+    "problems",
     "terminal", "tool", "verified", "list", "made_by", "goal_id", "kept", "label", "kind"})
 SRC = Path(__file__).resolve().parents[2] / "src"
 
@@ -34,8 +36,9 @@ def _literal_keys(source: str) -> set:
                 and isinstance(node.args[1], ast.Dict)
                 and any(w in ast.unparse(node.func.value) for w in ("ledger", "_al", "al", "L"))):
             found |= {k.value for k in node.args[1].keys if isinstance(k, ast.Constant) and isinstance(k.value, str)}
-        # the ledger's own internal writes: _append_locked(key, [("kind", {...}), ...], durable)
-        if (isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "_append_locked"
+        # the ledger's own internal writes: _append_locked / _guarded_append(key, [("kind", {...}), ...], durable)
+        if (isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+                and node.func.id in ("_append_locked", "_guarded_append")
                 and len(node.args) >= 2 and isinstance(node.args[1], ast.List)):
             for item in node.args[1].elts:
                 if (isinstance(item, ast.Tuple) and len(item.elts) == 2 and isinstance(item.elts[1], ast.Dict)):
@@ -62,6 +65,12 @@ def test_the_guard_also_reads_the_ledgers_own_internal_writes():
     # critic on #1051: legacy_reappeared is written through _append_locked, which the append-only scan never saw
     src = '_append_locked(key, [("legacy_reappeared", {"store": kind, "from": _rel(p), "kept_as": kept})], True)'
     assert _literal_keys(src) == {"store", "from", "kept_as"}
+
+
+def test_the_guard_also_reads_guarded_append_with_a_literal_list():
+    # critic on #1064: integrity_ack is written through _guarded_append, which the extractor did not match
+    src = '_guarded_append(key, [("integrity_ack", {"problems": items, "by": by, "note": note})], True)'
+    assert _literal_keys(src) == {"problems", "by", "note"}
 
 
 def test_the_guard_names_an_unclassified_key():
