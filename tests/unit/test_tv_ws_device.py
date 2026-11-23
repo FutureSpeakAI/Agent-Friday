@@ -104,7 +104,7 @@ def test_the_detail_route_sends_the_block_and_each_verbs_placement(read):
 
 
 def test_a_workspace_with_no_block_sends_none_and_places_nothing(read):
-    got = read("calendar").get_json()
+    got = read("career").get_json()
     assert got["device"] is None and got["actions_here"] is False
     assert all(v["placed"] == [] for v in got["verbs"])
 
@@ -116,7 +116,7 @@ def test_actions_here_is_false_while_the_pc_serves_no_act_route(read):
 def test_actions_here_is_true_once_the_act_route_is_served(read, monkeypatch):
     monkeypatch.setattr(pc_read, "_acts_live", lambda: True)
     assert read("knowledge").get_json()["actions_here"] is True
-    assert read("calendar").get_json()["actions_here"] is False      # no block, so nothing to act on
+    assert read("career").get_json()["actions_here"] is False      # no block, so nothing to act on
 
 
 def test_the_act_route_probe_sees_a_verbs_rule_and_nothing_else():

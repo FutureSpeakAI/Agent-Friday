@@ -54,12 +54,13 @@ def test_read_tolerates_both_states(health_encrypted):
     assert we.wiki_read_text(plain) == "legacy plaintext note"
 
 
-def test_no_key_degrades_to_plaintext_write(health_encrypted, monkeypatch):
+def test_no_key_refuses_the_write_instead_of_storing_plain_text(health_encrypted, monkeypatch):
+    # threat assessment fix #2: a section the owner locked is never written as plain text because a key is missing
     monkeypatch.setattr(agent_mod, "_get_vault_key", lambda: None)
     p = WIKI_DIR / "health" / "nokey.md"
-    we.wiki_write_text(p, "written without a key")
-    assert not vc.is_encrypted(p.read_bytes())
-    assert we.wiki_read_text(p) == "written without a key"
+    with pytest.raises(agent_mod.VaultKeyMissing):
+        we.wiki_write_text(p, "written without a key")
+    assert not p.exists()
 
 
 def test_startup_migration_encrypts_existing_files(health_encrypted):
