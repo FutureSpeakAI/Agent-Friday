@@ -38,8 +38,14 @@ async function seed(page: Page) {
 }
 
 async function alwaysShow(page: Page) {
-  const r = await page.request.post(`${BASE}/api/settings`, { data: { settings: { landing_mode: 'always' } } });
-  expect(r.ok()).toBeTruthy();
+  // The start screen always shows: the page READS landing_mode 'always' (the scratch settings are not written).
+  await page.route('**/api/settings', async r => {
+    if (r.request().method() !== 'GET') return r.continue();
+    const res = await r.fetch();
+    const body = await res.json();
+    body.settings = { ...(body.settings || {}), landing_mode: 'always' };
+    return r.fulfill({ response: res, json: body });
+  });
   // Past first run (its own screen covers the start screen, as in headings.spec.ts), on the classic start screen:
   // the countdown cluster is not drawn in the Simple home (static/friday_display_style.js).
   await page.route('**/api/setup/status', r => r.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ initialized: true }) }));
@@ -130,6 +136,11 @@ test('a hidden countdown stays hidden after a reload and is written to the setti
   await expect(page.locator('[data-testid="countdowns"] .greeting-ticker-item')).toHaveCount(3);
   await expect(page.locator('[data-testid="countdowns"]')).not.toContainText("Dana's birthday");
 
-  // leave the scratch home as the next test expects it
-  await page.request.post(`${BASE}/api/settings`, { data: { settings: { dismissed_countdowns: {} } } });
+  // bring it back the way the owner would, which also leaves the scratch home as the next test expects it
+  await page.getByTestId('countdowns-unhide').click();
+  await expect(page.locator('[data-testid="countdowns"] .greeting-ticker-item')).toHaveCount(4);
+  await expect.poll(async () => {
+    const got = await (await page.request.get(`${BASE}/api/settings`)).json();
+    return Object.keys((got.settings || {}).dismissed_countdowns || {});
+  }).toEqual([]);
 });
