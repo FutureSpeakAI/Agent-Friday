@@ -136,9 +136,11 @@ def create_app(tailnet: bool = False) -> Flask:
         try:
             spki = base64.b64decode(str(body.get("device_spki", "")), validate=True)
             return jsonify({"ok": True, **pairing.start(spki, str(body.get("name", "TV")),
-                                                        str(body.get("kind") or "tv"))})
+                                                        str(body.get("kind") or "tv"),
+                                                        remote=request.remote_addr or "")})
         except pairing.PairingRefused as e:
-            return _refuse(400 if str(e) == "unknown device kind" else 409, str(e))
+            return _refuse(400 if str(e) == "unknown device kind" else 409, str(e),
+                           **({"code": e.code} if e.code else {}))
         except ValueError:
             return _refuse(400, "bad key encoding")
 
