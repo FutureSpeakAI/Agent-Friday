@@ -1706,6 +1706,18 @@ _DELEGATE_PROMPT = ("The user asked for this in a live voice conversation. Do it
                     "plain sentences that can be spoken aloud.\n\nRequest: ")
 
 
+def _private_local_call(session) -> bool:
+    """A local voice call whose deep work stays on this PC (Private routing, or local-only mode)."""
+    return _local_session(session) and (_async_routing(session) == "local_only" or _voice_local_only())
+
+
+def delegate_waits_for_call_end(session) -> bool:
+    """True when work handed to the deeper mind is queued until the call ends (the brain is parked for the call).
+    The one predicate behind both the queue in _tool_delegate_to_friday and the spoken line that says so
+    (routes/voice.py); held by tests/unit/test_voice_parked_brain_is_honest.py."""
+    return _private_local_call(session) and _brain_serving() is None
+
+
 def _tool_delegate_to_friday(inp, session=None):
     """Hand a spoken request to the full agent as a background task.
 
@@ -1720,8 +1732,7 @@ def _tool_delegate_to_friday(inp, session=None):
     request = str(inp.get("request") or "").strip()
     if not request:
         return "delegate_to_friday needs the request itself. Ask the user what they want done."
-    if _local_session(session) and (_async_routing(session) == "local_only"
-                                    or _voice_local_only()):
+    if _private_local_call(session):
         # Private voice (or local-only mode): the work runs on the local
         # brain, pinned to it, or waits for the end of the call when the
         # brain is parked for it. Never a cloud leg (local voice spec P3).
