@@ -100,15 +100,29 @@ def test_a_workspace_with_no_document_is_404_never_an_empty_view(client):
         assert dev.get("/tv/v1/workspaces/%s/view" % ws).status_code == 404, ws
 
 
-def test_a_view_is_served_only_where_the_section_its_data_comes_from_is_declared(client, monkeypatch):
-    # the broker reads the "pages" section; a device block that declares other sections only serves no view
+def _serve_without_pages(monkeypatch):
+    """Knowledge served with every section but "pages" (the one its view reads). "people" stays in, so the
+    workspace itself is still served and only the view's section is missing."""
     from agent_friday.tv_gateway import ws_content
     real = ws_content._serving
 
     def without_pages(ws):
         got = real(ws)
-        return None if got is None else ({k: v for k, v in got[0].items() if k != "pages"} or {"people": object()}, got[1])
+        if got is None:
+            return None
+        rest = {k: v for k, v in got[0].items() if k != "pages"}
+        assert rest, "knowledge must keep a section besides pages for this test to mean anything"
+        return rest, got[1]
     monkeypatch.setattr(ws_content, "_serving", without_pages)
+
+
+def _knowledge_row(dev):
+    return next(w for w in dev.get("/tv/v1/workspaces").get_json()["workspaces"] if w.get("id") == "knowledge")
+
+
+def test_a_view_is_served_only_where_the_section_its_data_comes_from_is_declared(client, monkeypatch):
+    # the broker reads the "pages" section; a device block that declares other sections only serves no view
+    _serve_without_pages(monkeypatch)
     assert Enrolled(client).get(VIEW).status_code == 404
 
 
@@ -122,8 +136,7 @@ def test_a_pc_that_cannot_read_its_wiki_is_503(client, monkeypatch):
 
 def test_the_workspace_list_marks_the_a2ui_ones(client):
     dev = Enrolled(client)
-    items = dev.get("/tv/v1/workspaces").get_json()
-    rows = items.get("workspaces") or items.get("items") or items.get("rows")
+    rows = dev.get("/tv/v1/workspaces").get_json()["workspaces"]
     kn = next(w for w in rows if w.get("id") == "knowledge")
     assert kn.get("renderer") == "a2ui"
     assert all(w.get("renderer") in (None, "legacy") for w in rows if w.get("id") != "knowledge")
@@ -131,18 +144,20 @@ def test_the_workspace_list_marks_the_a2ui_ones(client):
 
 def test_the_list_says_a2ui_only_where_the_view_answers(client, monkeypatch):
     # the marker and GET .../view share one rule: a block without the section the view reads gets the legacy screen
-    from agent_friday.tv_gateway import ws_content
-    real = ws_content._serving
-
-    def without_pages(ws):
-        got = real(ws)
-        return None if got is None else ({k: v for k, v in got[0].items() if k != "pages"} or {"people": object()}, got[1])
-    monkeypatch.setattr(ws_content, "_serving", without_pages)
+    _serve_without_pages(monkeypatch)
     dev = Enrolled(client)
-    items = dev.get("/tv/v1/workspaces").get_json()
-    rows = items.get("workspaces") or items.get("items") or items.get("rows")
-    assert next(w for w in rows if w.get("id") == "knowledge").get("renderer") == "legacy"
+    assert _knowledge_row(dev).get("renderer") == "legacy"
     assert dev.get(VIEW).status_code == 404
+
+
+def test_a_view_the_pc_cannot_read_lists_as_legacy_and_the_list_still_answers(client, monkeypatch):
+    # an unreadable manifest must not take the whole workspace list down, nor send the phone to a view that 503s
+    from agent_friday.tv_gateway import ws_content
+
+    def broken(ws):
+        raise OSError("manifest unreadable")
+    monkeypatch.setattr(ws_content, "view_block", broken)
+    assert _knowledge_row(Enrolled(client)).get("renderer") == "legacy"
 
 
 # ── the one-tap signed proposal ────────────────────────────────────────────

@@ -53,6 +53,7 @@ def test_a_workspace_with_no_document_is_404(client):
 
 
 def test_the_page_loads_the_shared_renderer(client):
+    # the browser end of this page is drawn in tests/app/specs/liquid_view_knowledge.spec.ts
     r = client.get("/liquid/knowledge")
     assert r.status_code == 200
     html = r.get_data(as_text=True)
@@ -105,3 +106,13 @@ def test_the_page_opens_only_where_its_data_call_answers(client, monkeypatch):
     from agent_friday.tv_gateway import ws_content
     monkeypatch.setattr(ws_content, "_serving", lambda ws: None)
     assert client.get("/liquid/knowledge").status_code == 404
+
+
+def test_the_page_is_503_when_the_device_block_cannot_be_read(client, monkeypatch):
+    from agent_friday.tv_gateway import ws_content
+
+    def broken(ws):
+        raise OSError("manifest unreadable")
+    monkeypatch.setattr(ws_content, "_serving", broken)
+    r = client.get("/liquid/knowledge")
+    assert r.status_code == 503 and b"friday_a2ui.js" not in r.get_data()
