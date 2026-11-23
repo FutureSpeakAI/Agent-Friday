@@ -336,6 +336,7 @@ def run_session(ws, device: dict, conversation_id: str = "", connect: Optional[C
                 finished.append(True)
                 ws.send(json.dumps({"type": "closed", "reason": reason, "code": code}))
 
+    from simple_websocket import ConnectionClosed
     client = None
     pump = None
     code, reason = "stopped", "The session ended."
@@ -382,7 +383,7 @@ def run_session(ws, device: dict, conversation_id: str = "", connect: Optional[C
             except _UpstreamGone:
                 bridge.close("upstream_ended", "The computer's voice session ended.")
                 break
-            except OSError:                             # the device's socket refused our answer
+            except (OSError, ConnectionClosed):         # the device's socket refused our answer
                 bridge.close("device_gone", "The device went away.")
                 break
             except Exception as e:

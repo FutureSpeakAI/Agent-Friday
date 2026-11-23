@@ -134,6 +134,11 @@ def test_a_device_that_is_not_the_owners_personal_device_is_403(client, kind, me
     assert r.status_code == 403 and r.get_json()["code"] == "owner_only"
 
 
+def test_the_owners_watch_is_refused_voice_with_the_pc(client):
+    r = _session_get(client, paired("watch", "stephen"))
+    assert r.status_code == 403 and r.get_json()["code"] == "owner_only"
+
+
 def test_a_bad_conversation_id_is_refused_before_the_upgrade(client):
     r = _session_get(client, paired("phone", "stephen"), conversation_id="../x")
     assert r.status_code == 400 and r.get_json()["code"] == "bad_request"
@@ -383,6 +388,10 @@ def test_a_session_opens_with_the_engine_pipes_audio_both_ways_and_closes_on_sto
     t, up = _run(ws, monkeypatch=monkeypatch)
     ws.inbox.put(b"\x00\x01" * 160)
     up.inbox.put(json.dumps({"type": "audio", "data": base64.b64encode(b"\x05\x00" * 8).decode()}))
+    for _ in range(100):                                         # the PC's audio is through before the stop
+        if b"\x05\x00" * 8 in ws.sent:
+            break
+        threading.Event().wait(0.02)
     ws.inbox.put(json.dumps({"type": "barge_in"}))
     ws.inbox.put(json.dumps({"type": "stop"}))
     t.join(5)
@@ -495,6 +504,21 @@ def test_still_allowed_reads_the_pairing_store_each_time(monkeypatch):
     assert vb.still_allowed("p1") is False
     store["p1"] = {"id": "p1", "kind": "watch"}
     assert vb.still_allowed("p1") is False
+
+
+def test_a_device_that_drops_while_being_answered_is_device_gone(monkeypatch):
+    from simple_websocket import ConnectionClosed
+
+    class _Gone(_Q):
+        def send(self, raw):
+            if isinstance(raw, str) and json.loads(raw).get("type") == "pong":
+                raise ConnectionClosed()
+            super().send(raw)
+    ws = _Gone()
+    t, _ = _run(ws, monkeypatch=monkeypatch)
+    ws.inbox.put(json.dumps({"type": "ping"}))
+    t.join(5)
+    assert not t.is_alive() and _texts(ws)[-1]["code"] == "device_gone"
 
 
 def test_a_failure_mid_session_is_not_reported_as_a_failed_start(monkeypatch):
