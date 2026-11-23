@@ -15,7 +15,7 @@ STRUCTURE = frozenset({
     "codes", "decision", "decision_hash", "decision_policy_version", "decision_seq", "duration_ms", "entries", "event",
     "failed", "grant", "index", "limit", "local_only_too", "manifest_sha256", "members", "ok", "outcome", "period",
     "policy_version", "provider", "range_end", "range_start", "reason", "seconds", "setting", "signed", "spend", "stage",
-    "answer", "status", "surface", "terminal", "tool", "verified", "list", "made_by", "goal_id", "kept", "label", "kind"})
+    "answer", "from", "to", "scope", "status", "surface", "terminal", "tool", "verified", "list", "made_by", "goal_id", "kept", "label", "kind"})
 SRC = Path(__file__).resolve().parents[2] / "src"
 
 

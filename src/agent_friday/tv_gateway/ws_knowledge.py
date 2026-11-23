@@ -6,7 +6,6 @@ page's raw file text never leaves. tests/unit/test_tv_ws_content.py holds the ru
 """
 from __future__ import annotations
 
-import json
 import re
 import threading
 import time
@@ -14,45 +13,23 @@ from collections import OrderedDict
 from datetime import datetime, timezone
 from typing import Optional
 
-from agent_friday.tv_gateway import pc_read, ws_blocks
+from agent_friday.tv_gateway import ws_blocks, ws_graph
+from agent_friday.tv_gateway.ws_adapter import Locked, Missing, Unavailable, desk_json as _desk
 
-SECTIONS = ("pages",)                         # people and graph arrive with their own adapters
+PREFIX = "page:"
 KIND = "page"
 REF = re.compile(r"^page:(?P<path>[^\x00-\x1f\\:*?\"<>|]{1,200}\.(?:md|txt))$", re.I)
 VAULT_LOCKED = "[vault-encrypted file"
 MAX_SOURCE = 1_000_000          # characters of one page parsed; the real wiki holds a 20 MB page
 PARSED_KEPT = 8
 PAGES_TTL_S = 5.0
+RELATIONS_MAX = 30
 _LIST: dict = {"key": None, "at": 0.0, "rows": []}
 _PARSED: "OrderedDict" = OrderedDict()
 _LOCK = threading.Lock()
 
 
-class Missing(Exception):
-    """No such page here."""
-
-
-class Locked(Exception):
-    """The page is encrypted and the PC's vault is locked."""
-
-
-class Unavailable(Exception):
-    """The PC could not read its wiki."""
-
-
-def _desk(path: str, params: Optional[dict] = None):
-    status, body, _ = pc_read._desk(path, params)
-    if status == 404:
-        raise Missing(path)
-    if status != 200:
-        raise Unavailable(path)
-    try:
-        data = json.loads(body)
-    except ValueError as e:
-        raise Unavailable(path) from e
-    if not isinstance(data, dict):
-        raise Unavailable(path)
-    return data
+FACETS = {"folder": lambda row: row["line"]}
 
 
 def ref_path(ref: str) -> str:
@@ -142,14 +119,25 @@ def item(ref: str, sensitivity: str, offset: int, limit: int) -> dict:
         raise Locked(ref)
     folder, _, filename = path.rpartition("/")
     parsed, truncated = _parsed(path, data.get("modified"), content, folder)
+    node, relations = _in_the_graph(path)
     window = parsed.blocks[offset:offset + limit]
     more = offset + limit < len(parsed.blocks)
     return {"rev": "p_%s" % int(data.get("modified") or 0), "ref": ref, "kind": KIND,
             "title": parsed.title or _title(filename.rsplit(".", 1)[0]), "lives_on": "pc",
             "sensitivity": sensitivity, "taint": None,
             "meta": [{"k": "Folder", "v": folder or "wiki"}, {"k": "Updated", "v": _iso(data.get("modified")) or ""}],
-            "blocks": window, "relations": [], "sources": parsed.sources if offset == 0 else [],
+            "blocks": window, "relations": relations, "node": node, "sources": parsed.sources if offset == 0 else [],
             "next": str(offset + limit) if more else None, "truncated": truncated}
+
+
+def _in_the_graph(path: str):
+    """(node id, relations) of the graph node that cites this page, or (None, []): the graph being down or having no
+    node for the page never hides the page."""
+    try:
+        node = ws_graph.node_of_page(path)
+        return (node, ws_graph.relations_of(node, RELATIONS_MAX)) if node else (None, [])
+    except (Missing, Unavailable):
+        return None, []
 
 
 def _parsed(path: str, modified, content: str, folder: str):
