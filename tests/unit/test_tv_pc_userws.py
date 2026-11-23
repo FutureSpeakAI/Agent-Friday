@@ -12,6 +12,7 @@ Rules guarded here, each with a case that fails if the check is removed:
 """
 import copy
 import json
+import time
 import pathlib
 
 import pytest
@@ -291,7 +292,10 @@ def test_a_deleted_workspace_comes_back_with_its_history_when_its_id_is_free(cli
 
 def test_two_deletes_in_the_same_second_keep_both_trash_entries(client, tmp_path, monkeypatch):
     tv = device()
-    monkeypatch.setattr("time.time", lambda: 1_800_000_000.0)
+    # Both deletes in one second: the clock is held at "now". A fixed far-future time would also put the device
+    # past its 30 days, and a device due to re-confirm is refused (tests/unit/test_device_reconfirm.py).
+    now = float(int(time.time()))
+    monkeypatch.setattr("time.time", lambda: now)
     for label in ("One", "Two"):
         save(client, tv, manifest(label=label))
         call(client, tv, "DELETE", "/tv/v1/workspaces/user/garden")
