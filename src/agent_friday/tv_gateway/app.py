@@ -93,12 +93,35 @@ def _check_depth(text) -> None:
             depth -= 1
 
 
+def _mark_too_deep() -> None:
+    try:
+        from flask import g
+        g.json_too_deep = True
+    except RuntimeError:                 # outside a request: nothing to mark
+        pass
+
+
+def json_was_too_deep() -> bool:
+    """True when this request's body was refused for nesting deeper than MAX_JSON_DEPTH."""
+    try:
+        from flask import g
+        return bool(getattr(g, "json_too_deep", False))
+    except RuntimeError:
+        return False
+
+
 def _bounded_json_provider(app):
     from flask.json.provider import DefaultJSONProvider
 
     class _BoundedJSON(DefaultJSONProvider):
         def loads(self, s, **kwargs):
-            _check_depth(s)
+            try:
+                _check_depth(s)
+            except ValueError:
+                # get_json(silent=True) reads this as "no JSON"; a route that answers too-deep JSON with its own rule
+                # (pc_userws: a 422) asks json_was_too_deep().
+                _mark_too_deep()
+                raise
             return super().loads(s, **kwargs)
 
     return _BoundedJSON(app)
