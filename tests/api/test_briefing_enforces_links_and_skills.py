@@ -49,6 +49,7 @@ def run(client, tmp_path, monkeypatch):
     monkeypatch.setattr(rn, "FRIDAY_DIR", tmp_path)
     monkeypatch.setattr("agent_friday.paths.friday_home", lambda: tmp_path)
     monkeypatch.setattr(ne, "datetime", Sunday)
+    monkeypatch.setattr(rn, "datetime", Sunday)          # the generator names the file by routes/news' own clock
     monkeypatch.setattr(ne, "_fetch_calendar_today", lambda: [dict(e) for e in TODAY_CAL])
     monkeypatch.setattr(calendar_engine, "_fetch_calendar_range", lambda a, b: [dict(e) for e in RANGE_CAL])
     monkeypatch.setattr(ne, "_fetch_news_items", lambda categories=None, limit_per=4: [
