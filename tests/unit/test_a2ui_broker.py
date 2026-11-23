@@ -96,3 +96,8 @@ def test_a_document_with_no_bindings_resolves_to_no_data(pages):
     doc[0]["createSurface"]["components"] = [{"id": "root", "component": "text_block", "text": "Hi"}]
     assert broker.resolve(doc, sensitivity="personal")["data"] == {}
     assert pages == []
+
+
+def test_every_query_names_the_section_it_reads():
+    assert set(broker.READS) == set(broker.VOCABULARY)
+    assert broker.sections_read(aws.builtin("knowledge")) == {"pages"}

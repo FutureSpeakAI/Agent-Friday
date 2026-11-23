@@ -59,6 +59,39 @@ def test_the_page_loads_the_shared_renderer(client):
     assert "/static/friday_a2ui.js" in html and "__FRIDAY_API_TOKEN" in html
     assert r.headers.get("Cache-Control") == "no-store"
     # Friday's own page, not a sandboxed one: a sandboxed page has an opaque origin and its fetch of the route fails
-    # (found on the scratch-server frame, tests/app/specs/liquid_view_knowledge.spec.ts)
     csp = r.headers.get("Content-Security-Policy") or ""
     assert "sandbox" not in csp and "connect-src 'self'" in csp
+
+
+def test_the_page_opens_on_this_pc_only(client):
+    remote = {"REMOTE_ADDR": "203.0.113.7"}
+    r = client.get("/liquid/knowledge", environ_base=remote)
+    assert r.status_code in (302, 401, 403) and b"friday_a2ui.js" not in r.get_data()
+
+
+def test_a_workspace_this_pc_does_not_serve_has_no_desktop_view(client, monkeypatch):
+    from agent_friday.tv_gateway import ws_content
+    monkeypatch.setattr(ws_content, "_serving", lambda ws: None)
+    assert client.get("/api/liquid/views/knowledge/rendered").status_code == 404
+
+
+def test_an_unreadable_device_block_is_503_never_a_guessed_sensitivity(client, monkeypatch):
+    from agent_friday.tv_gateway import ws_content
+
+    def broken(ws):
+        raise OSError("manifest unreadable")
+    monkeypatch.setattr(ws_content, "_serving", broken)
+    seen = []
+    monkeypatch.setattr(ws_knowledge, "pages", lambda sensitivity: seen.append(sensitivity) or [])
+    r = client.get("/api/liquid/views/knowledge/rendered")
+    assert r.status_code == 503 and seen == []
+
+
+def test_the_desktop_reads_with_the_workspaces_declared_sensitivity(client, monkeypatch):
+    from agent_friday.tv_gateway import ws_content
+    real = ws_content._serving
+    monkeypatch.setattr(ws_content, "_serving", lambda ws: (real(ws)[0], dict(real(ws)[1], sensitivity="private")))
+    seen = []
+    monkeypatch.setattr(ws_knowledge, "pages", lambda sensitivity: seen.append(sensitivity) or [dict(r) for r in ROWS])
+    assert client.get("/api/liquid/views/knowledge/rendered").status_code == 200
+    assert seen and set(seen) == {"private"}

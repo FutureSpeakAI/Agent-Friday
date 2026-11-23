@@ -46,9 +46,9 @@ def _unknown() -> Response:
 
 
 def _served(ws: str) -> Optional[dict]:
-    """The device block of a workspace that has an A2UI document and is served to devices, or None."""
+    """The device block of a workspace whose A2UI document reads only sections the block declares, or None."""
     served = ws_content._serving(ws)
-    if served is None or not a2ui_workspaces.has_view(ws):
+    if served is None or not a2ui_workspaces.serves(ws, served[0]):
         return None
     return served[1]
 

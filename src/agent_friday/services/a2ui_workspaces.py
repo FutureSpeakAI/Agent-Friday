@@ -75,6 +75,16 @@ def has_view(ws: str) -> bool:
         return False
 
 
+def serves(ws: str, declared_sections) -> bool:
+    """True when ws has a view and every section its bindings read is among the device block's declared sections."""
+    from agent_friday.services import a2ui_broker
+    try:
+        view = current(ws)
+        return view is not None and a2ui_broker.sections_read(view["doc"]) <= set(declared_sections)
+    except (ValueError, store.ViewCorrupt, a2ui_broker.BrokerRefused):
+        return False
+
+
 def current(ws: str) -> dict | None:
     """{view, label, rev, doc, customization, versions, stored} or None. Raises store.ViewCorrupt for a damaged file."""
     stored = store.load(ws) if store._VIEW_ID.fullmatch(ws or "") else None

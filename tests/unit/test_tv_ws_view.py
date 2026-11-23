@@ -100,6 +100,18 @@ def test_a_workspace_with_no_document_is_404_never_an_empty_view(client):
         assert dev.get("/tv/v1/workspaces/%s/view" % ws).status_code == 404, ws
 
 
+def test_a_view_is_served_only_where_the_section_its_data_comes_from_is_declared(client, monkeypatch):
+    # the broker reads the "pages" section; a device block that declares other sections only serves no view
+    from agent_friday.tv_gateway import ws_content
+    real = ws_content._serving
+
+    def without_pages(ws):
+        got = real(ws)
+        return None if got is None else ({k: v for k, v in got[0].items() if k != "pages"} or {"people": object()}, got[1])
+    monkeypatch.setattr(ws_content, "_serving", without_pages)
+    assert Enrolled(client).get(VIEW).status_code == 404
+
+
 def test_a_pc_that_cannot_read_its_wiki_is_503(client, monkeypatch):
     def down(sensitivity):
         raise ws_knowledge.Unavailable("structure")
