@@ -311,6 +311,15 @@ _ASK_FOR = {
     "search_past_conversations": "What part of our past conversations should I look for?",
 }
 _ASK_WHERE = "Do you want me to search the public web for that, or look in your notes?"
+_ASK_WHAT_TO_DO = "Which do you mean: open a file, send something, or look something up?"
+#: A command whose object is "the thing" or "the stuff": nothing to run, so it is asked back. A bare "do it" /
+#: "fix that" is left to the conversation, which may be answering its own offer. Held by
+#: tests/unit/test_voice_ambiguous_asks_back.py.
+_VAGUE_COMMAND = re.compile(
+    r"^(?:(?:please|can you|could you|hey friday,?|friday,?)\s+)*"
+    r"(?:do|fix|handle|take care of|deal with|sort out|run)\s+(?:the |that |this |those |these )?"
+    r"(?:thing|things|stuff)(?:\s+with\s+(?:the|that|this)\s+(?:file|files|document|one|thing))?[\s.!?]*$",
+    re.I)
 _ASK_WHICH = "Do you want me to look that up, and where: your email, calendar, files, notes, the web, or something else?"
 
 
@@ -1667,6 +1676,9 @@ def _sealed_rules(text: str, pending_card: Optional[str], last_route: Optional[d
                       reason="a spoken answer to the waiting card")
     if r is None:
         r = _place(text, point, resolver) if text else Route("no_tool", reason="empty")
+    if text and (r is None or r.decision in ("no_tool", "defer")) and _VAGUE_COMMAND.match(text):
+        return Route("ask", confidence=0.9, layer="rule", question=_ASK_WHAT_TO_DO,
+                     reason="a command with no object is asked back, never guessed")
     if text and (r is None or r.decision == "no_tool"):
         # A turn that drops its subject is never the speaker's to answer from
         # imagination: the previous turn's tool with the new argument, or, with
