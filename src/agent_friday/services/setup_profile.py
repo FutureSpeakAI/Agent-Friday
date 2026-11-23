@@ -236,16 +236,12 @@ def deterministic_style(answers: dict) -> dict:
         elif v.startswith("everything") or _has(v, "detail", "thorough", "options", "everything"):
             s["verbosity"] = 85
 
+    # When the owner works is not a note for the model: a note about the hours invites remarks about the hour. What
+    # waits for the morning is the quiet-hours setting (a program), not a sentence in the profile
+    # (tests/unit/test_no_time_of_day_wellness_text.py).
     r = _answer(answers, "rhythm")
-    if r:
-        if _has(r, "early", "morning", "mornings"):
-            notes.append("Works early; keep late-day messages for the morning unless urgent.")
-        elif _has(r, "late", "night", "nights"):
-            notes.append("Works late; don't treat evenings as off-hours.")
-        elif _has(r, "office", "9", "nine"):
-            notes.append("Works normal office hours.")
-        if _has(r, "focus", "deep work", "interrupt", "interruptions"):
-            notes.append("Protect focus time: batch non-urgent updates.")
+    if r and _has(r, "focus", "deep work", "interrupt", "interruptions"):
+        notes.append("Protect focus time: batch non-urgent updates.")
 
     val = _answer(answers, "values")
     if val:
@@ -392,8 +388,8 @@ def _answers_for_model(answers: dict) -> dict:
     qtext = {q[0]: q[1] for q in copy.QUESTIONS}
     out = {}
     for qid, a in (answers or {}).items():
-        if (a or {}).get("skipped") or not (a or {}).get("text") or qid == "quiet":
-            continue                          # quiet hours are a setting, not part of the style
+        if (a or {}).get("skipped") or not (a or {}).get("text") or qid in ("quiet", "rhythm"):
+            continue                          # quiet hours are a setting; the work rhythm is not handed to a model
         out[qtext.get(qid, qid)] = str(a["text"])[:600]
     return out
 

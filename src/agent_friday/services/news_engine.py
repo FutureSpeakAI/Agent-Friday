@@ -20,7 +20,7 @@ import queue as _queue
 import difflib as _difflib
 import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from datetime import datetime, date, timedelta
+from datetime import datetime, date, timedelta, timezone
 from pathlib import Path
 from collections import deque as _deque
 from functools import wraps
@@ -1118,6 +1118,26 @@ def _finish_briefing(content):
     return news_links.attach_links(content, stories)
 
 
+def _build_tasks_section():
+    """(the briefing's ranked Open Tasks section, whether it holds a PRIORITY task). The text is "" when no account
+    reads tasks (nothing to say). A failed read says so in one line; it never aborts the briefing."""
+    try:
+        from agent_friday.services import google_accounts, task_rank
+        merged = google_accounts.merged_tasks(max_results=50)
+        if not merged.get("accounts"):
+            return "", False
+        tasks = merged.get("tasks") or []
+        now = datetime.now(timezone.utc)
+        complete = not (merged.get("errors") or merged.get("incomplete"))
+        seen = task_rank.note_seen(tasks, now, complete=complete)
+        text = task_rank.section(tasks, seen, now)
+        if not complete:
+            text += "\n(Some tasks could not be read; this list may be incomplete.)"
+        return text, any(task_rank.is_priority(t.get("title")) for t in tasks)
+    except Exception as e:  # noqa: BLE001
+        return f"## Open Tasks\n(Tasks could not be read: {type(e).__name__})", False
+
+
 def _gather_live_briefing_context():
     """Fetch live calendar, unread email, and news for an on-demand briefing.
 
@@ -1268,6 +1288,14 @@ def _gather_live_briefing_context():
         builder = builders.get(name)
         if builder:
             sections.append(builder())
+
+    # ── Open tasks, ranked in code (services/task_rank): the owner's PRIORITY tasks first and the longest-open
+    # first, not left to the model. Fails soft like every other section.
+    tasks_section, has_priority = _build_tasks_section()
+    if tasks_section and has_priority:
+        sections.insert(0, tasks_section)       # the owner's PRIORITY tasks lead the briefing
+    elif tasks_section:
+        sections.append(tasks_section)
 
     # ── Cross-connector intelligence ──────────────────────────────────────────
     # Fold in a compact, connector-aware preamble (GitHub PRs, Slack/Linear/
