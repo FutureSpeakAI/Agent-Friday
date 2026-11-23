@@ -145,6 +145,31 @@ class PeopleGraph:
         contacts.sort(key=lambda c: c.get("overall") or 0, reverse=True)
         return contacts
 
+    def circle(self, limit=None):
+        """The people in the trust circle, from the one loader every reader uses (load(): the canonical file, the legacy
+        mirror only as its seed): [{"name", "relationship", "overall"}] by display name, in name order (an order by score
+        would be a rank of people). Held by tests/unit/test_trust_circle_one_source.py."""
+        graph = self.load()
+        raw = graph.get("people") or {}
+        entries = raw.items() if isinstance(raw, dict) else ((None, p) for p in raw)
+        out = []
+        for key, person in entries:
+            if not isinstance(person, dict):
+                continue
+            name = str(person.get("name") or key or "").strip()
+            if not name:
+                continue
+            scores = person.get("scores") if isinstance(person.get("scores"), dict) else {}
+            overall = scores.get("overall", person.get("overall_score", person.get("score", 0.5)))
+            try:
+                overall = round(float(overall), 2)
+            except (TypeError, ValueError):
+                overall = 0.5
+            relationship = person.get("relationship") or person.get("role") or person.get("relation") or ""
+            out.append({"name": name, "relationship": str(relationship), "overall": overall})
+        out.sort(key=lambda p: p["name"].lower())
+        return out[:limit] if limit else out
+
     def find(self, name):
         """Case-insensitive lookup by name/key/alias. Returns the person dict
         (with the canonical four dimensions guaranteed present) or None."""
@@ -366,3 +391,13 @@ def get_people_graph(friday_dir=None):
             if _instance is None:
                 _instance = PeopleGraph(friday_dir=friday_dir)
     return _instance
+
+
+def graph_at(friday_dir=None):
+    """The people graph for `friday_dir`: the shared instance when it serves that folder, else one for that folder.
+    get_people_graph() ignores `friday_dir` once the shared instance exists; a reader that names its folder gets that
+    folder's file. Every trust-circle reader goes through this (tests/unit/test_trust_circle_one_source.py)."""
+    shared = get_people_graph(friday_dir)
+    if friday_dir is not None and Path(friday_dir) != shared.friday_dir:
+        return PeopleGraph(friday_dir=friday_dir)
+    return shared

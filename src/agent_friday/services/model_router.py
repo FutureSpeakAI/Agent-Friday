@@ -4043,30 +4043,14 @@ def _load_vault_summary():
     if state is not None:
         ctx['personality'] = state
 
-    # Trust graph — names and scores only (lightweight)
-    tfile = FRIDAY_DIR / "trust_graph.json"
-    if tfile.exists():
-        try:
-            data = json.loads(tfile.read_text(encoding='utf-8'))
-            people = data.get('people', {})
-            if isinstance(people, dict):
-                ctx['trust_people'] = {
-                    name: {
-                        'overall': round(info.get('overall_score', info.get('score', 0.5)), 2),
-                        'relationship': info.get('relationship', ''),
-                    }
-                    for name, info in people.items()
-                }
-            elif isinstance(people, list):
-                ctx['trust_people'] = {
-                    p.get('name', 'unknown'): {
-                        'overall': round(p.get('overall_score', p.get('score', 0.5)), 2),
-                        'relationship': p.get('relationship', ''),
-                    }
-                    for p in people
-                }
-        except Exception:
-            pass
+    # Trust graph — names and scores only (lightweight). One loader (people_graph.circle), by display name.
+    try:
+        from agent_friday.people_graph import graph_at
+        circle = graph_at(FRIDAY_DIR).circle()
+        if circle:
+            ctx['trust_people'] = {p['name']: {'overall': p['overall'], 'relationship': p['relationship']} for p in circle}
+    except Exception:
+        pass
 
     # Memory stats
     mem_file = FRIDAY_DIR / "memory.json"
@@ -4113,7 +4097,8 @@ def _lookup_trust_person(name, trust_data):
 
     if isinstance(people, dict):
         for pname, pdata in people.items():
-            if name_lower in pname.lower():
+            shown = str(pdata.get('name') or '') if isinstance(pdata, dict) else ''
+            if name_lower in pname.lower() or (shown and name_lower in shown.lower()):
                 return {pname: pdata}
     elif isinstance(people, list):
         for p in people:
@@ -4498,12 +4483,11 @@ def _build_context_prompt(message, workspace='', vision_description=None, provid
     if 'trust' in needs and 'trust_people' in vault and _people_trust_allowed(provider):
         # Check if message references a specific person
         trust_data_raw = None
-        tfile = FRIDAY_DIR / "trust_graph.json"
-        if tfile.exists():
-            try:
-                trust_data_raw = json.loads(tfile.read_text(encoding='utf-8'))
-            except Exception:
-                pass
+        try:
+            from agent_friday.people_graph import graph_at
+            trust_data_raw = graph_at(FRIDAY_DIR).load()
+        except Exception:
+            pass
 
         # Try to find a specific person mentioned
         person_match = None
@@ -4870,17 +4854,24 @@ def _load_smart_context(user_message, workspace=None, include_people=True):
 
     # Person-name detection — pull the trust-graph entry for anyone named.
     # Never for a cloud model: people trust stays home (trust/people.py).
-    trust_path = FRIDAY_DIR / "trust_graph.json"
-    if include_people and trust_path.exists():
+    # One store and one naming rule (people_graph.graph_at().load(), as the trust circle and query_trust_graph): a
+    # person is found by display name, alias or key, and headed by the display name.
+    if include_people:
         try:
-            trust = json.loads(trust_path.read_text(encoding='utf-8'))
-            people = trust.get('people', {})
-            if isinstance(people, dict):
-                for name, entry in people.items():
-                    if name and name.lower() in msg_lower:
-                        context_parts.append(
-                            f"== TRUST GRAPH: {name} ==\n{json.dumps(entry, indent=2, default=str)[:1500]}"
-                        )
+            from agent_friday.people_graph import graph_at
+            people = graph_at(FRIDAY_DIR).load().get('people') or {}
+            entries = people.items() if isinstance(people, dict) else ((None, p) for p in people)
+            for key, entry in entries:
+                if not isinstance(entry, dict):
+                    continue
+                shown = str(entry.get('name') or key or '').strip()
+                names = [shown, str(key or '')] + [str(a) for a in (entry.get('aliases') or [])]
+                # whole words only: a short alias ("Mo") must not match inside "more"
+                if shown and any(n.strip() and re.search(r"(?<!\w)" + re.escape(n.strip().lower()) + r"(?!\w)", msg_lower)
+                                 for n in names):
+                    context_parts.append(
+                        f"== TRUST GRAPH: {shown} ==\n{json.dumps(entry, indent=2, default=str)[:1500]}"
+                    )
         except Exception:
             pass
 

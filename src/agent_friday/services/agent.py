@@ -1970,17 +1970,18 @@ def _tool_query_trust_graph(inp):
         from agent_friday.trust import people as _tp
         graph = _load_trust_graph()
         people = graph.get('people') or {}
-        items = people.values() if isinstance(people, dict) else people
+        items = people.items() if isinstance(people, dict) else ((None, p) for p in people)
         # People trust stays home: the full record (dimensions, evidence, saved
         # intelligence, notes) goes only to a loop that is KNOWN local. A cloud
         # loop, or one whose provider is unknown, gets role, confirmed
         # relationship and contact channel.
         _local = _tp.loop_is_local(_CURRENT_PROVIDER.get())
-        for p in items:
+        for key, p in items:
             if not isinstance(p, dict):
                 continue
             aliases = [str(a).lower() for a in (p.get('aliases') or [])]
-            if not ((p.get('name') or '').strip().lower() == name or name in aliases):
+            by_key = key is not None and str(key).strip().lower() == name      # the key the context may have shown
+            if not ((p.get('name') or '').strip().lower() == name or name in aliases or by_key):
                 continue
             is_org = str(p.get('entity_type') or '').strip().lower() in _ORG_ENTITY_TYPES
             if is_org and kind in ('any', 'organisation'):
