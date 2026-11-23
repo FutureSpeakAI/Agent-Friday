@@ -11,8 +11,9 @@ import pytest
 import agent_friday.tv_gateway as gateway_package
 
 LIMIT = 120
-MODULES = ("pc_common", "pc_act", "pc_act_media", "pc_approve_decide", "approval_verify", "phone_update",
-           "voice_bridge")
+MODULES = ("pc_common", "pc_act", "pc_act_media", "pc_approve_decide", "approval_verify", "phone_update")
+MODULES += ("ws_news", "ws_news_later", "ws_crew", "ws_code")                       # the News adapters (PW-G2)
+MODULES += ("voice_bridge",)
 ROOT = pathlib.Path(gateway_package.__file__).resolve().parent
 
 
