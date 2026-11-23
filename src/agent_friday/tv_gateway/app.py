@@ -136,9 +136,11 @@ def create_app(tailnet: bool = False) -> Flask:
         try:
             spki = base64.b64decode(str(body.get("device_spki", "")), validate=True)
             return jsonify({"ok": True, **pairing.start(spki, str(body.get("name", "TV")),
-                                                        str(body.get("kind") or "tv"))})
+                                                        str(body.get("kind") or "tv"),
+                                                        remote=request.remote_addr or "")})
         except pairing.PairingRefused as e:
-            return _refuse(400 if str(e) == "unknown device kind" else 409, str(e))
+            return _refuse(400 if str(e) == "unknown device kind" else 409, str(e),
+                           **({"code": e.code} if e.code else {}))
         except ValueError:
             return _refuse(400, "bad key encoding")
 
@@ -309,6 +311,8 @@ def create_app(tailnet: bool = False) -> Flask:
     pc_chats.register(app)                   # start a PC chat from a device (POST /tv/v1/chats); projects
     from agent_friday.tv_gateway import ws_content
     ws_content.register(app)                 # list, search, item and changes of a workspace, from its device block
+    from agent_friday.tv_gateway import ws_graph
+    ws_graph.register(app)                   # the knowledge graph by level of detail
     from agent_friday.tv_gateway import pc_orbs
     pc_orbs.register(app)                    # the same owners' door, live process orbs
     from agent_friday.tv_gateway import pc_act, pc_approve

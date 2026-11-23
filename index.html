@@ -16825,7 +16825,7 @@ function ChatSurface(props) {
       border: '1px solid rgba(255,154,107,0.3)'
     }
   }, (turnStatus && turnStatus.stopping) ? 'Stopping…' : '■ Stop')),
-  React.createElement(ChatApprovalCards, { convId: convId }),
+  React.createElement(ChatApprovalNote, { convId: convId }),
   /*#__PURE__*/React.createElement("div", {
     ref: chatEnd
   })), /*#__PURE__*/React.createElement("div", {
@@ -34161,17 +34161,12 @@ function SystemWS() {
   // surface: the notification's "Review" points at
   // {workspace:'system',tab:'approvals'}, and if nothing handles that tab every
   // gated action (Google connect, gated goal steps) waits until it expires. ──
-  const [approvals, setApprovals] = useState([]);
+  const approvals = useApprovalFeed();               // the page's one list of waiting cards
   const [apBusy, setApBusy] = useState('');
   const apRef = useRef(null);
-  const refreshApprovals = () => fetch('/api/approvals?status=pending').then(r => r.json()).then(d => setApprovals(Array.isArray(d?.approvals) ? d.approvals : [])).catch(() => {});
-  // The list follows the page's approval feed, so a card decided anywhere leaves it at once.
-  useEffect(() => fridayApprovalFeed.subscribe(setApprovals), []);
+  const refreshApprovals = () => fridayApprovalFeed.reload();
   const decideApproval = async (id, decision) => {
-    if (apBusy) return;
-    setApBusy(id);
     await fridayDecideApproval(id, decision);
-    setApBusy('');
     refreshApprovals();
   };
   // Deep-link: notifications target {workspace:'system',tab:'self-improvement'|'approvals'} → scroll the card into view.
@@ -69229,6 +69224,8 @@ const fridayApprovalFeed = (() => {
     leader = false,
     heard = Date.now(),
     release = null;
+  // When each card was last decided or raised here: a reload's older answer must not undo either.
+  const settled = new Map(), raised = new Map();
   const listeners = new Set();
   // Cards judged "may not interrupt" (quiet hours, over budget, Focus Assist): listed, not popped open.
   const quiet = window.__fridayQuietApprovals = new Set();
@@ -69263,8 +69260,10 @@ const fridayApprovalFeed = (() => {
       emit();
     } else if (d.type === 'pending' && d.approval && d.approval.status === 'pending') {
       cards.set(d.approval.approval_id, d.approval);
+      raised.set(d.approval.approval_id, Date.now());
       emit();
     } else if (d.type === 'resolved') {
+      settled.set(d.approval_id, Date.now());
       if (cards.delete(d.approval_id)) emit();
     } else if (d.type === 'presence') {
       presenceListeners.forEach(fn => {
@@ -69392,7 +69391,22 @@ const fridayApprovalFeed = (() => {
       };
     },
     drop(id) {
+      settled.set(id, Date.now());
       if (cards.delete(id)) emit();
+    },
+    // Ask the server for the pending list again (a page that missed frames, or opened late). A card decided, or
+    // newly raised, after the request left is not undone by its older answer.
+    reload() {
+      const sent = Date.now();
+      return fetch('/api/approvals?status=pending').then(r => r.json()).then(d => {
+        const fresh = d && Array.isArray(d.approvals) ? d.approvals : null;
+        if (!fresh) return;
+        const next = new Map(fresh.filter(a => (settled.get(a.approval_id) || 0) < sent).map(a => [a.approval_id, a]));
+        cards.forEach((a, id) => { if (!next.has(id) && (raised.get(id) || 0) >= sent) next.set(id, a); });
+        cards = next;
+        settled.forEach((at, id) => { if (sent - at > 600000) settled.delete(id); });
+        emit();
+      }).catch(() => {});
     },
     onPresence(fn) {
       presenceListeners.add(fn);
@@ -69516,34 +69530,54 @@ function useApprovalFeed() {
   useEffect(() => fridayApprovalFeed.subscribe(setItems), []);
   return items;
 }
+// Which cards have a decision on its way, for the whole page. One flag per surface used to hold every card on it:
+// the decide request only returns once the approved action has run (seconds), so one slow approval froze every other
+// card on that surface and dropped their clicks. A card is busy, the others are not.
+const fridayDeciding = (() => {
+  const inflight = new Map(), listeners = new Set();
+  const tell = () => listeners.forEach(f => { try { f(); } catch (_) {} });
+  return {
+    get: id => inflight.get(id),
+    start: (id, sent) => { inflight.set(id, sent); tell(); },
+    end: id => { inflight.delete(id); tell(); },
+    subscribe: f => { listeners.add(f); return () => listeners.delete(f); }
+  };
+})();
+function useDeciding(id) {
+  const [, bump] = useState(0);
+  useEffect(() => fridayDeciding.subscribe(() => bump(n => n + 1)), []);
+  return !!fridayDeciding.get(id);
+}
 // Approve or decline from any page. Exactly one decision wins (the server
 // decides under one lock); a page that lost the race is told what happened.
+// A click that cannot apply says why: a refusal in the server's words, a card
+// that is gone, no connection. Nothing is a silent no-op, and the same card
+// clicked twice sends one request.
 // decided_by 'owner:ui' marks a click on this page: some cards (file access)
 // can be approved by nothing else.
 function fridayDecideApproval(id, decision) {
-  return fetch('/api/approvals/' + encodeURIComponent(id) + '/decide', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json'
-    },
-    body: JSON.stringify({
-      decision,
-      decided_by: 'owner:ui'
-    })
+  const running = fridayDeciding.get(id);
+  if (running) { fridayToast('Already working on that one.'); return running; }
+  const sent = fetch('/api/approvals/' + encodeURIComponent(id) + '/decide', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ decision, decided_by: 'owner:ui' })
   }).then(r => r.json()).then(d => {
     if (d && d.ok) fridayApprovalFeed.drop(id);
     if (d && d.already_decided) {
-      const a = d.approval || {},
-        st = a.status;
+      const a = d.approval || {}, st = a.status;
       const what = st === 'approved' ? 'approved' : st === 'denied' ? 'declined' : st === 'expired' ? 'expired' : st || 'decided';
       const by = st === 'expired' ? '' : /sms/.test(a.decided_by || '') ? ' by text message' : /voice/.test(a.decided_by || '') ? ' by voice' : ' elsewhere';
       fridayToast('Already decided: this was ' + what + by + '.');
+    } else if (!d || !d.ok) {
+      const why = d && (d.message || (/ /.test(String(d.error || '')) ? d.error : ''));
+      fridayToast(why && d.error !== 'not found' ? why : 'That did not go through. The card is still waiting.');
     }
     return d;
   }).catch(() => {
     fridayToast(('Could not reach ' + fridayName() + ' to record that. The card is still waiting.'));
     return null;
-  });
+  }).finally(() => fridayDeciding.end(id));
+  fridayDeciding.start(id, sent);
+  return sent;
 }
 // One approval card: what it will do, where its details came from, and the
 // two buttons. The System list and the popup render this same body.
@@ -69873,6 +69907,8 @@ function ApprovalCardBody({
   busy,
   onDecide
 }) {
+  // busy while THIS card's decision runs, not while another card's does (fridayDeciding)
+  busy = useDeciding(a.approval_id);
   // Every card, whatever its body, ends with its facts and Inspect (ApprovalCardFacts).
   const withFacts = el => /*#__PURE__*/React.createElement(React.Fragment, null, el, /*#__PURE__*/React.createElement(ApprovalCardFacts, {
     a: a
@@ -70074,9 +70110,7 @@ function ApprovalPopups() {
   }, []);
   if (!items.length) return null;
   const decide = (id, decision) => {
-    if (busy) return;
-    setBusy(id);
-    fridayDecideApproval(id, decision).then(() => setBusy(''));
+    fridayDecideApproval(id, decision);
   };
   const pos = {
     position: 'fixed',
@@ -70295,34 +70329,23 @@ function useFridayConversationDrafts(initialId) {
   }, []);
   return {convId,setConvId,chatIn,setChatIn,getConversationId,getConversationRevision,navigateWithDrafts};
 }
-// The cards this conversation raised, in the conversation itself. The chat's
-// yes/no question and the card are two ways to answer one request; the card
-// is shown here too so a question the model paraphrased, or an answer the
-// chat could not read, still leaves a button in front of the owner. Same feed
-// and same body as the System list and the popup, so one decision wins.
-function ChatApprovalCards({ convId }) {
+// What the chat says about cards: one line, no buttons. Approval cards belong in Friday's approval tray only
+// (Stephen, 2026-11-22: "we don't send cards into the chat, we send them into Friday's approval tray"); the chat
+// only notes that something this conversation raised is waiting there.
+function ChatApprovalNote({ convId }) {
   const items = useApprovalFeed();
-  const [busy, setBusy] = useState('');
-  const mine = convId ? items.filter(a => ((a && a.payload) || {}).conversation_id === convId) : [];
-  if (!mine.length) return null;
-  const decide = (id, decision) => {
-    if (busy) return;
-    setBusy(id);
-    fridayDecideApproval(id, decision).finally(() => setBusy(''));
-  };
-  return React.createElement('div', {className:'fx-chat-approvals', 'data-testid':'chat-approval-cards', role:'group', 'aria-label':'Waiting for your decision', style:{margin:'8px 0'}},
-    mine.map(a => React.createElement(ApprovalCardBody, {key:a.approval_id,a,busy,onDecide:decide})));
+  const n = convId ? items.filter(a => ((a && a.payload) || {}).conversation_id === convId).length : 0;
+  if (!n) return null;
+  return React.createElement('div', {className:'fx-chat-approvals', 'data-testid':'chat-approval-note', role:'status', style:{margin:'6px 0', fontSize:12, color:'var(--fr-dim)'}},
+    n === 1 ? 'Waiting on your approval in the tray.' : n + ' waiting on your approval in the tray.');
 }
 function ExperienceApprovals() {
   const items = useApprovalFeed();
   const [busy, setBusy] = useState('');
   const [error, setError] = useState('');
   const decide = async (id, decision) => {
-    if (busy) return;
-    setBusy(id); setError('');
-    try { await fridayDecideApproval(id, decision); }
-    catch (e) { setError('Could not record the decision. Try again.'); }
-    finally { setBusy(''); }
+    setError('');
+    if ((await fridayDecideApproval(id, decision)) === null) setError('Could not record the decision. Try again.');
   };
   return React.createElement('div', {className:'fx-approvals'},
     error && React.createElement('p', {role:'alert'}, error),
@@ -70353,9 +70376,7 @@ function ApprovalSlot({ subject, kind }) {
   const mine = Array.isArray(ids) ? ids.map(id => items.find(a => a.approval_id === id)).filter(Boolean) : [];
   if (Array.isArray(ids) && ids.length && !mine.length) return null;
   const decide = (id, decision) => {
-    if (busy) return;
-    setBusy(id);
-    fridayDecideApproval(id, decision).finally(() => setBusy(''));
+    fridayDecideApproval(id, decision);
   };
   return React.createElement('div', {
     'data-testid': 'approval-slot', role: 'group', 'aria-label': 'Waiting for your decision',

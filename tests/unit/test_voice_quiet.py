@@ -279,7 +279,7 @@ def test_a_seat_the_pc_refuses_leaves_the_chat_alone(fast, monkeypatch):
 def test_a_device_pick_is_honoured_and_the_default_is_not_applied(client, wire, monkeypatch):
     monkeypatch.setattr(owner_turn, "_slate", lambda dev: ROWS)
     bound = []
-    monkeypatch.setattr(owner_turn, "bind_seat", lambda cid, m: (bound.append(m), "c")[1])
+    monkeypatch.setattr(owner_turn, "bind_pick", lambda cid, m, row=None, dev_id="": (bound.append(m), owner_turn.Bound("c"))[1])
     monkeypatch.setattr(owner_turn, "fast_voice_default", lambda cid, dev=None: pytest.fail("a pick must win"))
     wire([_done("ok")])
     _stream(ask(client, phone(), voice=True, model="bonsai2:27b"))

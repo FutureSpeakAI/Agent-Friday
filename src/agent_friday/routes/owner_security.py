@@ -313,18 +313,19 @@ def security_keystore_wrap():
                                                     "protected file), so the next start could not "
                                                     "unlock the keys. Save the passphrase in Settings "
                                                     "first, then lock the keys."}), 400
+    previous = (ks.describe() or {}).get("wrap")
     try:
-        ks.set_wrap(wrap, pw if wrap == "passphrase" else "")
+        # removing the passphrase goes to the default wrap (Windows protection where there is any), not to a plain key
+        ks.set_wrap(wrap if wrap == "passphrase" else "default", pw if wrap == "passphrase" else "")
         ks.root_key(use_cache=False)          # prove the next start can unwrap it
     except Exception as e:
         _log.error("keystore %s wrap failed: %s", wrap, e)
         try:
-            ks.set_wrap("none")               # the cached root key is unchanged
+            ks.restore_wrap(previous)         # the cached root key is unchanged
         except Exception:
             pass
-        return jsonify({"ok": False, "message": "The keystore was left protected by "
-                                                "file permissions (%s)."
-                                                % type(e).__name__}), 500
+        return jsonify({"ok": False, "message": "The keystore was left protected the way it "
+                                                "was (%s)." % type(e).__name__}), 500
     try:
         # A21: the owner decided in Settings; the one-time card is not needed any more.
         from agent_friday.services import keystore_offer as _ko
