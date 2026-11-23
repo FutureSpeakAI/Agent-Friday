@@ -356,7 +356,8 @@ def test_the_start_screen_shows_when_and_why_and_refreshes(rel):
     assert "c.why" in ticker and "fridayCountdownWhen(c" in ticker and "cd-why" in ticker, rel
     assert re.search(r"setInterval\(\(\) ?=> ?setNow\(Date\.now\(\)\), ?60000\)", ticker), rel
     assert re.search(r"setInterval\(load, ?FRIDAY_COUNTDOWNS_EVERY_MS\)", text), rel
-    assert re.search(r"FridayCountdowns, \{\n\s*items: countdowns|<FridayCountdowns items=\{countdowns\}/>",
+    # the start screen passes the polled list (and, since the hide control, what is hidden and how to hide)
+    assert re.search(r"FridayCountdowns, \{\n\s*items: countdowns|<FridayCountdowns items=\{countdowns\}[ /]",
                      text), rel
 
 
@@ -374,3 +375,40 @@ def test_the_panel_cache_leaves_the_polled_countdowns_alone(rel):
     text = _read(rel)
     rules = text[text.index("const FRIDAY_PANEL_CACHE_RULES"):text.index("const FRIDAY_PANEL_CACHE_MAX_AGE")]
     assert "countdowns" not in rules, rel
+
+
+# ── derived, not hardcoded ──────────────────────────────────────────────
+
+def test_a_wiki_date_and_a_task_deadline_are_the_only_countdowns_and_follow_their_data(world):
+    world.page("people/dana-reyes.md", "# Dana Reyes\n\n- **Birthday:** %s\n" % spoken_date(12))
+    world.todos = [{"id": "t-grant", "title": "Send the grant report", "deadline": day(3), "priority": "high",
+                    "status": "approved", "source": "ai"}]
+    got = by_label(cd.countdowns(now=NOW))
+    assert set(got) == {"Dana's birthday", "Send the grant report"}
+    assert got["Dana's birthday"]["id"].startswith("wiki:people/dana-reyes.md#")
+    assert got["Send the grant report"]["id"] == "todo:t-grant"
+    assert (got["Dana's birthday"]["short"], got["Send the grant report"]["short"]) == ("in 12 days", "in 3 days")
+    # move both dates: the countdowns move with them (nothing on the screen is a literal)
+    world.page("people/dana-reyes.md", "# Dana Reyes\n\n- **Birthday:** %s\n" % spoken_date(20))
+    world.todos[0]["deadline"] = day(5)
+    moved = by_label(cd.countdowns(now=NOW))
+    assert (moved["Dana's birthday"]["short"], moved["Send the grant report"]["short"]) == ("in 20 days", "in 5 days")
+
+
+def test_with_the_wiki_and_the_tasks_emptied_nothing_is_left_to_show(world):
+    world.page("people/dana-reyes.md", "# Dana Reyes\n\n- **Birthday:** %s\n" % spoken_date(12))
+    world.todos = [{"id": "t-grant", "title": "Send the grant report", "deadline": day(3), "status": "approved"}]
+    assert cd.countdowns(now=NOW)["countdowns"]
+    (world.wiki / "people" / "dana-reyes.md").unlink()
+    world.todos = []
+    assert cd.countdowns(now=NOW)["countdowns"] == []
+
+
+def test_a_wiki_countdown_keeps_its_id_when_a_line_is_added_above_it(world):
+    world.page("people/dana-reyes.md", "# Dana Reyes\n\n- **Birthday:** %s\n" % spoken_date(12))
+    before = by_label(cd.countdowns(now=NOW))["Dana's birthday"]["id"]
+    world.page("people/dana-reyes.md", "# Dana Reyes\n\n- **Anniversary:** %s\n- **Birthday:** %s\n"
+               % (spoken_date(40), spoken_date(12)))
+    after = by_label(cd.countdowns(now=NOW))
+    assert after["Dana's birthday"]["id"] == before
+    assert len({c["id"] for c in after.values()}) == len(after)                # still one id each
