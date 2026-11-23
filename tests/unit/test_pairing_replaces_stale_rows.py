@@ -36,6 +36,7 @@ def _clean(tmp_path, monkeypatch):
     device_pairing._reset_for_tests()
     pairing._reset_for_tests()
     household.ensure_default_members()
+    device_pairing.open_pairing_window(900)          # the owner has opened pairing at the PC
     yield
     pairing._reset_for_tests()
     device_pairing._reset_for_tests()

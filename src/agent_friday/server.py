@@ -771,6 +771,15 @@ if not _TESTING:
                          name="daily-cap-card").start()
     except Exception as _sc_err:
         print(f"  Daily spending cap card: unavailable ({_sc_err})")
+    # The key store's root key is wrapped with Windows DPAPI by default; an older unwrapped one is moved here, once,
+    # with a receipt (services/keystore.migrate_default_wrap). Never raises: a failure leaves the file as it was.
+    try:
+        from agent_friday.services import keystore as _ks
+        _ks_result = _ks.migrate_default_wrap()
+        if _ks_result == "migrated":
+            print("  Key store: the root key is now protected by your Windows account.")
+    except Exception as _ks_err:
+        print(f"  Key store wrap: unavailable ({type(_ks_err).__name__})")
     # A21: an install that finished setup before the key store passphrase became the default
     # is offered it once, on a card (services/keystore_offer). Never forced.
     try:

@@ -468,7 +468,7 @@ def _verb_entry(v: dict, block: Optional[dict]) -> dict:
     gate = v.get("gate") or {}
     return {"id": v.get("id"), "label": (v.get("ui") or {}).get("control") or v.get("id"), "group": v.get("group"),
             "gate_class": gate.get("class") or "outward", "card": gate.get("card") or "required",
-            "placed": ws_device.placement(v.get("id"), block)}
+            "placed": ws_device.placement(v.get("id"), block), "args": ws_device.args_of(v.get("id"), block)}
 
 
 def _ws_entry(w: dict) -> dict:
