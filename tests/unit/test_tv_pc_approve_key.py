@@ -59,8 +59,8 @@ def paired(kind="phone", member="stephen"):
     return dev
 
 
-def register(client, dev, spki=None, biometric=True):
-    body = {"spki": base64.b64encode(spki or new_key()).decode(), "biometric": biometric}
+def register(client, dev, spki=None, biometric=True, **extra):
+    body = {"spki": base64.b64encode(spki or new_key()).decode(), "biometric": biometric, **extra}
     return client.post(ROUTE, json=body, headers=auth(open_session(client, dev)))
 
 
@@ -123,6 +123,70 @@ def test_a_tablet_key_must_ask_for_the_fingerprint(client):
     r = register(client, dev, biometric=False)
     assert r.status_code == 422 and r.get_json()["code"] == "tablet_needs_biometric" and cards() == []
     assert register(client, dev, biometric=True).status_code == 200
+
+
+DEVICE = {"unlock": "device", "per_use": True}
+
+
+def test_a_tablet_key_its_own_unlock_opens_every_time_is_taken_and_the_card_says_so(client):
+    """Stephen 2026-11-23: approving is "whatever the device's security unlock confirmation is", so a tablet with no
+    fingerprint enrols with its PIN, and the owner's card says exactly that, never "fingerprint"."""
+    dev = paired("tablet")
+    r = register(client, dev, biometric=False, **DEVICE)
+    assert r.status_code == 200 and r.get_json()["biometric"] is False and r.get_json()["unlock"] == "device"
+    [card] = cards()
+    assert "own unlock on every approval" in card["description"] and "PIN" in card["description"]
+    assert "fingerprint on every approval" not in card["description"] and "NO fingerprint" not in card["description"]
+    assert card["payload"]["unlock"] == "device"
+    assert rows("device_approval_key_staged")[-1]["unlock"] == "device"
+
+
+@pytest.mark.parametrize("extra", [{"unlock": "device"}, {"unlock": "device", "per_use": False},
+                                   {"unlock": "device", "per_use": "yes"}, {"unlock": "face", "per_use": True}])
+def test_a_tablet_key_that_does_not_ask_every_time_is_still_refused(client, extra):
+    r = register(client, paired("tablet"), biometric=False, **extra)
+    assert r.status_code == 422 and r.get_json()["code"] == "tablet_needs_biometric" and cards() == []
+
+
+def test_the_press_records_that_the_device_unlock_opens_the_key(client):
+    dev = paired("tablet")
+    register(client, dev, biometric=False, **DEVICE)
+    press(cards()[0])
+    rec = device_pairing.get_device(dev.id)
+    key = device_pairing.approval_key(rec)
+    assert key.unlock == "device" and key.biometric is False and device_pairing.has_right(rec, "pc_approve")
+    assert device_pairing.public_view(rec)["approval_unlock"] == "device"
+
+
+def test_a_stale_no_fingerprint_card_cannot_activate_a_device_unlock_key(client):
+    dev = paired()
+    spki = new_key()
+    register(client, dev, spki=spki, biometric=False)
+    [said_none] = cards()
+    register(client, dev, spki=spki, biometric=False, **DEVICE)
+    press(said_none)
+    assert device_pairing.approval_key(device_pairing.get_device(dev.id)) is None
+    press(cards()[0])
+    assert device_pairing.approval_key(device_pairing.get_device(dev.id)).unlock == "device"
+
+
+def test_activation_itself_refuses_a_different_unlock_choice(client):
+    dev = paired("tablet")
+    j = register(client, dev, biometric=False, **DEVICE).get_json()
+    assert device_pairing.activate_approval_key(dev.id, j["key_id"], False) is False
+    assert device_pairing.activate_approval_key(dev.id, j["key_id"], False, unlock="device") is True
+
+
+def test_the_same_key_with_a_new_unlock_choice_needs_a_new_press(client):
+    dev = paired()
+    spki = new_key()
+    register(client, dev, spki=spki, biometric=False)
+    press(cards()[0])
+    r = register(client, dev, spki=spki, biometric=False, **DEVICE)
+    assert r.get_json()["status"] == "staged" and len(cards()) == 1
+    assert device_pairing.approval_key(device_pairing.get_device(dev.id)).unlock is None
+    press(cards()[0])
+    assert register(client, dev, spki=spki, biometric=False, **DEVICE).get_json()["status"] == "already_active"
 
 
 def test_a_phone_may_choose_no_fingerprint_and_the_card_says_so(client):
