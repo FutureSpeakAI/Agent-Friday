@@ -229,6 +229,9 @@ def _json_body() -> Tuple[dict, Optional[Response]]:
     except RecursionError:
         return {}, _fault_answer(Fault("nested no deeper than the parser reads", "$"))
     if data is None:
+        from agent_friday.tv_gateway.app import json_was_too_deep
+        if json_was_too_deep():          # the gateway's depth limit (MAX_JSON_DEPTH) read it as no JSON
+            return {}, _fault_answer(Fault("nested no deeper than the parser reads", "$"))
         return {}, None
     if not isinstance(data, dict):
         return {}, _fault_answer(Fault("a JSON object", "$"))
