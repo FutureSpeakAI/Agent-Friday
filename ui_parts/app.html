@@ -1702,10 +1702,33 @@ window.fridayTitleName = fridayTitleName;
 /* fridayHerName:end */
 // The start screen's countdowns: each one's label, when, and why it is there.
 // The words for when move on each minute; the list comes every five.
-function FridayCountdowns({items}){
+/* fridayCountdownHide:begin */
+// When a countdown passes, in epoch seconds: its time, else the end of its day. A hidden countdown stays hidden
+// until then; the entry is dropped after that, so a yearly one comes back next year.
+function fridayCountdownPasses(c) {
+  if (c.at) return c.at + 60;   // the list still shows a timed one for a minute after it starts
+  const end = c.date ? new Date(c.date + 'T23:59:59').getTime() / 1000 : 0;
+  return end > 0 ? end : Date.now() / 1000 + 86400;
+}
+function fridayCountdownHidden(c, hidden, nowMs) {
+  return !!(hidden && hidden[c.id] > nowMs / 1000);
+}
+function fridayCountdownsHiding(hidden, c, nowMs) {
+  const kept = {};
+  for (const k of Object.keys(hidden || {})) if (hidden[k] > nowMs / 1000) kept[k] = hidden[k];
+  kept[c.id] = fridayCountdownPasses(c);
+  return kept;
+}
+// The countdowns that are not hidden: what the list draws AND what the smart start-screen rule may act on,
+// so a hidden countdown never brings the start screen up (tests/ui/start_countdowns_hide.test.cjs).
+function fridayCountdownsShown(items, hidden, nowMs) {
+  return (items || []).filter(c => !fridayCountdownHidden(c, hidden, nowMs));
+}
+/* fridayCountdownHide:end */
+function FridayCountdowns({items,hidden,onHide}){
   const[now,setNow]=useState(()=>Date.now());
   useEffect(()=>{const t=setInterval(()=>setNow(Date.now()),60000);return()=>clearInterval(t)},[]);
-  const shown=(items||[]).filter(c=>!c.at||c.at*1000>now-60000);
+  const shown=(items||[]).filter(c=>(!c.at||c.at*1000>now-60000)&&!fridayCountdownHidden(c,hidden,now));
   if(!shown.length)return null;
   return(<div className="greeting-ticker" data-testid="countdowns" style={{marginBottom:16,position:'relative',zIndex:1}}>
     {shown.map((c,i)=><React.Fragment key={c.id||i}>
@@ -1713,6 +1736,7 @@ function FridayCountdowns({items}){
       <span className="greeting-ticker-item">
         <span className="cd-what"><span>{c.emoji||''} {c.label||c.name}</span>{c.why&&<span className="cd-why">{c.why}</span>}</span>
         <span className="days">{fridayCountdownWhen(c,now)||(c.days??'?')+'d'}</span>
+        {onHide&&c.id&&<button type="button" className="cd-hide" aria-label={'Hide '+(c.label||c.name)} title="Hide this countdown" onClick={()=>onHide(c)}>&times;</button>}
       </span>
     </React.Fragment>)}
   </div>);
@@ -31395,6 +31419,10 @@ const fridayBundleBody=id=>(window.FridayBundleFrame&&WS_BY_ID[id]&&WS_BY_ID[id]
   // least once a minute. A change is one line in the console and, through the
   // state this page reports, one line in the server's log.
   const landingMode = FRIDAY_LANDING_MODES.indexOf(agentSettings.landing_mode) >= 0 ? agentSettings.landing_mode : 'smart';
+  const hideCountdown = c => saveAgentSettings({dismissed_countdowns: fridayCountdownsHiding(agentSettings.dismissed_countdowns, c, Date.now())});
+  const visibleCountdowns = fridayCountdownsShown(countdowns, agentSettings.dismissed_countdowns, Date.now());
+  const hiddenCountdowns = countdowns.length - visibleCountdowns.length;
+  const unhideCountdowns = () => saveAgentSettings({dismissed_countdowns: {}});
   const landingClock = useRef(null);
   if (!landingClock.current) landingClock.current = fridayLandingClock(Date.now());
   const landingSees = useRef({});
@@ -31404,12 +31432,12 @@ const fridayBundleBody=id=>(window.FridayBundleFrame&&WS_BY_ID[id]&&WS_BY_ID[id]
     front: !experienceDesktop && focusWin && openWins.has(focusWin) ? (WS.find(w => w.id === focusWin) || {}).label || '' : '',
     voice: !!voiceOn,
     chat: !!chatOpen,
-    items: countdowns
+    items: visibleCountdowns
   };
   const landingJudge = useRef(() => {});
   useEffect(() => {
     landingJudge.current();
-  }, [landingMode, openWins, experienceDesktop, focusWin, voiceOn, chatOpen, countdowns]);
+  }, [landingMode, openWins, experienceDesktop, focusWin, voiceOn, chatOpen, visibleCountdowns.length, countdowns, agentSettings.dismissed_countdowns]);
   // Hidden, the cluster takes no focus and no screen reader's attention.
   useEffect(() => {
     const el = landingElRef.current;
@@ -32287,11 +32315,12 @@ const fridayBundleBody=id=>(window.FridayBundleFrame&&WS_BY_ID[id]&&WS_BY_ID[id]
       onDraftChat: experienceDraft, apiFetch,
       renderApprovals: () => React.createElement(ExperienceApprovals)
 })}
-    {!experienceEnabled&&!STANDALONE_WS&&<div ref={landingElRef} className={'landing-cluster'+(landing.show?'':' hidden')} aria-hidden={landing.show?undefined:'true'} data-landing={landing.show?'shown':'hidden'} data-testid="landing-cluster" style={{position:'fixed',left:0,right:0,bottom:116,zIndex:5,display:'flex',flexDirection:'column',alignItems:'center',pointerEvents:'none'}}>
+    {!experienceEnabled&&!STANDALONE_WS&&<div ref={landingElRef} className={'landing-cluster'+(landing.show?'':' hidden')} aria-hidden={landing.show?undefined:'true'} data-landing={landing.show?'shown':'hidden'} data-testid="landing-cluster" style={{position:'fixed',left:'var(--fr-chat-dock-left,0px)',right:'var(--fr-chat-dock,0px)',bottom:116,zIndex:5,display:'flex',flexDirection:'column',alignItems:'center',pointerEvents:'none'}}>
       <div ref={landingAreaRef} style={{position:'absolute',bottom:0,left:'50%',transform:'translateX(-50%)',width:720,height:280,borderRadius:'50%',background:'radial-gradient(ellipse at center, rgba(0,0,0,0.85) 0%, rgba(0,0,0,0.65) 40%, rgba(0,0,0,0.28) 65%, transparent 100%)',pointerEvents:'none',zIndex:0}}/>
       <div style={{position:'relative',zIndex:1,fontFamily:'Orbitron, sans-serif',fontSize:26,color:'rgba(0,212,255,0.98)',marginBottom:12,animation:'fadeIn 1s ease',letterSpacing:'0.06em',textShadow:'0 0 12px rgba(0,0,0,0.95), 0 0 32px rgba(0,212,255,0.35), 0 2px 4px rgba(0,0,0,0.85)'}}>{getGreeting()}, boss.</div>
       <div style={{position:'relative',zIndex:1,marginBottom:10}}><FridayLockup size={11}/></div>
-      <FridayCountdowns items={countdowns}/>
+      <FridayCountdowns items={countdowns} hidden={agentSettings.dismissed_countdowns} onHide={hideCountdown}/>
+      {hiddenCountdowns>0&&<button type="button" className="cd-unhide" data-testid="countdowns-unhide" onClick={unhideCountdowns}>Show {hiddenCountdowns} hidden {hiddenCountdowns===1?'countdown':'countdowns'}</button>}
       {countdowns.length===0&&<div style={{position:'relative',zIndex:1,fontFamily:'JetBrains Mono',fontSize:12,color:'rgba(255,255,255,0.78)',marginBottom:16,textShadow:'0 1px 3px rgba(0,0,0,0.85)'}}>All systems nominal.</div>}
       <div style={{position:'relative',zIndex:1,pointerEvents:'auto',display:'flex',gap:8,alignItems:'center'}}>
         <FridayChatInput value={promptText} onChange={setPromptText} onSend={sendPrompt} maxHeight={120}

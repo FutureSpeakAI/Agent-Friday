@@ -3064,6 +3064,9 @@ DEFAULT_SETTINGS = {
     # day) shows (unified-shell.md §10.4): "smart" when it is useful, "always"
     # whenever no workspace is open, "never" only when asked (show_my_day).
     "landing_mode": "smart",
+    # Start-screen countdowns the owner hid: countdown id -> epoch seconds when that countdown passes, after which
+    # the entry is dropped (a yearly one comes back next year). Written by the start screen's hide control.
+    "dismissed_countdowns": {},
     # Big mode (hand-cursor.md §2): large targets when hand tracking is on. auto | on | off.
     "big_mode": "auto",
     # Claude Sonnet 5 is the default orchestrator — best cost/quality ratio for
