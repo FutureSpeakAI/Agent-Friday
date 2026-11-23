@@ -237,9 +237,14 @@ def test_a_known_link_survives_every_pass_with_its_label():
     assert bl.strip_unknown_links(text, {"https://gazette.example.test/budget"}) == text
 
 
-def test_a_line_of_prose_with_no_source_in_a_sourced_section_is_dropped():
-    got = run("## Calendar\nBig day: dinner at 7 with the mayor.\n- Planning at ten. [C1]\n")
-    assert "mayor" not in got.text and "Planning at ten" in got.text and got.dropped == {"calendar": 1}
+def test_an_uncited_line_of_prose_in_a_sourced_section_stands_and_an_uncited_bullet_does_not():
+    # "Nothing today." under Calendar is how an empty day reads; dropping it would report a dropped item that was
+    # never a claim (tests/api/test_workspace_jobs_visible). Whether uncited prose should go too is for the owner.
+    got = run("## Calendar\nNothing on the calendar today.\n- Dinner with the mayor.\n- Planning at ten. [C1]\n")
+    assert "Nothing on the calendar today." in got.text and "mayor" not in got.text
+    assert "Planning at ten" in got.text and got.dropped == {"calendar": 1}
+    linked = run("## Calendar\nSee https://evil.example.test/x for more.\n")     # prose that links is still checked
+    assert "evil.example.test" not in linked.text and linked.dropped == {"calendar": 1}
 
 
 def test_the_briefings_title_does_not_make_its_sections_sourced():

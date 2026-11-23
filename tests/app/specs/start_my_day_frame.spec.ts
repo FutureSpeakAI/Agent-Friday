@@ -34,7 +34,14 @@ function seedTodaysBriefing() {
 test('Start My Day opens News on the written briefing it speaks, and the section skills can be switched', async ({ page }, info) => {
   test.setTimeout(180_000);
   seedTodaysBriefing();
-  await page.request.post(`${BASE}/api/settings`, { data: { settings: { landing_mode: 'always' } } });
+  // The start screen always shows: the page READS landing_mode 'always' (the scratch settings are not written).
+  await page.route('**/api/settings', async r => {
+    if (r.request().method() !== 'GET') return r.continue();
+    const res = await r.fetch();
+    const body = await res.json();
+    body.settings = { ...(body.settings || {}), landing_mode: 'always' };
+    return r.fulfill({ response: res, json: body });
+  });
   // Past first run: its own screen ("Before anything else") covers the start screen (as in headings.spec.ts).
   await page.route('**/api/setup/status', r => r.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ initialized: true }) }));
   // The START MY DAY button is on the classic start screen; the Simple home has none (static/friday_display_style.js).
