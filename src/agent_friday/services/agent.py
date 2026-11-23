@@ -215,6 +215,53 @@ def _generate_crew_agent(messages, *, system, max_tokens, temperature,
             fallback_models=None)
 
 
+#: How long a background task waits for the local seat to answer before it fails, and how often it looks (seconds).
+SEAT_WAIT_S = 600.0
+SEAT_POLL_S = 15.0
+
+
+def _wait_for_local_seat(router, messages, route_ctx, session_ctx=None, *, max_wait_s=None, poll_s=None,
+                         sleep=_time.sleep, clock=_time.monotonic):
+    """Route again, every ``poll_s``, until the local seat is serving or ``max_wait_s`` has passed; returns the last route.
+
+    The commonest way a background task ended as failed was a local-only route that found the seat not serving (a
+    restart, a card lease, a park) at the moment it started: one look, then "no local model is serving", though the
+    seat was back within minutes. A background task has nobody waiting on it, so it waits, in its own log, and fails only
+    when the seat stays away; an interactive turn is not routed through here and still answers at once. Guarded by
+    tests/unit/test_background_task_waits_for_local_seat.py."""
+    limit = SEAT_WAIT_S if max_wait_s is None else float(max_wait_s)
+    step = SEAT_POLL_S if poll_s is None else float(poll_s)
+    started = clock()
+    task_id = str((session_ctx or {}).get('task_id') or '')
+    route = {'local_unavailable': True}
+    noted = False
+    while clock() - started < limit:
+        if task_id and not noted:
+            noted = True
+            try:
+                _task_log(task_id, 'The local model is not serving; waiting for it (up to %d minutes).' % int(limit // 60))
+            except Exception:
+                pass
+        try:
+            if task_id and _journal().stop_requested(task_id):
+                return route               # the owner stopped it: no more waiting
+        except Exception:
+            pass
+        sleep(step)
+        try:
+            route = router.route(messages, task_context=route_ctx) or {}
+        except Exception:
+            return route
+        if not route.get('local_unavailable'):
+            if task_id:
+                try:
+                    _task_log(task_id, 'The local model is back; going on.')
+                except Exception:
+                    pass
+            return route
+    return route
+
+
 def _generate_agent_untraced(messages, system=None, model=None, max_tokens=16384,
                     temperature=None, session_ctx=None, pii_lookup=None,
                     orb_label=None, orb_category='default', orb_icon='🧠',
@@ -320,7 +367,7 @@ def _generate_agent_untraced(messages, system=None, model=None, max_tokens=16384
     route = {}
     try:
         from agent_friday.routing.model_router import get_router
-        route = get_router(routing_cfg).route(messages, task_context={
+        _route_ctx = {
             "has_tools": True,
             "workspace": workspace or '',
             # `model` is a CLOUD-model hint here, not a binding, which is why
@@ -349,7 +396,13 @@ def _generate_agent_untraced(messages, system=None, model=None, max_tokens=16384
             # — set by the voice pipeline's own call site
             # (routes/voice.py), never inferred from message content.
             "is_voice": bool((session_ctx or {}).get("is_voice")),
-        }) or {}
+        }
+        route = get_router(routing_cfg).route(messages, task_context=_route_ctx) or {}
+        if (route.get('local_unavailable') and (session_ctx or {}).get('is_background_task')
+                and not (session_ctx or {}).get('scheduled')):
+            # A background task (not a scheduled run: the scheduler parks and retries those itself) waits for the
+            # local seat to come back instead of failing at once.
+            route = _wait_for_local_seat(get_router(routing_cfg), messages, _route_ctx, session_ctx) or route
         provider = route.get('provider', 'cloud')
         routed_model = route.get('model') or model
         routed_provider_name = route.get('provider_name')
