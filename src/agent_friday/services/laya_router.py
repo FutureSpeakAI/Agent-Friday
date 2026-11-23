@@ -310,6 +310,7 @@ _ASK_FOR = {
     "search_wiki": "What should I look up in your notes?",
     "search_past_conversations": "What part of our past conversations should I look for?",
 }
+_ASK_WHERE = "Do you want me to search the public web for that, or look in your notes?"
 _ASK_WHAT_TO_DO = "Which do you mean: open a file, send something, or look something up?"
 #: A command whose object is "it", "that" or "the thing": nothing to run, so it is asked back. Held by
 #: tests/unit/test_voice_ambiguous_asks_back.py.
@@ -530,6 +531,76 @@ _YES = re.compile(r"^(?:friday,?\s+)?(?:yes|yeah|yep|sure|ok(?:ay)?|go ahead|do 
                   r"please do|that's fine|sounds good)\b[\s,.!]*(?:(?:go ahead|do it|please)[\s,.!]*)?$", re.I)
 _NO = re.compile(r"^(?:friday,?\s+)?(?:no|nope|don'?t|do not|decline|deny|cancel(?: that| it)?|"
                  r"never mind|stop)\b[\s,.!]*(?:(?:thanks|thank you)[\s,.!]*)?$", re.I)
+
+#: The owner's own stores a spoken lookup may name. A lookup in one of them is the local search, whatever verb
+#: introduced it. Held by tests/unit/test_voice_personal_lookups_stay_local.py (the personal-store tests).
+_OWN_STORE = (r"(?:my\s+(?:knowledge (?:graph|base)|memory|memories|vault|contacts?|address book|notes|wiki)"
+              r"|the\s+(?:knowledge (?:graph|base)|wiki))")
+_OWN_STORE_AFTER = re.compile(
+    r"\b(?:look up|look for|search|find|check|pull up|google)\s+(?P<q>.+?)\s+(?:in|from|on|using|within)\s+"
+    + _OWN_STORE + r"\b", re.I)
+_OWN_STORE_FIRST = re.compile(
+    r"\b(?:look up|look in|search|check|find|pull up|google)\s+(?:in\s+)?" + _OWN_STORE
+    + r"\s+(?:for|about|on)\s+(?P<q>.+)", re.I)
+#: A lookup that also names what another tool searches (email, files, news, the calendar) is that tool's, as before.
+_OTHER_TOOL_NOUN = re.compile(
+    r"\b(?:e-?mails?|inbox|messages?|files?|folders?|pdfs?|documents?|docs?|news|headlines|calendar)\b", re.I)
+#: The owner directs a search to the web. An ALLOWLIST, not a list of things to avoid: the text must START with one of
+#: these web-directing phrases and carry a query after it; and it must hold no negation (any form), no personal word
+#: and no store word anywhere. Everything else that merely mentions the web or the internet ("the internet bill",
+#: "the web designer I hired", "dont use the web") is not a directive and is asked back. Held by the web,
+#: negation and personal-phrasing tests in tests/unit/test_voice_personal_lookups_stay_local.py.
+_WEB_DIRECTIVE = re.compile(
+    r"^(?:(?:please|can you|could you|hey friday,?|friday,?)\s+)*"
+    r"(?:search (?:the web|the internet|online)(?: for)?|web search(?: for)?|google"
+    r"|look (?:it |that |this )?up (?:on the web|on the internet|online)(?: for)?|look online for"
+    r"|find (?:out )?(?:online|on the web)(?: for)?)\s+\S", re.I)
+_NEGATION = re.compile(
+    r"\b(?:not|never|no|nt|dont|don|didnt|wont|cant|without|avoid\w*|skip\w*|off|instead|rather|except|"
+    r"ignor\w+|forget|leave|minus|exclud\w+|nothing|stop|stay|other than|w/o|"
+    r"private|privately|local|locally|offline|forbidd?en?|cancel\w*|never\s*mind|on[- ]device|secret|confidential)\b"
+    r"|n't|w/o|with\s+out", re.I)
+_PERSONAL_WORD = re.compile(r"\b(?:my|mine|our|we|i)\b", re.I)
+_STORE_WORD = re.compile(
+    r"\b(?:knowledge[\s-]*(?:graph|base)|vault|contacts?|address book|memory|memories|notes|wiki|drive|docs)\b", re.I)
+#: A question about the world that needs no place and so names nobody: the WHOLE query is one fixed topic and an
+#: optional day word. Anything with a place or a name beside the topic ("weather in Paris", "weather Dana") is
+#: asked back, because a rule cannot tell a city from a person. Held by
+#: test_a_topic_word_beside_a_person_is_not_a_public_question.
+_PUBLIC_TOPIC = re.compile(
+    r"(?:what(?:'s| is| time is| time)? )?(?:the )?(?:weather|forecast|sunset|sunrise|exchange rate)"
+    r"(?: time)?(?: is)?"
+    r"(?: (?:today|tomorrow|tonight|now|right now|this (?:morning|afternoon|evening|week|weekend)))*", re.I)
+
+
+def _owner_says_web(text: str) -> bool:
+    """The owner plainly directs this lookup to the web (see _WEB_DIRECTIVE)."""
+    t = " ".join(str(text or "").split())
+    t = re.sub(r"\b(?:for|near) me\b", "", t, flags=re.I)
+    return bool(_WEB_DIRECTIVE.search(t)) and not (
+        _NEGATION.search(t) or _PERSONAL_WORD.search(t) or _STORE_WORD.search(t))
+
+
+def _public_question(text: str, m) -> bool:
+    """Whether a bare "look up ..." asks about the world and nothing of the owner's."""
+    q = _query(text, m).get("query", "")
+    return bool(_PUBLIC_TOPIC.fullmatch(q)) and not _PERSONAL_WORD.search(text) and not _NEGATION.search(text)
+
+
+def _store_route(q: str, text: str) -> Route:
+    label, _, required = TOOLS["search_wiki"]
+    return _with_args("search_wiki", {"query": q}, 0.95, "rule", label, required,
+                      reason="a lookup in the owner's own store stays local", text=text)
+
+
+def _own_store_query(text: str) -> str:
+    """The subject of a lookup the owner pointed at their own store, else "". Pure."""
+    for pat in (_OWN_STORE_AFTER, _OWN_STORE_FIRST):
+        m = pat.search(text or "")
+        if m:
+            return _clean_query(m.group("q"))
+    return ""
+
 
 #: (tool, pattern). First match wins; order is most specific first.
 _RULES: List[Tuple[str, re.Pattern]] = [(t, re.compile(p, re.I)) for t, p in [
@@ -796,8 +867,21 @@ def _tier0_rest(text: str) -> Optional[Route]:
         m = pat.search(text)
         if m:
             label, template, required = TOOLS[tool]
+            if tool == "search_web":
+                # Only the web rule is ever overridden by a named store; every other rule (email, calendar,
+                # past conversations, files, news) keeps its own lookup, as before.
+                q = _own_store_query(text)
+                if q:
+                    return _store_route(q, text)
+                if not _owner_says_web(text) and not _public_question(text, m):
+                    return Route("ask", tool=tool, confidence=0.95, layer="rule", label=label,
+                                 question=_ASK_WHERE,
+                                 reason="a lookup that names no place is asked, never sent to the web")
             return _with_args(tool, template(text, m), 0.95, "rule", label, required,
                               reason="pattern", text=text)
+    q = _own_store_query(text)
+    if q and not _OTHER_TOOL_NOUN.search(text):
+        return _store_route(q, text)
     if _SMALL_TALK.match(text):
         return Route("no_tool", confidence=0.95, layer="rule", reason="small talk")
     return None
