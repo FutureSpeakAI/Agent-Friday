@@ -447,10 +447,17 @@ def _on_right_decision(rec: dict) -> None:
     device_pairing.set_right(str(device_id), right, True)
 
 
+def _on_reconfirm_decision(rec: dict) -> None:
+    from agent_friday.services.approvals import SCREEN_LABEL
+    if rec.get("status") == "approved" and rec.get("decided_by") == SCREEN_LABEL:
+        device_pairing.reconfirm(str((rec.get("payload") or {}).get("device_id") or ""), str(rec.get("approval_id")))
+
+
 def _register() -> None:
     from agent_friday.services import approvals
     approvals.register_decision_hook(KIND, _on_decision)
     approvals.register_decision_hook(RIGHT_KIND, _on_right_decision)
+    approvals.register_decision_hook(device_pairing.RECONFIRM_CARD_KIND, _on_reconfirm_decision)
     device_pairing.on_pairing_window(opened=reset_budget, closed=end_in_flight)
 
 
