@@ -59,12 +59,18 @@ Binary frame: PCM16 mono 24 kHz in clauses; play in order. Text frames:
 {"type":"turn_done","engine":{...}}
 {"type":"status","text":"Warming up the voice - about 20 s"}   local cold start is 25-35 s: show it, do not time out before 60 s
 {"type":"error","code":"no_engine|start_failed|engine_not_selected|unauthorized|voice_error","words":"..."}   say words as written
-{"type":"closed","reason":"...","code":"stopped|idle|time_limit|replaced|frame_too_large|engine_not_selected|no_engine|start_failed|upstream_ended|device_gone"}
+{"type":"closed","reason":"...","code":"stopped|idle|time_limit|replaced|frame_too_large|engine_not_selected|no_engine|start_failed|upstream_ended|device_gone|revoked|voice_error"}
 ```
 
 The desktop's own panel frames (`manifest`, `contract`, `context_reach`, `stage`, receipts) and raw error text are never
 forwarded. One session per device (a second replaces the first); 120 s with no frame from the device and a 30 minute
-limit close the session. No server-side reconnect.
+limit close the session, the limit even while the device keeps talking. The PC re-reads the pairing store about once
+a second: a device revoked, unpaired or unbound from the owner mid-session is closed with `revoked`. `closed` is
+always the last frame. A frame over 64 KB (audio) is refused at the socket; a control frame over 4096 bytes (UTF-8)
+closes with `frame_too_large`. No server-side reconnect.
+
+The PC's hop to its own session route carries no credential: with `FRIDAY_WS_TOKEN` set or
+`FRIDAY_TRUST_LOOPBACK=0` that route refuses it and the device gets `error unauthorized`, then `closed`.
 
 ### The who-spoke badge
 

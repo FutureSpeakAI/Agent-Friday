@@ -329,8 +329,17 @@ def test_a_session_times_out_idle_and_at_the_hard_limit():
     assert b.timed_out()[0] == "idle"
     b.from_device(json.dumps({"type": "ping"}))                  # a frame from the device keeps it alive
     assert b.timed_out() is None
+    now[0] = vb.MAX_SESSION_S
+    b.from_device(json.dumps({"type": "ping"}))                  # still talking at the limit: idle cannot fire
     now[0] = vb.MAX_SESSION_S + 1
-    assert b.timed_out()[0] in ("time_limit", "idle")
+    assert b.timed_out()[0] == "time_limit"
+
+
+def test_a_control_frame_is_measured_in_bytes_not_characters():
+    b, sent, _ = _bridge()
+    wide = json.dumps({"type": "ping", "pad": "é" * (vb.MAX_TEXT_FRAME // 2 + 10)}, ensure_ascii=False)
+    assert len(wide) <= vb.MAX_TEXT_FRAME < len(wide.encode("utf-8"))
+    assert b.from_device(wide) is False and b.closed[0] == "frame_too_large"
 
 
 # ── run_session over fakes ───────────────────────────────────────────────────
@@ -354,8 +363,10 @@ class _Q:
         self.closed = True
 
 
-def _run(ws, dev_id="d1", info=LOCAL, upstream=None, connect=None, monkeypatch=None):
+def _run(ws, dev_id="d1", info=LOCAL, upstream=None, connect=None, monkeypatch=None, allowed=True):
     monkeypatch.setattr(vb, "resolve_engine", lambda: info)
+    if allowed is True:
+        monkeypatch.setattr(vb, "still_allowed", lambda device_id: True)
     up = upstream or _Q()
     t = threading.Thread(target=vb.run_session, args=(ws, {"id": dev_id}, "conv-1"),
                          kwargs={"connect": connect or (lambda url: up)}, daemon=True)
@@ -414,24 +425,93 @@ def test_a_pc_session_that_cannot_start_is_told_to_the_device(monkeypatch):
 
 
 def test_the_pc_ending_its_session_closes_the_device_with_a_reason(monkeypatch):
-    ws = _Q()
-    up = _Q()
-    t, _ = _run(ws, upstream=up, monkeypatch=monkeypatch)
-
     class _Dead(_Q):
         def receive(self, timeout=None):
             raise OSError("closed")
-    dead = _Dead()
-    t2 = threading.Thread(target=vb.run_session, args=(ws, {"id": "d9"}, ""), kwargs={"connect": lambda u: dead},
-                          daemon=True)
-    ws2 = _Q()
-    t3 = threading.Thread(target=vb.run_session, args=(ws2, {"id": "d9"}, ""), kwargs={"connect": lambda u: dead},
-                          daemon=True)
-    t3.start()
-    t3.join(5)
-    assert _texts(ws2)[-1]["code"] == "upstream_ended"
+    ws = _Q()
+    t, _ = _run(ws, upstream=_Dead(), monkeypatch=monkeypatch)
+    t.join(5)
+    assert not t.is_alive() and _texts(ws)[-1]["code"] == "upstream_ended"
+
+
+def test_closed_is_the_last_frame_even_while_the_pc_is_still_sending_audio(monkeypatch):
+    class _Flood(_Q):
+        def receive(self, timeout=None):
+            threading.Event().wait(0.001)
+            return json.dumps({"type": "audio", "data": base64.b64encode(b"\x05\x00" * 8).decode()})
+    ws = _Q()
+    t, _ = _run(ws, upstream=_Flood(), monkeypatch=monkeypatch)
+    threading.Event().wait(0.2)
     ws.inbox.put(json.dumps({"type": "stop"}))
     t.join(5)
+    threading.Event().wait(0.3)                                  # anything the pump could still send has been sent
+    assert not t.is_alive()
+    assert isinstance(ws.sent[-1], str) and json.loads(ws.sent[-1])["type"] == "closed"
+
+
+def test_the_hard_limit_closes_a_session_the_device_keeps_talking_in(monkeypatch):
+    monkeypatch.setattr(vb, "MAX_SESSION_S", 0.5)
+    ws = _Q()
+    t, _ = _run(ws, monkeypatch=monkeypatch)
+    stop_at = threading.Event()
+
+    def talk():
+        while not stop_at.is_set():
+            ws.inbox.put(b"\x01\x00" * 160)
+            stop_at.wait(0.05)
+    threading.Thread(target=talk, daemon=True).start()
+    t.join(4)
+    stop_at.set()
+    assert not t.is_alive(), "a device that keeps sending must not outlive the hard limit"
+    assert _texts(ws)[-1]["code"] == "time_limit"
+
+
+def test_a_device_revoked_mid_session_is_closed_with_revoked(monkeypatch):
+    allowed = [True]
+    monkeypatch.setattr(vb, "still_allowed", lambda device_id: allowed[0])
+    monkeypatch.setattr(vb, "RECHECK_S", 0.05)
+    ws = _Q()
+    t, up = _run(ws, monkeypatch=monkeypatch, allowed=None)
+    ws.inbox.put(b"\x01\x00" * 160)
+    threading.Event().wait(0.2)
+    assert t.is_alive()
+    allowed[0] = False
+    for _ in range(20):
+        ws.inbox.put(b"\x01\x00" * 160)                       # still talking: the re-check is per frame too
+        threading.Event().wait(0.02)
+    t.join(4)
+    assert not t.is_alive() and _texts(ws)[-1]["code"] == "revoked"
+    assert json.loads(up.sent[-1])["type"] == "end" and up.closed
+
+
+def test_still_allowed_reads_the_pairing_store_each_time(monkeypatch):
+    from agent_friday.services import device_pairing
+    store = {"p1": {"id": "p1", "kind": "phone"}}
+    monkeypatch.setattr(device_pairing, "get_device", lambda i: store.get(i))
+    from agent_friday.tv_gateway import owner_turn
+    monkeypatch.setattr(owner_turn, "is_owner_device", lambda d: bool(d))
+    assert vb.still_allowed("p1") is True
+    store.clear()                                                # unpaired / revoked
+    assert vb.still_allowed("p1") is False
+    store["p1"] = {"id": "p1", "kind": "watch"}
+    assert vb.still_allowed("p1") is False
+
+
+def test_a_failure_mid_session_is_not_reported_as_a_failed_start(monkeypatch):
+    class _Broken(_Q):
+        def send(self, raw):
+            raise OSError("pipe")
+    ws = _Q()
+    t, _ = _run(ws, upstream=_Broken(), monkeypatch=monkeypatch)
+    ws.inbox.put(b"\x01\x00" * 160)
+    t.join(5)
+    codes = [f.get("code") for f in _texts(ws)]
+    assert "start_failed" not in codes and codes[-1] == "upstream_ended"
+
+
+def test_the_socket_layer_refuses_an_oversized_frame_before_buffering_it():
+    app = gateway.create_app()
+    assert app.config["SOCK_SERVER_OPTIONS"]["max_message_size"] == vb.MAX_PCM_FRAME
 
 
 def test_a_second_session_for_the_same_device_ends_the_first_with_replaced(monkeypatch):
@@ -534,8 +614,9 @@ def test_a_paired_phone_talks_to_the_pcs_session_over_real_sockets(monkeypatch):
         first_audio_s = time.monotonic() - t0
         recv_until(is_t("turn_done"))
         ws.send(json.dumps({"type": "barge_in"}))
-        recv_until(lambda g: isinstance(g, dict) and g["type"] == "speaking" and g["who"] == "you"
-                   and got.index(g) > [i for i, x in enumerate(got) if isinstance(x, dict) and x["type"] == "turn_done"][0])
+        after_done = len(got)
+        recv_until(lambda g: any(isinstance(x, dict) and x["type"] == "speaking" and x["who"] == "you"
+                                 for x in got[after_done:]))
         ws.send(json.dumps({"type": "stop"}))
         recv_until(is_t("closed"))
         dicts = [g for g in got if isinstance(g, dict)]

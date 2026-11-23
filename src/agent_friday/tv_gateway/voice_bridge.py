@@ -40,6 +40,7 @@ MAX_TEXT_FRAME = 4096            # bytes of one JSON control frame
 MAX_TTS_CHARS = 2000
 MAX_SESSION_S = 30 * 60
 IDLE_S = 120
+RECHECK_S = 1.0                  # how often a live session re-reads whether the device may still use it
 RELEASE_SILENCE_FRAMES = 10      # 100 ms each: the silence that lets the engine's endpointer close the turn
 SILENT_FRAME_B64 = base64.b64encode(b"\x00" * 3200).decode("ascii")
 DEVICE_FRAMES = ("start", "press", "release", "barge_in", "stop", "ping")
@@ -54,6 +55,10 @@ ERROR_WORDS = {
     "unauthorized": "This computer refused the voice session.",
     "voice_error": "This computer's voice had a problem.",
 }
+
+
+class _UpstreamGone(Exception):
+    """The PC's own session socket refused a frame."""
 
 
 class VoiceRefused(Exception):
@@ -131,7 +136,7 @@ class Bridge:
                 return False
             self._up({"type": "audio", "data": base64.b64encode(bytes(frame)).decode("ascii")})
             return True
-        if not isinstance(frame, str) or len(frame) > MAX_TEXT_FRAME:
+        if not isinstance(frame, str) or len(frame.encode("utf-8", "replace")) > MAX_TEXT_FRAME:
             self.close("frame_too_large", "A control frame was too large.")
             return False
         try:
@@ -223,6 +228,15 @@ _ACTIVE: dict = {}
 _ACTIVE_LOCK = threading.Lock()
 
 
+def still_allowed(device_id: str) -> bool:
+    """The device as the pairing store holds it NOW is still an owner-bound phone or tablet. A session re-reads this
+    while it runs, so revoking or unbinding the device ends it with ``revoked``
+    (test_a_device_revoked_mid_session_is_closed_with_revoked)."""
+    from agent_friday.services import device_pairing
+    from agent_friday.tv_gateway import pc_common
+    return pc_common.allowed(device_pairing.get_device(device_id))
+
+
 def resolve_engine() -> dict:
     """The PC's voice setting as the desktop resolves it (engine, label, the WebSocket path to run)."""
     from agent_friday.routes import voice as _rv
@@ -309,12 +323,21 @@ def run_session(ws, device: dict, conversation_id: str = "", connect: Optional[C
         old.closed = ("replaced", "Another voice session started on this device.")
         old.stop.set()
     send_lock = threading.Lock()
+    finished = []                                       # set once ``closed`` is sent: nothing may follow it
 
     def to_device(obj):
         with send_lock:
-            ws.send(obj if isinstance(obj, (bytes, bytearray)) else json.dumps(obj))
+            if not finished:
+                ws.send(obj if isinstance(obj, (bytes, bytearray)) else json.dumps(obj))
+
+    def say_closed(code, reason):
+        with send_lock:
+            if not finished:
+                finished.append(True)
+                ws.send(json.dumps({"type": "closed", "reason": reason, "code": code}))
 
     client = None
+    pump = None
     code, reason = "stopped", "The session ended."
     try:
         info = resolve_engine()
@@ -327,24 +350,46 @@ def run_session(ws, device: dict, conversation_id: str = "", connect: Optional[C
 
         def to_upstream(raw):
             with client_lock:
-                client.send(raw)
+                try:
+                    client.send(raw)
+                except Exception as e:
+                    raise _UpstreamGone() from e
 
         bridge = Bridge(info, to_device, to_upstream)
         bridge.open()
-        threading.Thread(target=_pump, args=(client, bridge, slot), name="tv-voice-pump", daemon=True).start()
+        pump = threading.Thread(target=_pump, args=(client, bridge, slot), name="tv-voice-pump", daemon=True)
+        pump.start()
+        checked = 0.0
         while not slot.stop.is_set():
+            over = bridge.timed_out()
+            if over:
+                bridge.close(*over)
+                break
+            if time.monotonic() - checked >= RECHECK_S:
+                checked = time.monotonic()
+                if not still_allowed(dev_id):
+                    bridge.close("revoked", "This device may no longer use this computer's voice.")
+                    break
             try:
                 frame = ws.receive(timeout=1)
             except Exception:
                 bridge.close("device_gone", "The device went away.")
                 break
             if frame is None:
-                over = bridge.timed_out()
-                if over:
-                    bridge.close(*over)
-                    break
                 continue
-            if not bridge.from_device(frame):
+            try:
+                keep = bridge.from_device(frame)
+            except _UpstreamGone:
+                bridge.close("upstream_ended", "The computer's voice session ended.")
+                break
+            except OSError:                             # the device's socket refused our answer
+                bridge.close("device_gone", "The device went away.")
+                break
+            except Exception as e:
+                _log.info("voice frame failed: %s", type(e).__name__)
+                bridge.close("voice_error", ERROR_WORDS["voice_error"])
+                break
+            if not keep:
                 break
         slot.stop.set()
         code, reason = slot.closed or bridge.closed or ("stopped", "The session ended.")
@@ -361,13 +406,15 @@ def run_session(ws, device: dict, conversation_id: str = "", connect: Optional[C
     finally:
         slot.stop.set()
         try:
-            to_device({"type": "closed", "reason": reason, "code": code})
-        except Exception:
-            pass
-        try:
             if client is not None:
                 client.send(json.dumps({"type": "end"}))
                 client.close()
+        except Exception:
+            pass
+        if pump is not None:
+            pump.join(timeout=2)                        # its receive waits at most 1 s
+        try:
+            say_closed(code, reason)
         except Exception:
             pass
         with _ACTIVE_LOCK:
@@ -379,14 +426,18 @@ def register(app, refuse) -> None:
     """GET (WebSocket) /tv/v1/voice/session and POST /tv/v1/tts on the gateway app."""
     from flask import Response, g, request
     from flask_sock import Sock
+    from agent_friday.services import reasoning_trace as _rt
+    # simple_websocket buffers a whole message before handing it over: the cap must be at the socket, not after
+    app.config["SOCK_SERVER_OPTIONS"] = {**app.config.get("SOCK_SERVER_OPTIONS", {}),
+                                         "max_message_size": MAX_PCM_FRAME}
     sock = Sock(app)
 
     @app.before_request
     def _voice_gate():
         if request.path != SESSION_PATH:
             return None
-        from agent_friday.tv_gateway import owner_turn
-        if not owner_turn.is_owner_device(getattr(g, "device", None)):
+        from agent_friday.tv_gateway import owner_turn, pc_common
+        if not pc_common.allowed(getattr(g, "device", None)):
             return refuse(403, "voice with this computer is for the owner's own phone or tablet",
                           code="owner_only")
         cid = (request.args.get("conversation_id") or "").strip()
@@ -395,6 +446,7 @@ def register(app, refuse) -> None:
         return None
 
     @sock.route(SESSION_PATH)
+    @_rt.traced("voice", "Phone voice session")
     def voice_session(ws):
         run_session(ws, g.device, (request.args.get("conversation_id") or "").strip())
 
