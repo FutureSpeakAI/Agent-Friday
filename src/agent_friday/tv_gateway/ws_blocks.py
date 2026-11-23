@@ -63,6 +63,11 @@ def _clean(text: str) -> str:
     return _BARE_URL.sub("", _EMPHASIS.sub("", text))
 
 
+def line(text, limit: int = 200) -> str:
+    """One line of plain words: no markup, no URL, one space between words, capped."""
+    return " ".join(_clean(str(text or "")).split())[:limit]
+
+
 def parse(markdown: str, folder: str = "") -> Parsed:
     """The blocks, sources and title of one page. Never raises on odd input; unknown syntax is dropped."""
     out = Parsed()

@@ -200,6 +200,57 @@ def stop_everything_resume():
                     "saved": not st.get("save_error")})
 
 
+# ── Pairing window ───────────────────────────────────────────────────────────
+#
+# A paired phone, tablet or watch gets every right on one press, so pairing is only possible
+# while the owner has opened it here. Opening is a press on Friday's own page on this PC (the
+# same proof as Resume); closing only narrows, so any page request may do it.
+
+@control_bp.route('/api/pairing-window', methods=['GET'])
+@login_required
+def pairing_window_state():
+    from agent_friday.services import device_pairing
+    return jsonify(device_pairing.pairing_window())
+
+
+@control_bp.route('/api/pairing-window', methods=['POST'])
+@login_required
+def pairing_window_open():
+    from agent_friday.services import device_pairing, screen_click
+    if not (screen_click.screen_session(request) and core._is_local_request()):
+        return jsonify({"status": "refused", "code": "pairing_window_needs_press",
+                        "error": "Opening pairing is a press on Friday's own screen on this PC."}), 403
+    body = request.get_json(silent=True) or {}
+    return jsonify(device_pairing.open_pairing_window(body.get("seconds", 300), by="owner:desk"))
+
+
+@control_bp.route('/api/pairing-window', methods=['DELETE'])
+@login_required
+def pairing_window_close():
+    from agent_friday.services import device_pairing
+    return jsonify(device_pairing.close_pairing_window(by="owner:desk"))
+
+
+_PAIRING_PAGE = Path(__file__).resolve().parents[3] / "static" / "pairing.html"
+
+
+@control_bp.route('/pairing', methods=['GET'])
+@login_required
+def pairing_page():
+    """Add a device: the owner's button, countdown and Close for the pairing window. This PC only."""
+    if not core._is_local_request():
+        return "Add a device opens on this PC only.", 403
+    try:
+        page = _PAIRING_PAGE.read_text(encoding="utf-8")
+    except OSError:
+        return "Add a device page not found", 404
+    tok = ('<script>window.__FRIDAY_API_TOKEN="%s";</script>'  # pragma: allowlist secret
+           % core._current_api_token())
+    resp = Response(page.replace("<head>", "<head>" + tok, 1), content_type="text/html")
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
 # ── Folders Friday may use (services/path_policy, BD-26) ─────────────────────
 #
 # A grant widens where the file tools may read or write, so it is a press on

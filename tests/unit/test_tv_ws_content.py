@@ -32,6 +32,7 @@ class Desk:
                           "projects": [{"name": "brushfire", "filename": "brushfire.md", "modified": 1700000100}]}
         self.pages = {"entities/person-griff-jay.md": PAGE}
         self.graph = []
+        self.graph_entities, self.graph_rels = None, []
 
     def __call__(self, path, params=None):
         self.calls.append((path, dict(params or {})))
@@ -46,7 +47,23 @@ class Desk:
             return 200, json.dumps({"status": "ok", "content": text, "modified": 1700000300}).encode(), "application/json"
         if path == "/api/knowledge-graph/search":
             return 200, json.dumps({"status": "ok", "results": self.graph}).encode(), "application/json"
+        if self.graph_entities is not None and path.startswith("/api/knowledge-graph/"):
+            return self._graph(path, params)
         return 404, b"{}", "application/json"
+
+
+    def _graph(self, path, params):
+        body = {"status": "ok"}
+        if path.endswith("/summary"):
+            body.update(counts={"entities": len(self.graph_entities), "relationships": len(self.graph_rels)},
+                        last_indexed="t", communities=[])
+        elif path.endswith("/graph"):
+            body.update(entities=self.graph_entities, relationships=self.graph_rels, communities=[])
+        elif "/neighbors/" in path:
+            body.update(entities=self.graph_entities, relationships=self.graph_rels)
+        else:
+            return 404, b"{}", "application/json"
+        return 200, json.dumps(body).encode(), "application/json"
 
 
 @pytest.fixture
@@ -55,6 +72,7 @@ def desk(monkeypatch):
     monkeypatch.setattr(pc_read, "_desk", d)
     monkeypatch.setattr(ws_knowledge, "PAGES_TTL_S", 0.0)
     monkeypatch.setattr(ws_knowledge, "_LIST", {"key": None, "at": 0.0, "rows": []})
+    monkeypatch.setattr(ws_knowledge.ws_graph, "_SNAPSHOT", None)
     return d
 
 
@@ -94,9 +112,9 @@ def test_a_section_the_workspace_does_not_serve_is_unknown(client, desk):
 
 def test_a_workspace_with_no_device_block_or_no_adapter_is_unknown_not_empty(client, desk, monkeypatch):
     dev = paired()
-    assert get(client, dev, "/tv/v1/workspaces/calendar/list").status_code == 404       # no block
-    monkeypatch.setitem(ws_content.ADAPTERS, "calendar", ws_knowledge)
-    assert get(client, dev, "/tv/v1/workspaces/calendar/list").status_code == 404       # an adapter but no block
+    assert get(client, dev, "/tv/v1/workspaces/career/list").status_code == 404     # no block
+    monkeypatch.setitem(ws_content.ADAPTERS, "career", {"pages": ws_knowledge})
+    assert get(client, dev, "/tv/v1/workspaces/career/list").status_code == 404     # an adapter but no block
     monkeypatch.delitem(ws_content.ADAPTERS, "knowledge")
     assert get(client, dev, "/tv/v1/workspaces/knowledge/list").status_code == 404       # a block but no adapter
     assert get(client, dev, "/tv/v1/workspaces/..%2Fx/list").status_code == 404
@@ -166,9 +184,9 @@ def test_a_page_that_is_not_there_is_404_a_locked_one_is_423_and_a_down_wiki_is_
 def test_changes_says_whether_the_rev_moved(client, desk):
     dev = paired()
     rev = rows(client)["rev"]
-    assert get(client, dev, "/tv/v1/workspaces/knowledge/changes?since=" + rev).get_json()["changed"] is False
+    assert get(client, dev, "/tv/v1/workspaces/knowledge/changes?section=pages&since=" + rev).get_json()["changed"] is False
     desk.structure["entities"][0]["modified"] += 50
-    again = get(client, dev, "/tv/v1/workspaces/knowledge/changes?since=" + rev).get_json()
+    again = get(client, dev, "/tv/v1/workspaces/knowledge/changes?section=pages&since=" + rev).get_json()
     assert again["changed"] is True and again["rev"] != rev
 
 
@@ -218,3 +236,47 @@ def test_paging_the_list_scans_the_wiki_once_within_the_ttl_and_again_after_it(c
     clock[0] += 61
     get(client, dev, "/tv/v1/workspaces/knowledge/list")
     assert [c[0] for c in desk.calls].count("/api/wiki/structure") == 2
+
+
+def node(i, degree, pages=(), title=None):
+    return {"id": i, "title": title or "Node " + i, "type": "person", "community": "0", "degree": degree,
+            "provenance": {"wiki_pages": list(pages)}}
+
+
+def rel(a, b, weight=1, kind="knows"):
+    return {"id": a + b, "source": a, "target": b, "weight": weight, "type": kind}
+
+
+def test_a_page_cited_by_a_node_says_which_node_and_lists_what_it_is_linked_to(client, desk):
+    desk.graph_entities = [node("griff", 9, ["entities/person-griff-jay.md"]), node("brush", 5, title="Brushfire"),
+                           node("jere", 7, title="Jere Jay"), node("other", 1)]
+    desk.graph_rels = [rel("griff", "brush", 1, "works on"), rel("jere", "griff", 3, "family of"), rel("other", "brush")]
+    got = get(client, paired(), "/tv/v1/workspaces/knowledge/item/page:entities/person-griff-jay.md").get_json()
+    assert got["node"] == "griff"
+    assert got["relations"] == [{"rel": "family of", "ref": "node:jere", "title": "Jere Jay", "kind": "node"},
+                                {"rel": "works on", "ref": "node:brush", "title": "Brushfire", "kind": "node"}]
+
+
+def test_the_highest_degree_node_wins_when_two_cite_a_page_and_relations_are_capped(client, desk, monkeypatch):
+    monkeypatch.setattr(ws_knowledge, "RELATIONS_MAX", 2)
+    page = ["entities/person-griff-jay.md"]
+    desk.graph_entities = [node("low", 1, page), node("high", 9, page)] + [node("n%d" % i, i) for i in range(5)]
+    desk.graph_rels = [rel("high", "n%d" % i, i + 1) for i in range(5)] + [rel("high", "high"), rel("high", "ghost")]
+    got = get(client, paired(), "/tv/v1/workspaces/knowledge/item/page:entities/person-griff-jay.md").get_json()
+    assert got["node"] == "high" and [r["ref"] for r in got["relations"]] == ["node:n4", "node:n3"]
+
+
+def test_a_page_no_node_cites_has_no_node_and_no_relations(client, desk):
+    desk.graph_entities = [node("a", 1, ["entities/other.md"])]
+    got = get(client, paired(), "/tv/v1/workspaces/knowledge/item/page:entities/person-griff-jay.md").get_json()
+    assert got["node"] is None and got["relations"] == [] and got["blocks"]
+
+
+def test_a_graph_that_is_down_or_absent_never_hides_the_page(client, desk):
+    dev = paired()
+    got = get(client, dev, "/tv/v1/workspaces/knowledge/item/page:entities/person-griff-jay.md").get_json()
+    assert got["node"] is None and got["relations"] == [] and got["blocks"]
+    desk.graph_entities = [node("a", 1, ["entities/person-griff-jay.md"])]
+    desk.down.add("/api/knowledge-graph/neighbors")
+    again = get(client, dev, "/tv/v1/workspaces/knowledge/item/page:entities/person-griff-jay.md")
+    assert again.status_code == 200 and again.get_json()["blocks"]

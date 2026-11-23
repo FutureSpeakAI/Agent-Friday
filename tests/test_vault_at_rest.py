@@ -70,13 +70,17 @@ def test_read_plaintext_passthrough():
         assert server._vault_read_text(p) == '{"legacy": true}'
 
 
-def test_keyless_is_plaintext():
+def test_keyless_write_is_refused_not_stored_as_plaintext():
+    # threat assessment fix #2: no key means nothing is written (tests/unit/test_vault_refuses_plaintext.py)
     _disable_key()
     with tempfile.TemporaryDirectory() as d:
         p = Path(d) / "noenc.json"
-        server._vault_write_text(p, '{"x": 1}')
-        assert p.read_bytes() == b'{"x": 1}', "no key -> plaintext on disk"
-        assert server._vault_read_text(p) == '{"x": 1}'
+        try:
+            server._vault_write_text(p, '{"x": 1}')
+            assert False, "a keyless write must be refused"
+        except _agent.VaultKeyMissing:
+            pass
+        assert not p.exists(), "no key -> nothing on disk"
 
 
 def test_encrypted_without_key_raises():

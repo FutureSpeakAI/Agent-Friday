@@ -2212,6 +2212,16 @@ def _interrupted_words(name: str, verdict: Dict[str, Any], outcome: str) -> str:
             "the milestone again.")
 
 
+def _recovery_receipt(goal, m, run, **kw):
+    """One signed recovery receipt per interrupted milestone run; a receipt that cannot be written
+    never stops the settle."""
+    try:
+        from agent_friday.services import recovery_receipts
+        recovery_receipts.milestone_interrupted(goal, m, run, **kw)
+    except Exception as e:
+        _log.warning("recovery receipt not written for milestone %s: %s", m.get("milestone_id"), e)
+
+
 def _reconcile_milestone(goal_id: str, milestone_id: str, *, background: bool = True,
                          force: bool = False) -> str:
     """Settle one milestone whose run an earlier process left behind. Returns
@@ -2232,6 +2242,8 @@ def _reconcile_milestone(goal_id: str, milestone_id: str, *, background: bool = 
         # The run record says the work was never handed to a task: the gate
         # and the budget had run, nothing else. Nothing ran, so it can run
         # again; its unspent reservation is given back.
+        _recovery_receipt(goal, m, run, boundary="before its work started", may_have_acted=False,
+                          next="runs_again_when_due")
         _update_milestone(goal_id, milestone_id, status="pending", blocker=None, hold=None,
                           **_closed_run(goal_id, milestone_id))
         _release_goal_budget(goal_id, int(run.get("reserved_mψ") or 0))
@@ -2243,6 +2255,8 @@ def _reconcile_milestone(goal_id: str, milestone_id: str, *, background: bool = 
     if not tid:
         # A run with no record (written before records existed) or one cut
         # off as it was being handed to its task: what it did is unknown.
+        _recovery_receipt(goal, m, run, boundary="handed to a task; the task is unknown",
+                          may_have_acted=True, next="not_repeated_owner_told")
         _block(goal_id, milestone_id, {
             "type": "interrupted", "task_id": None, "needs_confirmation": True,
             "task_resumable": False, "task_needs_confirmation": False,
@@ -2257,6 +2271,8 @@ def _reconcile_milestone(goal_id: str, milestone_id: str, *, background: bool = 
         _adopt(goal_id, milestone_id, tid, token, background=background)
         return "adopted"
     if outcome == "failed":
+        _recovery_receipt(goal, m, run, boundary="its task ended with an error", may_have_acted=True,
+                          next="not_repeated_owner_told")
         _block(goal_id, milestone_id, {
             "type": "run_failed", "task_id": tid, "needs_confirmation": True,
             "text": (f"Friday stopped while “{name}” was running, and its task then ended "
@@ -2271,6 +2287,19 @@ def _reconcile_milestone(goal_id: str, milestone_id: str, *, background: bool = 
             verdict = task_resume.resumability(tid) or {}
         except Exception:
             verdict = {}
+    # Written before the milestone is settled: a crash between the two loses the settle, which the next boot
+    # redoes, and never the receipt (recovery_receipts dedupes the repeat).
+    if outcome == "interrupted":
+        _recovery_receipt(goal, m, run, boundary="its task was interrupted", may_have_acted=True,
+                          next=("asks_the_owner_before_resuming" if verdict.get("needs_confirmation")
+                                else "may_resume_from_its_checkpoint" if verdict.get("resumable")
+                                else "stays_stopped_owner_told"))
+    elif outcome == "missing":
+        _recovery_receipt(goal, m, run, boundary="its task could not be found", may_have_acted=True,
+                          next="not_repeated_owner_told")
+    else:
+        _recovery_receipt(goal, m, run, boundary="its task was in a state this pass does not know (%s)"
+                          % str(outcome)[:40], may_have_acted=True, next="not_repeated_owner_told")
     _block(goal_id, milestone_id, {
         "type": "interrupted", "task_id": tid, "needs_confirmation": True,
         "task_resumable": bool(verdict.get("resumable")),
