@@ -275,10 +275,17 @@ def top_bar_leftovers(client) -> list[str]:
         out.append("%s updates (%s)" % (s["updates"], ", ".join(
             "%s x%s" % (g.get("kind"), g.get("count")) for g in u.get("groups", []))))
     if s.get("activity"):
-        out.append("%s task(s) in Activity" % s["activity"])
+        a = client.get("/api/lanes/activity").get_json() or {}
+        live = [t for t in a.get("tasks", []) if t.get("status") in ("running", "queued", "paused")]
+        out.append("%s task(s) in Activity (%s)" % (s["activity"], ", ".join(
+            "%s/%s: %s" % (t.get("source") or "task", t.get("kind") or "?", t.get("label") or t.get("id"))
+            for t in live) or "-"))
     q = client.get("/api/local-queue").get_json() or {}
     if q.get("jobs"):
-        out.append("%s local-queue job(s)" % len(q["jobs"]))
+        # Name each job (its label, kind and state), so the next red names its leaker's work, not just a count.
+        out.append("%s local-queue job(s) (%s)" % (len(q["jobs"]), ", ".join(
+            "%s %s: %s" % (j.get("state") or "?", j.get("kind") or "?", j.get("label") or j.get("id"))
+            for j in q["jobs"])))
     return out
 
 
