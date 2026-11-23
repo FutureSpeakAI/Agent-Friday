@@ -11104,7 +11104,6 @@ function SystemWS(){
   // {workspace:'system',tab:'approvals'}, and if nothing handles that tab every
   // gated action (Google connect, gated goal steps) waits until it expires. ──
   const approvals=useApprovalFeed();               // the page's one list of waiting cards
-  const [apBusy,setApBusy]=useState('');
   const apRef=useRef(null);
   const refreshApprovals=()=>fridayApprovalFeed.reload();
   const decideApproval=async(id,decision)=>{
@@ -11234,7 +11233,7 @@ function SystemWS(){
       </div>
       {approvals.length===0
         ?<div style={{fontSize:11,color:'#888',padding:'8px 2px'}}>Nothing waiting on you. Actions {fridayName()} won't take on her own — connecting Google, gated goal steps, spend — show up here.</div>
-        :approvals.map(a=><ApprovalCardBody key={a.approval_id} a={a} busy={apBusy} onDecide={decideApproval}/>)}
+        :<ApprovalTrayList items={approvals} onDecide={decideApproval} onDecided={refreshApprovals}/>}
       <PreApprovedSendsList/>
     </div>
 
@@ -27364,42 +27363,130 @@ function LaneWhy({ id }) {
       !w ? 'One moment.' : w.ok ? w.sentence : 'There is no record of that item any more.',
       w && w.trace_id ? h('button', { type: 'button', className: 'ws-tab-link', onClick: () => window.fridayOpenTrace(w.trace_id) }, 'Open its trace') : null));
 }
-// A batch of approvals of one kind and source: one card, each action listed. Approving the batch
-// approves exactly the listed actions, one approval each; "Review each" shows the single cards.
+// One request that edits the wiki (or any other batch) is one tray card, each action listed. Approving the card
+// approves exactly the listed actions, one approval each (the ledger keeps one decision per card); "Reject this
+// one" declines that action alone and the rest stay on the card. Parts that came from web or wiki text are marked.
 function fridayDecideBatch(b, decision) {
-  return fetch('/api/approvals/batches/' + encodeURIComponent(b.batch_id) + '/decide', {
+  const running = fridayDeciding.get(b.batch_id);
+  if (running) { fridayToast('Already working on that one.'); return running; }
+  const sent = fetch('/api/approvals/batches/' + encodeURIComponent(b.batch_id) + '/decide', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ decision, approval_ids: b.approval_ids, decided_by: 'owner:ui' })
   }).then(r => r.json()).then(d => {
-    if (d && d.ok) (d.results || []).forEach(x => { if (x.won) fridayApprovalFeed.drop(x.approval_id); });
+    if (d && d.ok) {
+      // A card this decide did not win stays, and the owner is told: one still waiting is decided on its own card.
+      const all = d.results || [], left = all.filter(x => !x.won);
+      all.forEach(x => { if (x.won || (x.status && x.status !== 'pending')) fridayApprovalFeed.drop(x.approval_id); });
+      if (left.length) fridayToast(left.length + ' of ' + all.length + ' were not decided here: ' + (left.some(x => x.status === 'pending')
+        ? 'they are still waiting, each on its own card.' : 'they had already been decided.'));
+    }
     else if (d && d.error === 'changed') fridayToast('That batch changed while you looked. Here is the new list.');
+    else fridayToast((d && d.message) || 'That did not go through. The cards are still waiting.');
     return d;
-  }).catch(() => { fridayToast('Could not reach ' + fridayName() + ' to record that. The cards are still waiting.'); return null; });
+  }).catch(() => {
+    fridayToast('Could not reach ' + fridayName() + ' to record that. The cards are still waiting.');
+    return null;
+  }).finally(() => fridayDeciding.end(b.batch_id));
+  fridayDeciding.start(b.batch_id, sent);
+  return sent;
 }
-function LaneBatch({ b, items, busy, onBusy, onDecided }) {
+// The text with every detail that came from outside content marked, in order, never twice.
+function fridayMarkOutside(text, flags) {
+  const h = React.createElement, src = String(text || '');
+  const hits = [];
+  (flags || []).forEach(f => {
+    const v = String((f && f.value) || '');
+    const at = v.length > 1 ? src.indexOf(v) : -1;
+    if (at >= 0 && !hits.some(x => at < x.end && at + v.length > x.start)) hits.push({ start: at, end: at + v.length });
+  });
+  hits.sort((a, b) => a.start - b.start);
+  const out = [];
+  let at = 0;
+  hits.forEach((x, i) => {
+    if (x.start > at) out.push(src.slice(at, x.start));
+    out.push(h('mark', { key: 'm' + i, 'data-testid': 'outside-text' }, src.slice(x.start, x.end)));
+    at = x.end;
+  });
+  if (at < src.length) out.push(src.slice(at));
+  return out;
+}
+// One action inside a grouped card. It shows everything its own card would (what it is, why it asks, the warning for
+// what came from outside, class and expiry with Inspect) and its own Reject; only Approve and Decline are the group's.
+// The action's arguments are shown whole, and every argument that came from outside content is marked where it
+// stands, by name: a flag's value is a cut-off copy and the action line is escaped JSON, so matching text against
+// text misses most real values.
+function LaneBatchItem({ it, onRejected }) {
   const h = React.createElement;
+  const busy = useDeciding(it.approval_id);
+  const flags = ((it.provenance || {}).flags || []).filter(f => f && (f.value || f.arg));
+  const input = it.payload && it.payload.input && typeof it.payload.input === 'object' && !Array.isArray(it.payload.input) ? it.payload.input : null;
+  const outside = new Set(flags.map(f => f.arg).filter(Boolean));
+  const shown = input
+    ? Object.keys(input).map(k => {
+        const v = input[k], s = typeof v === 'string' ? v : JSON.stringify(v);
+        return h('div', { key: k, 'data-testid': 'lane-batch-arg', style: { whiteSpace: 'pre-wrap' } }, k + ': ',
+          outside.has(k) ? h('mark', { 'data-testid': 'outside-text' }, s) : s);
+      })
+    : fridayMarkOutside(it.action_description, flags);
+  return h('div', { className: 'place-readonly', 'data-testid': 'lane-batch-item', 'data-approval-id': it.approval_id, style: { margin: '6px 0' } },
+    h('div', { style: { fontSize: 12, color: '#ddd' } }, it.title),
+    it.description ? h('div', { style: { fontSize: 11, color: '#bbb', marginTop: 2 } }, it.description) : null,
+    (input || it.action_description) ? h('div', { 'data-testid': 'lane-batch-action', style: { fontSize: 11, color: '#999', marginTop: 2, overflowWrap: 'anywhere' } },
+      input && it.payload.tool ? h('div', null, it.payload.tool) : null, shown) : null,
+    flags.filter(f => f.value).map((f, i) => h('div', { key: i, 'data-testid': 'outside-source', style: { fontSize: 11, color: '#fde68a', marginTop: 2, overflowWrap: 'anywhere' } },
+      'From ' + (f.source || 'outside content') + (f.arg ? ' (' + f.arg + ')' : '') + ': ', h('mark', null, String(f.value)))),
+    h(ApprovalProvenance, { p: it.provenance }),
+    h(ApprovalCardFacts, { a: it }),
+    h('button', { type: 'button', className: 'btn', style: { fontSize: 11, padding: '2px 10px', color: 'var(--fr-deny)', marginTop: 4 }, disabled: busy,
+      'data-testid': 'lane-batch-reject-one', onClick: () => { fridayDecideApproval(it.approval_id, 'deny').then(() => onRejected && onRejected()); } }, 'Reject this one'));
+}
+function LaneBatch({ b, items, onDecided }) {
+  const h = React.createElement;
+  const busy = useDeciding(b.batch_id);
   const [each, setEach] = useState(false);
-  const run = decision => {
-    if (busy) return;
-    onBusy(b.batch_id);
-    fridayDecideBatch(b, decision).then(() => { onBusy(''); onDecided(); });
-  };
+  const run = decision => { fridayDecideBatch(b, decision).then(() => onDecided && onDecided()); };
   const cards = (items || []).filter(a => b.approval_ids.indexOf(a.approval_id) >= 0);
   return h('div', { className: 'place-card', 'data-testid': 'lane-batch', 'data-batch-id': b.batch_id },
     h('div', { className: 'place-card-title' }, b.sentence),
-    !each && h('div', { className: 'place-readonly', 'data-testid': 'lane-batch-items' }, b.items.map(it => h(ApprovalCardBody, { key: it.approval_id, a: it, busy: busy, onDecide: () => {} }))),
+    !each && h('div', { 'data-testid': 'lane-batch-items' }, b.items.map(it => h(LaneBatchItem, { key: it.approval_id, it: it, onRejected: onDecided }))),
     h('div', { className: 'place-note' }, 'Each action stays its own approval. Approving these approves exactly the ' + b.count + ' listed and nothing else.'),
     h('div', { className: 'place-actions' },
-      h('button', { type: 'button', className: 'btn', style: { color: 'var(--fr-ok)' }, disabled: !!busy, 'data-testid': 'lane-batch-approve', onClick: () => run('approve') }, 'Approve these ' + b.count),
-      h('button', { type: 'button', className: 'btn', style: { color: 'var(--fr-deny)' }, disabled: !!busy, 'data-testid': 'lane-batch-deny', onClick: () => run('deny') }, 'Decline these ' + b.count),
+      h('button', { type: 'button', className: 'btn', style: { color: 'var(--fr-ok)' }, disabled: busy, 'data-testid': 'lane-batch-approve', onClick: () => run('approve') }, 'Approve these ' + b.count),
+      h('button', { type: 'button', className: 'btn', style: { color: 'var(--fr-deny)' }, disabled: busy, 'data-testid': 'lane-batch-deny', onClick: () => run('deny') }, 'Decline these ' + b.count),
       h('button', { type: 'button', className: 'ws-tab-link', 'aria-expanded': each ? 'true' : 'false', onClick: () => setEach(v => !v) }, each ? 'Hide the cards' : 'Review each')),
-    each && cards.map(a => h(ApprovalCardBody, { key: a.approval_id, a: a, busy: busy, onDecide: (id, decision) => { onBusy(id); fridayDecideApproval(id, decision).then(() => { onBusy(''); onDecided(); }); } })));
+    each && cards.map(a => h(ApprovalCardBody, { key: a.approval_id, a: a, onDecide: (id, decision) => { fridayDecideApproval(id, decision).then(() => onDecided && onDecided()); } })));
+}
+// How the tray's pending cards group: the server's own plan, asked again whenever the set of waiting cards
+// changes. A late answer for an older set is ignored; a failed ask leaves every card single, never hidden.
+function useApprovalPlan(items) {
+  const key = items.map(a => a.approval_id).sort().join(',');
+  const [plan, setPlan] = useState({ key: '', batches: [] });
+  useEffect(() => {
+    let live = true;
+    if (items.length < 2) { setPlan({ key: key, batches: [] }); return undefined; }
+    apiFetch('/api/approvals/batches').then(r => r.json())
+      .then(d => { if (live) setPlan({ key: key, batches: d && Array.isArray(d.batches) ? d.batches : [] }); })
+      .catch(() => { if (live) setPlan({ key: key, batches: [] }); });
+    return () => { live = false; };
+  }, [key]);
+  return plan.key === key ? plan.batches : [];
+}
+// The tray's list: grouped cards first, then the single cards, every one decided on its own.
+function ApprovalTrayList({ items, onDecide, onDecided }) {
+  const h = React.createElement;
+  const have = new Set(items.map(a => a.approval_id));
+  const batches = useApprovalPlan(items).filter(b => b.approval_ids.every(id => have.has(id)));
+  const inBatch = new Set();
+  batches.forEach(b => b.approval_ids.forEach(id => inBatch.add(id)));
+  const decide = onDecide || ((id, decision) => { fridayDecideApproval(id, decision).then(() => onDecided && onDecided()); });
+  return h(React.Fragment, null,
+    batches.map(b => h(LaneBatch, { key: b.batch_id, b: b, items: items, onDecided: onDecided })),
+    items.filter(a => !inBatch.has(a.approval_id)).map(a => h(ApprovalCardBody, { key: a.approval_id, a: a, onDecide: decide })));
 }
 function LaneNeedsYou({ onChanged }) {
   const h = React.createElement;
   const [d, reload] = useLaneData('/api/lanes/needs-you');
   const feed = useApprovalFeed();
-  const [busy, setBusy] = useState('');
   useEffect(() => { reload(); }, [feed.length]);
   if (!d) return h('div', { className: 'place-empty' }, 'One moment.');
   const inBatch = new Set();
@@ -27416,8 +27503,8 @@ function LaneNeedsYou({ onChanged }) {
            q.why === 'until_morning' ? h('button', { key: 'b', type: 'button', className: 'ws-tab-link', onClick: () => setQuiet(false) }, 'End quiet') : null]
         : h('button', { type: 'button', className: 'ws-tab-link', 'data-testid': 'lane-quiet-on', onClick: () => setQuiet(true) }, 'Quiet until morning')),
     d.count === 0 && !singles.length ? h('div', { className: 'place-empty' }, 'Nothing needs you.') : h('div', { className: 'place-summary', role: 'status' }, d.summary ? d.summary.charAt(0).toUpperCase() + d.summary.slice(1) + '.' : ''),
-    d.batches.map(b => h(LaneBatch, { key: b.batch_id, b: b, items: feed, busy: busy, onBusy: setBusy, onDecided: done })),
-    singles.map(a => h(ApprovalCardBody, { key: a.approval_id, a: a, busy: busy, onDecide: (id, decision) => { setBusy(id); fridayDecideApproval(id, decision).then(() => { setBusy(''); done(); }); } })),
+    d.batches.map(b => h(LaneBatch, { key: b.batch_id, b: b, items: feed, onDecided: done })),
+    singles.map(a => h(ApprovalCardBody, { key: a.approval_id, a: a, onDecide: (id, decision) => { fridayDecideApproval(id, decision).then(done); } })),
     d.others.map(o => h('div', { key: o.id, className: 'place-card', 'data-testid': 'lane-need', 'data-kind': o.kind },
       h('div', { className: 'place-card-title' }, o.title + (o.count > 1 ? ' (' + o.count + ' times)' : '')),
       o.body ? h('div', { className: 'place-note' }, o.body) : null,
@@ -28026,7 +28113,7 @@ function useDeciding(id) {
 // Approve or decline from any page. Exactly one decision wins (the server
 // decides under one lock); a page that lost the race is told what happened.
 // A click that cannot apply says why: a refusal in the server's words, a card
-// that is gone, no connection. Nothing is a silent no-op, and the same card
+// that is gone (it leaves the list), no connection. Nothing is a silent no-op, and the same card
 // clicked twice sends one request.
 // decided_by 'owner:ui' marks a click on this page: some cards (file access)
 // can be approved by nothing else.
@@ -28042,9 +28129,13 @@ function fridayDecideApproval(id, decision) {
       const what = st === 'approved' ? 'approved' : st === 'denied' ? 'declined' : st === 'expired' ? 'expired' : st || 'decided';
       const by = st === 'expired' ? '' : /sms/.test(a.decided_by || '') ? ' by text message' : /voice/.test(a.decided_by || '') ? ' by voice' : ' elsewhere';
       fridayToast('Already decided: this was ' + what + by + '.');
+    } else if (d && d.error === 'not found') {
+      // The server has no such card: it is not waiting, so it leaves the list and the toast says so.
+      fridayApprovalFeed.drop(id);
+      fridayToast('That card is no longer waiting, so nothing was decided. It has been taken off the list.');
     } else if (!d || !d.ok) {
       const why = d && (d.message || (/ /.test(String(d.error || '')) ? d.error : ''));
-      fridayToast(why && d.error !== 'not found' ? why : 'That did not go through. The card is still waiting.');
+      fridayToast(why || 'That did not go through. The card is still waiting.');
     }
     return d;
   }).catch(() => {
@@ -28220,7 +28311,6 @@ function ApprovalPopups() {
   const items = useApprovalFeed();
   const [later, setLater] = useState(false);
   const [peek, setPeek] = useState(false);
-  const [busy, setBusy] = useState('');
   const seen = useRef(new Set());
   useEffect(() => {
     const freshItems = items.filter(a => !seen.current.has(a.approval_id) && !fridayApprovalQuiet(a.approval_id));
@@ -28278,7 +28368,7 @@ function ApprovalPopups() {
       <span>✋ Approvals<span style={{ color: '#f59e0b', fontSize: 11, marginLeft: 6 }}>({items.length} pending)</span></span>
       <button type="button" className="btn" style={{ fontSize: 11, padding: '2px 8px' }} title="Hide this until the next card. The card keeps waiting." onClick={() => setLater(true)}>Later</button>
     </div>
-    {items.map(a => <ApprovalCardBody key={a.approval_id} a={a} busy={busy} onDecide={decide} />)}
+    <ApprovalTrayList items={items} onDecide={decide} />
   </div>);
 }
 // The context slot of the top bar in a workspace tab: which workspace this is,
