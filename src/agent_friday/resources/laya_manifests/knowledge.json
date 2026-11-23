@@ -238,6 +238,63 @@
     ],
     "new_verb": null
    }
+  },
+  "verb_args": {
+   "knowledge.create_edit": [
+    {
+     "name": "ref",
+     "type": "ref",
+     "kind": "page",
+     "required": false
+    },
+    {
+     "name": "text",
+     "type": "text",
+     "max": 4096
+    }
+   ],
+   "knowledge.move_rename_tag": [
+    {
+     "name": "ref",
+     "type": "ref",
+     "kind": "page",
+     "from": "item"
+    },
+    {
+     "name": "new_folder",
+     "type": "string",
+     "max": 120,
+     "required": false
+    },
+    {
+     "name": "new_name",
+     "type": "string",
+     "max": 120,
+     "required": false
+    },
+    {
+     "name": "tag",
+     "type": "string",
+     "max": 60,
+     "required": false
+    }
+   ],
+   "knowledge.delete_page": [
+    {
+     "name": "ref",
+     "type": "ref",
+     "kind": "page",
+     "from": "item"
+    }
+   ],
+   "knowledge.podcast": [
+    {
+     "name": "ref",
+     "type": "ref",
+     "kind": "page",
+     "from": "item"
+    }
+   ]
   }
  }
 }
