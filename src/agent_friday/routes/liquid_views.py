@@ -30,10 +30,7 @@ def _served_block(ws: str):
     from agent_friday.tv_gateway import ws_content
     if not a2ui_store._VIEW_ID.fullmatch(ws or ""):
         return None
-    served = ws_content._serving(ws)
-    if served is None or not a2ui_workspaces.serves(ws, served[0]):
-        return None
-    return served[1]
+    return ws_content.view_block(ws)
 
 
 @liquid_views_bp.route("/api/liquid/views/<ws>/rendered", methods=["GET"])
@@ -74,7 +71,12 @@ def liquid_view_page(ws):
     from agent_friday import core
     if not core._is_local_request():
         return "This view opens on this PC only.", 403
-    if not (a2ui_store._VIEW_ID.fullmatch(ws or "") and a2ui_workspaces.has_view(ws)):
+    try:
+        block = _served_block(ws)
+    except Exception as e:
+        _log.warning("liquid page %s: device block unreadable: %s", ws, type(e).__name__)
+        return "Friday could not read this view right now.", 503
+    if block is None:
         return "This workspace has no view yet.", 404
     try:
         html = _page_path().read_text(encoding="utf-8")

@@ -66,6 +66,16 @@ def _serving(ws: str):
     return (adapters, block) if adapters else None
 
 
+def view_block(ws: str):
+    """The device block of a workspace whose A2UI document reads only sections the block declares, or None. The one
+    answer to "does this PC serve that view": the device's /view, the desktop's /rendered and /liquid page, and the
+    workspace list's renderer all ask it, so none of them offers a view another refuses. Raises when the manifest or
+    the stored view cannot be read (callers answer 503, or "legacy" in the list)."""
+    from agent_friday.services import a2ui_workspaces
+    served = _serving(ws)
+    return served[1] if served is not None and a2ui_workspaces.serves(ws, served[0]) else None
+
+
 def _by_ref(adapters: dict, ref: str):
     return next((a for a in adapters.values() if ref.startswith(a.PREFIX)), None)
 

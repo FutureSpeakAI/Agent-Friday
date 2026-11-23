@@ -64,9 +64,13 @@ def test_the_page_loads_the_shared_renderer(client):
 
 
 def test_the_page_opens_on_this_pc_only(client):
+    # signed in with the page's own token, so the refusal is the this-PC-only rule, not the sign-in
+    from agent_friday import core
+    signed = {"X-Friday-Token": core._current_api_token()}
     remote = {"REMOTE_ADDR": "203.0.113.7"}
-    r = client.get("/liquid/knowledge", environ_base=remote)
-    assert r.status_code in (302, 401, 403) and b"friday_a2ui.js" not in r.get_data()
+    assert client.get("/api/liquid/views/knowledge/rendered", headers=signed, environ_base=remote).status_code == 200
+    r = client.get("/liquid/knowledge", headers=signed, environ_base=remote)
+    assert r.status_code == 403 and b"friday_a2ui.js" not in r.get_data()
 
 
 def test_a_workspace_this_pc_does_not_serve_has_no_desktop_view(client, monkeypatch):
@@ -95,3 +99,9 @@ def test_the_desktop_reads_with_the_workspaces_declared_sensitivity(client, monk
     monkeypatch.setattr(ws_knowledge, "pages", lambda sensitivity: seen.append(sensitivity) or [dict(r) for r in ROWS])
     assert client.get("/api/liquid/views/knowledge/rendered").status_code == 200
     assert seen and set(seen) == {"private"}
+
+
+def test_the_page_opens_only_where_its_data_call_answers(client, monkeypatch):
+    from agent_friday.tv_gateway import ws_content
+    monkeypatch.setattr(ws_content, "_serving", lambda ws: None)
+    assert client.get("/liquid/knowledge").status_code == 404
