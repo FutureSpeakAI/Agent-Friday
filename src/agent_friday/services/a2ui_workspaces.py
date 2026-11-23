@@ -68,10 +68,13 @@ def builtin_rev(ws: str) -> str:
     return BUILTIN_PREFIX + hashlib.sha256(raw).hexdigest()
 
 
-def has_view(ws: str) -> bool:
+def serves(ws: str, declared_sections) -> bool:
+    """True when ws has a view and every section its bindings read is among the device block's declared sections."""
+    from agent_friday.services import a2ui_broker
     try:
-        return ws in BUILTINS or store.load(ws) is not None
-    except (ValueError, store.ViewCorrupt):
+        view = current(ws)
+        return view is not None and a2ui_broker.sections_read(view["doc"]) <= set(declared_sections)
+    except (ValueError, store.ViewCorrupt, a2ui_broker.BrokerRefused):
         return False
 
 

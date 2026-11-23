@@ -46,11 +46,8 @@ def _unknown() -> Response:
 
 
 def _served(ws: str) -> Optional[dict]:
-    """The device block of a workspace that has an A2UI document and is served to devices, or None."""
-    served = ws_content._serving(ws)
-    if served is None or not a2ui_workspaces.has_view(ws):
-        return None
-    return served[1]
+    """The device block of a workspace whose A2UI document reads only sections the block declares, or None."""
+    return ws_content.view_block(ws)
 
 
 def _receipt(kind: str, dev: dict, ws: str, **extra) -> None:

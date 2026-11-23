@@ -5,7 +5,12 @@
 
 The tree is the reference renderer's bind (services/a2ui_render) of the stored-or-builtin document with the broker's
 data (services/a2ui_broker), and his customization applied by the shared shell rule (apply_customization). The
-browser only draws; it never validates or fetches data itself. tests/api/test_liquid_views_route.py holds the rules.
+browser only draws; it never validates or fetches data itself.
+
+The desktop shows a view exactly where the phone would (tv_gateway/ws_content.view_block): the workspace's device
+block is exposed, the workspace is not held, and the block declares every section the view reads. Turning the
+phone exposure off turns this view off too, because the declared sensitivity it reads with comes from that block.
+tests/api/test_liquid_views_route.py holds the rules.
 """
 from __future__ import annotations
 
@@ -24,28 +29,28 @@ liquid_views_bp = Blueprint("liquid_views", __name__)
 _PAGE = Path(__file__).resolve().parents[3] / "static" / "liquid_view.html"
 
 
-def _sensitivity(ws: str) -> str:
-    try:
-        from agent_friday.services import laya_manifests as lm
-        from agent_friday.tv_gateway import ws_device
-        block = ws_device.device_block(lm.get(ws)) or {}
-        return str(block.get("sensitivity") or "personal")
-    except Exception:
-        return "personal"
-
-
-def _known(ws: str) -> bool:
-    return bool(a2ui_store._VIEW_ID.fullmatch(ws or "")) and a2ui_workspaces.has_view(ws)
+def _served_block(ws: str):
+    """The device block when ws has a view whose sections the block declares; None otherwise. Raises when the
+    manifest cannot be read (the route answers 503, never a guessed sensitivity)."""
+    from agent_friday.tv_gateway import ws_content
+    if not a2ui_store._VIEW_ID.fullmatch(ws or ""):
+        return None
+    return ws_content.view_block(ws)
 
 
 @liquid_views_bp.route("/api/liquid/views/<ws>/rendered", methods=["GET"])
 @login_required
 def liquid_view_rendered(ws):
-    if not _known(ws):
+    try:
+        block = _served_block(ws)
+    except Exception as e:
+        _log.warning("liquid view %s: device block unreadable: %s", ws, type(e).__name__)
+        return jsonify({"ok": False, "error": "Friday could not read this view right now."}), 503
+    if block is None:
         return jsonify({"ok": False, "error": "This workspace has no view yet."}), 404
     try:
         view = a2ui_workspaces.current(ws)
-        got = a2ui_broker.resolve(view["doc"], sensitivity=_sensitivity(ws))
+        got = a2ui_broker.resolve(view["doc"], sensitivity=block["sensitivity"])
     except a2ui_broker.BrokerRefused:
         return jsonify({"ok": False, "error": "This view asks for data Friday does not give it."}), 422
     except Exception as e:
@@ -71,7 +76,12 @@ def liquid_view_page(ws):
     from agent_friday import core
     if not core._is_local_request():
         return "This view opens on this PC only.", 403
-    if not _known(ws):
+    try:
+        block = _served_block(ws)
+    except Exception as e:
+        _log.warning("liquid page %s: device block unreadable: %s", ws, type(e).__name__)
+        return "Friday could not read this view right now.", 503
+    if block is None:
         return "This workspace has no view yet.", 404
     try:
         html = _page_path().read_text(encoding="utf-8")

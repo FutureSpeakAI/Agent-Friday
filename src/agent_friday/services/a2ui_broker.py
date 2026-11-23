@@ -80,6 +80,18 @@ VOCABULARY: dict = {
     "knowledge.recent": ({"limit": _int_param(1, 20)}, _recent),
 }
 
+#: query -> the device-block section its rows come from. A view is served only where every section its bindings read
+#: is declared (test_a2ui_broker: test_every_query_names_the_section_it_reads).
+READS: dict = {
+    "knowledge.sections": "pages",
+    "knowledge.recent": "pages",
+}
+
+
+def sections_read(doc) -> frozenset:
+    """The device-block sections a document's declared bindings read. Raises BrokerRefused like check_bindings."""
+    return frozenset(READS[query] for _path, query, _params in check_bindings(doc))
+
 
 def check_bindings(doc) -> list:
     """The declared bindings, each checked against the vocabulary: [(path, query, params)]. Raises BrokerRefused."""
