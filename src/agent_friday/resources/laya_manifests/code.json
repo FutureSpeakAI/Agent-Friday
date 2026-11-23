@@ -135,5 +135,25 @@
   {"action": "code.kill_process", "kind": "gap", "reason": "No tool stops a running process by name.", "wave": "WS-3"}
  ],
  "resolver_sources": [],
- "workspace_tools": {"key": null, "pools": ["hub"]}
+ "workspace_tools": {"key": null, "pools": ["hub"]},
+ "device": {
+  "expose": true,
+  "sensitivity": "personal",
+  "sections": {
+   "repos": {"view": "list", "kind": "repo", "label": "Repositories"}
+  },
+  "kinds": {
+   "repo": {
+    "roles": {"title": "name", "line": "branch and changes", "when": null, "state": "state", "thumb": null},
+    "item_view": "reader",
+    "search": true,
+    "preview": false,
+    "stream": false,
+    "offline": "never",
+    "row_verbs": [],
+    "item_verbs": [],
+    "new_verb": null
+   }
+  }
+ }
 }

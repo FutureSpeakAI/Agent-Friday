@@ -24,7 +24,7 @@ _clean = shared._clean
 
 GATE_CLASSES = {"internal", "self_gated", "by_argument", "card_only_when_outward", "outward"}
 CARDS = {"none", "own_card", "required", "by_argument"}
-VERB_KEYS = {"id", "label", "group", "gate_class", "card", "placed"}
+VERB_KEYS = {"id", "label", "group", "gate_class", "card", "placed", "args"}
 
 
 def shown_workspaces():
@@ -70,7 +70,7 @@ def test_a_verb_with_no_gate_block_is_reported_as_the_strictest_case(read, monke
     monkeypatch.setattr(lm, "verbs", lambda ws: [{"id": "x.do", "ui": {"control": "Do it"}}])
     sent = detail(read, "calendar")["verbs"][0]
     assert sent == {"id": "x.do", "label": "Do it", "group": None, "gate_class": "outward", "card": "required",
-                    "placed": []}
+                    "placed": [], "args": []}
 
 
 def test_a_verb_with_no_control_text_is_labelled_by_its_id_not_null(read, monkeypatch):
