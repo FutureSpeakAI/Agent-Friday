@@ -445,14 +445,18 @@ def rules_out_inference(explicit: dict, axis: str, reading: str) -> bool:
 
 
 def _explicit_style() -> dict:
-    """What the owner stated: the two enum settings, and the first-run sliders when there are any. An unreadable
-    source counts as nothing stated."""
+    """What the owner stated: the two enum settings when changed from their defaults, and the first-run sliders when
+    there are any. An unreadable source counts as nothing stated.
+
+    A default is not a statement: settings.json is seeded with every default, so "professional" sits there on an
+    install whose owner never chose a style, and treating it as stated would hide every inferred reading. (An owner
+    who picks the default on purpose is not told apart from one who never chose; the sliders still speak for them.)"""
     out = {}
     try:
-        from agent_friday.core import _load_settings
+        from agent_friday.core import DEFAULT_SETTINGS, _load_settings
         settings = _load_settings() or {}
         out.update({key: settings[key] for key in ("communication_style", "response_length")
-                    if isinstance(settings.get(key), str)})
+                    if isinstance(settings.get(key), str) and settings[key] != DEFAULT_SETTINGS.get(key)})
     except Exception:
         pass
     try:

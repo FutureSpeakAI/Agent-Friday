@@ -27,6 +27,21 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 from tests.conftest import CANNED_TEXT  # noqa: F401
 
 
+@pytest.fixture
+def setup_done():
+    """The People workspace is reached after first-run setup; personality.json is only written then
+    (services/personality_state: a file written earlier would make the install look set up)."""
+    from agent_friday import core
+    marker = Path(core.FRIDAY_DIR) / ".setup_complete"
+    made = not marker.exists()
+    if made:
+        marker.parent.mkdir(parents=True, exist_ok=True)
+        marker.write_text("", encoding="utf-8")
+    yield
+    if made and marker.exists():
+        marker.unlink()
+
+
 # ═══════════════════════════════════════════════════════════════
 #  TRUST / PEOPLE
 # ═══════════════════════════════════════════════════════════════
@@ -222,6 +237,17 @@ class TestContactsResearch:
 #  PERSONALITY
 # ═══════════════════════════════════════════════════════════════
 
+def test_setting_a_trait_before_first_run_setup_is_a_409_and_writes_nothing(client, tmp_path, monkeypatch):
+    from agent_friday import core
+    folder = tmp_path / "fresh"                               # an install whose first-run setup has not finished
+    folder.mkdir()
+    monkeypatch.setattr(core, "FRIDAY_DIR", folder)
+    monkeypatch.setattr(core, "_load_settings", lambda: {})
+    r = client.post("/api/personality/set", json={"trait": "curiosity", "value": 0.9})
+    assert r.status_code == 409 and not (folder / "personality.json").exists()
+
+
+@pytest.mark.usefixtures("setup_done")
 class TestPersonality:
     def test_personality_200(self, client):
         assert client.get("/api/personality").status_code == 200
@@ -582,6 +608,7 @@ class TestRoundTrips:
         data = client.get("/api/contacts").get_json()
         assert data["count"] >= 0  # Even 0 is valid if graph isolated per test
 
+    @pytest.mark.usefixtures("setup_done")
     def test_personality_set_then_get(self, client):
         """A written style value is visible on a subsequent GET."""
         client.post(

@@ -4027,7 +4027,7 @@ def _load_vault_summary():
 
     # Personality state
     from agent_friday.services import personality_state
-    state = personality_state.summary()
+    state = personality_state.summary(FRIDAY_DIR)
     if state is not None:
         ctx['personality'] = state
 

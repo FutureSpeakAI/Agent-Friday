@@ -46,10 +46,10 @@ def path() -> Path:
     return Path(core.FRIDAY_DIR) / FILE_NAME
 
 
-def _load() -> dict:
+def _load(folder: Optional[Path] = None) -> dict:
     """The state, {} when there is no file yet. Raises Unreadable for a file that is not a JSON object."""
     try:
-        raw = path().read_text(encoding="utf-8")
+        raw = (Path(folder) / FILE_NAME if folder is not None else path()).read_text(encoding="utf-8")
     except FileNotFoundError:
         return {}
     try:
@@ -184,10 +184,11 @@ def update(fields: dict) -> None:
         _write(data)
 
 
-def summary() -> Optional[dict]:
-    """What the FRIDAY STATE block shows, or None when there is no readable state."""
+def summary(folder: Optional[Path] = None) -> Optional[dict]:
+    """What the FRIDAY STATE block shows, or None when there is no readable state. `folder` is the caller's own
+    Friday folder when it keeps one (services/model_router reads its FRIDAY_DIR, as it always has)."""
     try:
-        data = _load()
+        data = _load(folder)
     except Unreadable:
         return None
     if not data:

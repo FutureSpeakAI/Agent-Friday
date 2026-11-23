@@ -17,8 +17,9 @@ STYLES = ("professional", "casual", "technical")
 LENGTHS = ("concise", "standard", "detailed")
 FORMALITY = {"formal": "0.9", "casual": "0.1", "balanced": "0.5"}
 VERBOSITY = {"detail": "0.9", "terse": "0.1", "balanced": "0.5"}
-RULED_OUT = {("casual", "formal"), ("professional", "casual"), ("technical", "casual"),
-             ("detailed", "terse"), ("concise", "detail")}
+# "professional" and "standard" are the defaults settings.json is seeded with: they are what an owner who never chose
+# has, so they state nothing and rule nothing out (test_a_default_setting_is_not_a_statement).
+RULED_OUT = {("casual", "formal"), ("technical", "casual"), ("detailed", "terse"), ("concise", "detail")}
 SAYS = {"formal": "formal/professional", "casual": "casual/relaxed", "balanced": "balanced",
         "detail": "prefers detail", "terse": "prefers terse answers"}
 
@@ -63,6 +64,15 @@ def test_a_trait_the_owner_set_in_the_user_model_is_kept_against_a_setting(monke
     monkeypatch.setattr(core, "_load_settings", settings("casual", "detailed"))
     um.set_trait("comm.formality", "0.9", confidence=1.0)             # set by the owner: carries the owner mark
     assert "formal/professional" in um.render_user_model_prompt()
+
+
+def test_a_default_setting_is_not_a_statement(monkeypatch):
+    assert (core.DEFAULT_SETTINGS["communication_style"], core.DEFAULT_SETTINGS["response_length"]) == \
+        ("professional", "standard")
+    monkeypatch.setattr(core, "_load_settings", settings("professional", "standard"))
+    infer("casual", "terse")
+    out = um.render_user_model_prompt()
+    assert "casual/relaxed (inferred" in out and "prefers terse answers (inferred" in out
 
 
 @pytest.mark.parametrize("style,length,formality,verbosity", list(itertools.product(
