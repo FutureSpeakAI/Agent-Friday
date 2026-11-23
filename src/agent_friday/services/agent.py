@@ -16225,9 +16225,12 @@ def _hook_governance(ctx):
         return _prior
     _lr = _gate.LAST_RECEIPT.set(None)
     try:
+        # A turn that carries outside text from the owner's phone is not the owner's command: every call in it is
+        # judged as tainted (a card, never a chat yes/no, and no pre-approved send or grant).
+        _outside_turn = bool((ctx.session_ctx or {}).get("untrusted_turn"))
         v = _gate.authorize(ctx.tool_name, ctx.input, ctx.session_ctx,
-                            tainted=(d.action == "ask"), clean=_clean,
-                            grant_tainted=(d.action == "ask" and not _clean), via="tool_call",
+                            tainted=(d.action == "ask") or _outside_turn, clean=_clean and not _outside_turn,
+                            grant_tainted=((d.action == "ask" and not _clean) or _outside_turn), via="tool_call",
                             provenance=getattr(d, "origins", None))
         # this call's own decision, for its outcome receipt (_outcome_recorder)
         ctx.meta["decision_receipt"] = _gate.LAST_RECEIPT.get()
