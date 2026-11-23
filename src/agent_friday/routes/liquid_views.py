@@ -9,7 +9,8 @@ browser only draws; it never validates or fetches data itself.
 
 The desktop shows a view exactly where the phone would (tv_gateway/ws_content.view_block): the workspace's device
 block is exposed, the workspace is not held, and the block declares every section the view reads. Turning the
-phone exposure off turns this view off too, because the declared sensitivity it reads with comes from that block. tests/api/test_liquid_views_route.py holds the rules.
+phone exposure off turns this view off too, because the declared sensitivity it reads with comes from that block.
+tests/api/test_liquid_views_route.py holds the rules.
 """
 from __future__ import annotations
 
