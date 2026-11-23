@@ -232,5 +232,86 @@
   }
  ],
  "resolver_sources": [],
- "workspace_tools": {"key": null, "pools": []}
+ "workspace_tools": {"key": null, "pools": []},
+ "device": {
+  "expose": true,
+  "sensitivity": "personal",
+  "sections": {
+   "agenda": {
+    "view": "timeline",
+    "kind": "event",
+    "label": "Agenda"
+   }
+  },
+  "kinds": {
+   "event": {
+    "roles": {
+     "title": "title",
+     "line": "time and place",
+     "when": "start_time",
+     "state": "type",
+     "thumb": null
+    },
+    "item_view": "reader",
+    "search": true,
+    "preview": false,
+    "stream": false,
+    "offline": "opened",
+    "row_verbs": [],
+    "item_verbs": [
+     "calendar.meeting_prep",
+     "calendar.move_event",
+     "calendar.delete_event"
+    ],
+    "new_verb": "calendar.quick_add"
+   }
+  },
+  "verb_args": {
+   "calendar.quick_add": [
+    {
+     "name": "text",
+     "type": "string",
+     "max": 500
+    }
+   ],
+   "calendar.meeting_prep": [
+    {
+     "name": "ref",
+     "type": "ref",
+     "kind": "event",
+     "from": "item"
+    }
+   ],
+   "calendar.move_event": [
+    {
+     "name": "ref",
+     "type": "ref",
+     "kind": "event",
+     "from": "item"
+    },
+    {
+     "name": "start",
+     "type": "datetime"
+    },
+    {
+     "name": "end",
+     "type": "datetime"
+    }
+   ],
+   "calendar.delete_event": [
+    {
+     "name": "ref",
+     "type": "ref",
+     "kind": "event",
+     "from": "item"
+    },
+    {
+     "name": "notify_guests",
+     "type": "bool",
+     "required": false,
+     "default": false
+    }
+   ]
+  }
+ }
 }

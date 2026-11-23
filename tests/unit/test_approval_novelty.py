@@ -57,9 +57,9 @@ def test_a_denial_is_labelled_and_the_same_action_again_is_seen():
     assert [row["decision"] for row in _labels()] == ["denied", "approved"]
 
 
-def test_a_new_target_class_for_a_known_kind_is_new_target():
+def test_a_new_tool_for_a_known_kind_is_new_target():
     _decided("one")
-    _decided("two", subject_type="file")
+    _decided("two", tool="another_tool")
     assert [row["label"] for row in _labels()] == ["never_seen", "new_target"]
 
 
