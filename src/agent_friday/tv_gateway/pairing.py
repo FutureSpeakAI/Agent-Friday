@@ -337,12 +337,12 @@ OFFER_COOLDOWN_S = 3600
 
 
 def offer_right(device_id: str, right: str, *, key_id: str = "", biometric: Optional[bool] = None,
-                detail: str = "") -> Optional[str]:
+                detail: str = "", unlock: Optional[str] = None) -> Optional[str]:
     """Raise the screen-only card for one wider right on an already-paired device. Returns the card's id, or None
     when nothing new is needed or the right has no card.
 
     Plain rights: at most one card an hour per device and right (the cooldown tests in test_tv_pc_read.py).
-    The approval right is raised for the device's staged key: ``key_id`` and ``biometric`` are bound into the card,
+    The approval right is raised for the device's staged key: ``key_id``, ``biometric`` and ``unlock`` are bound into the card,
     a card is raised only if that key and choice are still the staged ones and none is pending for them, and a new
     card replaces the device's older one (test_a_new_key_replaces_the_pending_card,
     test_the_same_key_twice_before_the_press_raises_one_card, test_an_older_key_registering_late_raises_no_card)."""
@@ -352,7 +352,7 @@ def offer_right(device_id: str, right: str, *, key_id: str = "", biometric: Opti
     if key_id:
         if not isinstance(biometric, bool):
             raise ValueError("a key card names the fingerprint choice")
-        return _raise_key_card(device_id, right, key_id, biometric, detail)
+        return _raise_key_card(device_id, right, key_id, biometric, detail, unlock)
     key = ":".join((device_id, right))
     with _LOCK:
         now = time.time()
@@ -371,13 +371,13 @@ def offer_right(device_id: str, right: str, *, key_id: str = "", biometric: Opti
 _KEY_CARD_LOCK = threading.RLock()
 
 
-def _staged_key_card(device_id: str, key_id: str, biometric: bool) -> Optional[dict]:
+def _staged_key_card(device_id: str, key_id: str, biometric: bool, unlock: Optional[str] = None) -> Optional[dict]:
     from agent_friday.services import approvals
     for card in approvals.list_approvals(status="pending"):
         payload = card.get("payload") or {}
         if (card.get("kind") == RIGHT_KIND and payload.get("device_id") == device_id
                 and payload.get("right") == device_pairing.APPROVAL_RIGHT and payload.get("key_id") == key_id
-                and payload.get("biometric") is biometric):
+                and payload.get("biometric") is biometric and payload.get("unlock") == unlock):
             return card
     return None
 
@@ -386,24 +386,25 @@ def key_card_in_step(device_id: str) -> bool:
     """True when the device has no staged key, or a pending card names the staged key and its fingerprint choice.
     Guarded by test_a_registered_key_always_has_a_card_on_the_screen."""
     staged = device_pairing.pending_approval_key(device_id)
-    return staged is None or _staged_key_card(device_id, staged.key_id, staged.biometric) is not None
+    return staged is None or _staged_key_card(device_id, staged.key_id, staged.biometric, staged.unlock) is not None
 
 
 class CardNotRaised(Exception):
     """The PC could not put the card for a staged key on its screen."""
 
 
-def register_approval_key(device_id: str, spki_der: bytes, biometric: bool, detail: str):
+def register_approval_key(device_id: str, spki_der: bytes, biometric: bool, detail: str, unlock: Optional[str] = None):
     """Stage a device's approval key and raise its card as ONE step, so two registrations from one device cannot
     interleave and leave a card nobody can use. Returns (KeyStage, key_id); raises device_pairing.ApprovalKeyRefused
     or CardNotRaised (the key is then not staged). Guarded by test_two_registrations_at_once_leave_one_live_card."""
     with _KEY_CARD_LOCK:
-        stage, key_id = device_pairing.stage_approval_key(device_id, spki_der, biometric)
+        stage, key_id = device_pairing.stage_approval_key(device_id, spki_der, biometric, unlock)
         if stage is device_pairing.KeyStage.ALREADY_ACTIVE:
             device_pairing.expire_pending_key_cards(device_id, "the active key was registered again")
             return stage, key_id
         try:
-            offer_right(device_id, device_pairing.APPROVAL_RIGHT, key_id=key_id, biometric=biometric, detail=detail)
+            offer_right(device_id, device_pairing.APPROVAL_RIGHT, key_id=key_id, biometric=biometric, detail=detail,
+                        unlock=unlock)
             raised = key_card_in_step(device_id)
         except Exception as error:
             device_pairing.clear_pending_key(device_id)
@@ -414,13 +415,14 @@ def register_approval_key(device_id: str, spki_der: bytes, biometric: bool, deta
         return stage, key_id
 
 
-def _raise_key_card(device_id: str, right: str, key_id: str, biometric: bool, detail: str) -> Optional[str]:
+def _raise_key_card(device_id: str, right: str, key_id: str, biometric: bool, detail: str,
+                    unlock: Optional[str] = None) -> Optional[str]:
     from agent_friday.services import approvals
     with _KEY_CARD_LOCK:
         staged = device_pairing.pending_approval_key(device_id)
-        if staged is None or staged.key_id != key_id or staged.biometric is not biometric:
+        if staged is None or staged.key_id != key_id or staged.biometric is not biometric or staged.unlock != unlock:
             return None                                       # not the staged key and choice (any more): no card
-        if _staged_key_card(device_id, key_id, biometric) is not None:
+        if _staged_key_card(device_id, key_id, biometric, unlock) is not None:
             return None
         device_pairing.expire_pending_key_cards(device_id, "a newer key was registered")
         title, description = RIGHT_CARDS[right]
@@ -430,7 +432,7 @@ def _raise_key_card(device_id: str, right: str, key_id: str, biometric: bool, de
             title=title, description=" ".join(part for part in (description, detail) if part),
             action_description=title,
             payload={"device_id": device_id, "right": right, "origin": "tv_gateway", "key_id": key_id,
-                     "biometric": biometric},
+                     "biometric": biometric, "unlock": unlock},
             requested_by="tv_gateway", force_gate=True)
         return card.get("approval_id")
 
@@ -442,7 +444,7 @@ def _on_right_decision(rec: dict) -> None:
     if right not in RIGHT_CARDS or rec.get("status") != "approved" or rec.get("decided_by") != SCREEN_LABEL:
         return
     if right == device_pairing.APPROVAL_RIGHT and not device_pairing.activate_approval_key(
-            str(device_id), str(payload.get("key_id") or ""), bool(payload.get("biometric"))):
+            str(device_id), str(payload.get("key_id") or ""), bool(payload.get("biometric")), payload.get("unlock")):
         return                          # the key this card named is gone or was replaced: grant nothing
     device_pairing.set_right(str(device_id), right, True)
 
