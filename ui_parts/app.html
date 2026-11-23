@@ -11082,6 +11082,7 @@ function SystemWS(){
   const showCtxToast=(m)=>{setCtxToast(m);setTimeout(()=>setCtxToast(''),2200)};
   const refreshCtxStats=()=>fetch('/api/context/stats').then(r=>r.json()).then(setCtxStats).catch(()=>{});
   const[compStats,setCompStats]=useState(null);
+  const[schedHealth,setSchedHealth]=useState(null);
   // ── Weekly self-improvement report ──
   const[selfImp,setSelfImp]=useState(null);const[siBusy,setSiBusy]=useState(false);
   const siRef=useRef(null);
@@ -11126,6 +11127,7 @@ function SystemWS(){
     setTimeout(()=>finish(null),6000);
     refreshCtxStats();
     fetch('/api/context/compression-stats').then(r=>r.json()).then(d=>setCompStats(d.compression||null)).catch(()=>{});
+    apiFetch('/api/schedules/health').then(r=>r.json()).then(d=>setSchedHealth(d||null)).catch(()=>{});
     refreshSelfImp();
     refreshApprovals();
     const apPoll=setInterval(refreshApprovals,30000);
@@ -11158,6 +11160,13 @@ function SystemWS(){
   const procs=(sys?.processes||[]);
   return(<div className="fr-comp-root fr-comp-system">
     {focus}
+    {schedHealth&&schedHealth.flagged&&schedHealth.flagged.length>0&&<div className="card" data-testid="sys-schedule-health" role="status" style={{marginBottom:10,padding:10,borderColor:'rgba(255,170,0,0.5)'}}>
+      <div className="card-title">Scheduled jobs needing attention</div>
+      {schedHealth.flagged.map(j=>(<div key={j.id} data-testid="sys-schedule-flag" data-health={j.health} style={{fontSize:12,color:'#ddd',padding:'4px 0',lineHeight:1.5}}>
+        <b>{j.name}</b> <span style={{color:j.health==='stalled'?'#ff8080':'#ffb347'}}>{j.health==='stalled'?'stalled':'overdue'}</span>
+        <div style={{fontSize:11,color:'#aaa'}}>{j.reason}</div>
+      </div>))}
+    </div>}
     {compStats&&<div className="card" style={{marginBottom:10,padding:10}}>
       <div className="card-title">Context Compression (Headroom)</div>
       {compStats.available
