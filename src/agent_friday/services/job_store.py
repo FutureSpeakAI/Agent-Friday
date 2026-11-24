@@ -34,6 +34,8 @@ from pathlib import Path
 from typing import Iterable, List, Optional, Tuple
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
+from agent_friday.services import job_places
+
 FILE_NAME = "job_store.json"
 STALE_DAYS = 30
 STALE = timedelta(days=STALE_DAYS)
@@ -170,36 +172,24 @@ def _save(data: dict) -> None:
             os.unlink(name)
 
 
-#: Words that say how a posting is worked, not where: "Remote - US" is placed in the US, "Remote" alone nowhere.
-_WORK_MODES = frozenset({"remote", "hybrid", "onsite", "anywhere"})
-
-
-def _place(location) -> Tuple[str, ...]:
-    """The place a location names first, as words: the first comma, slash, bracket or spaced dash separated part
-    that is more than a work mode. "New York, NY" and "New York, New York, United States" are ("new", "york");
-    "Austin, TX" is ("austin",); "Remote (US)" and "US Remote" are ("us",); "Remote" is ()."""
-    for part in re.split(r"[,;|/()]|\s[-\u2013\u2014]\s", str(location or "").lower()):
-        words = tuple(w for w in _words(part).split() if w not in _WORK_MODES)
-        if words:
-            return words
-    return ()
-
-
 def _contradicts(record: dict, listing: dict) -> bool:
-    """True when both name a company and a title and they differ, or both name a place (_place) and neither place
-    begins the other: then a shared URL is a careers page that lists several postings, not one posting. Austin, TX
-    and Dallas, TX are two postings, and so are New York and York, PA; "New York, NY", "New York City" and "New
-    York, New York, United States" are feeds spelling one place, and stay one posting. Known limits: a place spelled
-    two ways that neither begins ("NYC", "New York") is two postings, and two towns of one name in different states
-    ("Portland, OR", "Portland, ME") are one. A sighting that names no place contradicts nothing, so on a careers
-    page it joins the first record that page's URL was seen with."""
+    """True when both name a company and a title and they differ, or the listing's place differs from a place the
+    record was seen at (job_places.differ, against every location in its "locations"): then a shared URL is a
+    careers page that lists several postings, not one posting. Austin, TX and Dallas, TX are two postings however
+    a feed orders them ("US, TX, Austin"); "New York, NY" and "New York, New York, United States" are one. A sighting
+    that names no place (a bare "Remote") contradicts nothing, so on a careers page it joins the first record that
+    page's URL was seen with, and changes none of that record's places."""
     mine = (_words(record.get("company")), _words(record.get("title")))
     theirs = (_words(listing.get("company")), _words(listing.get("title")))
     if all(mine) and all(theirs) and mine != theirs:
         return True
-    here, there = _place(record.get("location")), _place(listing.get("location"))
-    shorter = min(len(here), len(there))
-    return bool(shorter) and here[:shorter] != there[:shorter]
+    there = job_places.parse(listing.get("location"))
+    return any(job_places.differ(job_places.parse(here), there) for here in _locations(record))
+
+
+def _locations(record: dict) -> List[str]:
+    """Every location the record was seen at (a record stored before "locations" existed: its one location)."""
+    return list(record.get("locations") or ([record["location"]] if record.get("location") else []))
 
 
 def _find(data: dict, keys: List[str], listing: dict) -> Optional[dict]:
@@ -284,12 +274,18 @@ def _public(record: dict, applied: frozenset = frozenset()) -> dict:
 def _apply_sighting(record: dict, listing: dict, seen: str) -> None:
     record["last_seen"] = seen
     for name, value in (("title", listing.get("title")), ("company", listing.get("company")),
-                        ("location", listing.get("location")), ("source", listing.get("source")),
+                        ("source", listing.get("source")),
                         ("url", listing.get("url") or listing.get("source_url")),
                         ("posted_at", _iso(listing.get("posted_at"))),
                         ("closes_at", _closing_iso(listing.get("closes_at")))):
         if value:
             record[name] = value
+    location = str(listing.get("location") or "").strip()
+    if location:
+        seen_at = _locations(record)
+        record["locations"] = seen_at + [location] * (location not in seen_at)
+        if job_places.parse(location) or not record.get("location"):
+            record["location"] = location          # a placeless "Remote" never replaces where the posting is
     if "remote" in listing:
         record["remote"] = bool(listing["remote"])
     _note_job_id(record, listing.get("job_id"))
