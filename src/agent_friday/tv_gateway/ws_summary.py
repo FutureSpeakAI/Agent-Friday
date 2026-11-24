@@ -120,8 +120,10 @@ def _read(ws: str, fut: Future) -> None:
         _log.info("workspace line for %s broke: %s", ws, type(e).__name__)
     finally:
         with _lock:
-            _kept[ws] = (now, got)
-            if _reading.get(ws, (0, None))[1] is fut:    # a read given up on never clears the one that replaced it
+            current = _reading.get(ws, (0, None))[1] is fut
+            if current or _kept.get(ws, (0, None))[0] < now:  # a read given up on never overwrites a newer line
+                _kept[ws] = (now, got)
+            if current:                                       # nor clears the read that replaced it
                 del _reading[ws]
         fut.set_result(got)
 
