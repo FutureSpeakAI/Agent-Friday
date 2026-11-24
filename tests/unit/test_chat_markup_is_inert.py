@@ -56,7 +56,36 @@ PAYLOADS = [
     "<details open ontoggle=alert(1)>x</details>",
     "<a href=\"data:text/html,<script>alert(1)</script>\">x</a>",
     "<form action=/api/x><button>go</button></form>",
+    "<a href=\"javascript&colon;alert(1)\">x</a>",
+    "<a href=\"javascript&#58alert(1)\">x</a>",
+    "<a href=\"javascript&#x3a;alert(1)\">x</a>",
+    "<a href=\"jav&#x09ascript:alert(1)\">x</a>",
 ]
+
+#: Addresses the browser uses as written: the sanitizer must hand each back unchanged (escaped), not decode a
+#: reference the browser would not ("&tab" with no ";", "&ampm" before a letter, "&lt" before "=").
+KEPT_HREFS = ["https://news.example.test/story?id=7&tab=comments", "https://news.example.test/?t=9&ampm=pm",
+              "https://news.example.test/?a=1&lt=5", "https://news.example.test/?a=1&colon=2",
+              "https://news.example.test/?a=1&newline=3&quot=4"]
+
+KEPT_HARNESS = r"""
+CODE
+console.log(JSON.stringify(HREFS.map(h => fridaySanitizeMarkup('<a href="' + h.replace(/&/g, '&amp;') + '">x</a>'))
+  .concat(HREFS.map(h => fridaySanitizeMarkup('<a href="' + h + '">x</a>')))));
+"""
+
+
+@pytest.mark.skipif(not node, reason="node is not on PATH")
+def test_the_sanitizer_hands_back_an_address_as_the_browser_would_read_it(tmp_path):
+    """Written escaped (as marked writes it) or raw, each address comes back as the same escaped href."""
+    script = tmp_path / "k.js"
+    script.write_text(KEPT_HARNESS.replace("CODE", _code("index.html")).replace("HREFS", json.dumps(KEPT_HREFS)),
+                      encoding="utf-8")
+    cp = subprocess.run([node, str(script)], capture_output=True, text=True, timeout=60)
+    assert cp.returncode == 0, cp.stderr
+    out = json.loads(cp.stdout.strip().splitlines()[-1])
+    for href, cleaned in zip(KEPT_HREFS * 2, out):
+        assert cleaned == '<a href="%s">x</a>' % href.replace("&", "&amp;"), (href, cleaned)
 
 HARNESS = r"""
 CODE
