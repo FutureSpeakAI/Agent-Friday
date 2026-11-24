@@ -4,7 +4,10 @@ Reads the desktop's own /api/futurespeak/projects (and /api/futurespeak/project/
 reaches the phone as a row (its name, how its deploy stands, its branch and how many changes are uncommitted, when it
 last changed) and an item (those again, as facts). Its folder path, its site and Replit addresses, its description and
 its commit messages never leave the PC: the phone learns how a project stands, not what is in it. Pipeline, revenue and
-legal are not read here at all. tests/unit/test_tv_ws_futurespeak.py holds the rules.
+legal are not read here at all. A name that looks like an address (a project named after its site) is left out, as
+the broker leaves out such rows. If the desktop's project list is unreadable as a file it answers with its default
+list (and seeds the file), so the phone sees that list, not a 503; a failed or malformed answer is a 503.
+tests/unit/test_tv_ws_futurespeak.py holds the rules.
 """
 from __future__ import annotations
 
@@ -13,6 +16,7 @@ from datetime import datetime, timezone
 from typing import Optional
 from urllib.parse import quote
 
+from agent_friday.services.a2ui_profile import has_url
 from agent_friday.tv_gateway import ws_blocks
 from agent_friday.tv_gateway.ws_adapter import Missing, Unavailable, desk_json, digest as _digest
 
@@ -21,7 +25,8 @@ KIND = "project"
 #: The desktop's deploy states, and the words the phone says for them. Any other state is no state.
 STATE_WORDS = {"green": "live", "yellow": "changes waiting", "red": "failing", "remote": "not on this PC"}
 FACETS = {"deploy": lambda row: row["state"] or ""}
-REF = re.compile(r"^project:(?P<name>[A-Za-z0-9][A-Za-z0-9 ._\-]{0,79})$")
+#: A plain project name: a letter or digit first, no space last, spaces only inside; 80 characters at most.
+REF = re.compile(r"project:(?P<name>[A-Za-z0-9](?:[A-Za-z0-9 ._\-]{0,78}[A-Za-z0-9._\-])?)")
 
 
 def _count(value) -> int:
@@ -43,7 +48,7 @@ def _when(stamp) -> Optional[str]:
 
 def _row(project: dict, sensitivity: str) -> Optional[dict]:
     name = str(project.get("name") or "")
-    if not REF.match(PREFIX + name):
+    if not REF.fullmatch(PREFIX + name) or has_url(name):
         return None
     status = project.get("status") if isinstance(project.get("status"), dict) else {}
     state = status.get("deploy_status") if status.get("deploy_status") in STATE_WORDS else None
@@ -88,7 +93,7 @@ def search(q: str, sensitivity: str) -> list[dict]:
 
 
 def item(ref: str, sensitivity: str, offset: int, limit: int) -> dict:
-    m = REF.match(ref or "")
+    m = REF.fullmatch(ref or "")
     if not m:
         raise Missing(ref)
     project = desk_json("/api/futurespeak/project/" + quote(m.group("name"), safe="")).get("project")
