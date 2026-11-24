@@ -666,6 +666,68 @@ def _new_page_text(path, rel, section, new_val):
     return "\n".join(body_lines).rstrip("\n") + "\n"
 
 
+def _eol_of(text):
+    """The page's own line ending: CRLF when most of its breaks are CRLF, otherwise LF."""
+    crlf = text.count("\r\n")
+    return "\r\n" if crlf and crlf * 2 > text.count("\n") else "\n"
+
+
+def _find_edit_text(existing, old_val):
+    """Every place ``old_val`` stands in ``existing``, whether a line break is CRLF or LF."""
+    parts = old_val.replace("\r\n", "\n").split("\n")
+    return list(re.finditer(r"\r?\n".join(re.escape(p) for p in parts), existing))
+
+
+def _without_display_tags(existing, old_val, new_val):
+    """``old_val`` and ``new_val`` without the weekday tags a reader added for display.
+
+    Taken out when the page holds no such tag anywhere (so none in the edit is page text), or when the page does
+    hold some but this old text only matches without them. A tag the page really has is left alone."""
+    from agent_friday.services import clock
+    page_tagged = clock.strip_weekday_tags(existing) != existing
+    if page_tagged and _find_edit_text(existing, old_val):
+        return old_val, new_val
+    return clock.strip_weekday_tags(old_val), clock.strip_weekday_tags(new_val)
+
+
+#: The nearest-text search runs under the wiki lock: it compares lines, never every window by characters, and
+#: shows at most this many characters.
+NEAREST_TEXT_MAX_CHARS = 600
+NEAREST_TEXT_MAX_LINES = 4000
+
+
+def _nearest_text(seen, old_n):
+    """The stretch of the page closest to ``old_n`` (as many lines as it has), or "" when nothing is close.
+
+    Bounded work (it runs while the wiki is locked): the page and the edit are compared as lists of lines; the
+    window starts where the longest run of identical lines lines up, or else at the line most like the edit's first
+    line (a cheap character-count ratio). Only that one window is scored. Shown cut to NEAREST_TEXT_MAX_CHARS."""
+    import difflib
+    lines = seen.split("\n")
+    old_lines = old_n.split("\n")
+    want = len(old_lines)
+    if len(lines) > NEAREST_TEXT_MAX_LINES or want > NEAREST_TEXT_MAX_LINES:
+        return ""
+    sm = difflib.SequenceMatcher(None, lines, old_lines, autojunk=False)
+    m = sm.find_longest_match(0, len(lines), 0, want)
+    if m.size:
+        start = m.a - m.b
+    else:
+        first = next((x for x in old_lines if x.strip()), "")
+        best, start = 0.0, -1
+        for i, line in enumerate(lines):
+            r = difflib.SequenceMatcher(None, line, first).quick_ratio() if line.strip() else 0.0
+            if r > best:
+                best, start = r, i
+        if start < 0 or best < 0.6:
+            return ""
+    start = max(0, min(start, len(lines) - want))
+    window = "\n".join(lines[start:start + want])
+    if difflib.SequenceMatcher(None, window, old_n).quick_ratio() < 0.5:
+        return ""
+    return window if len(window) <= NEAREST_TEXT_MAX_CHARS else window[:NEAREST_TEXT_MAX_CHARS] + "\u2026"
+
+
 def plan_wiki_proposal(item):
     """What applying ``item`` would do, without writing anything.
 
@@ -703,8 +765,12 @@ def plan_wiki_proposal(item):
         if not old_val:
             plan["message"] = "An edit needs the exact text it replaces (old_value)."
             return plan
-        hits = existing.count(old_val)
-        if hits and old_val in new_val and new_val in existing:
+        old_val, new_val = _without_display_tags(existing, old_val, new_val)
+        found = _find_edit_text(existing, old_val)
+        hits = len(found)
+        seen = existing.replace("\r\n", "\n")          # the page as the model reads it: endings ignored
+        old_n, new_n = old_val.replace("\r\n", "\n"), new_val.replace("\r\n", "\n")
+        if hits and old_n in new_n and new_n in seen:
             # An edit that extends its own text ("a" -> "a, b") is already done
             # when the page holds the whole result; replacing again would stack it.
             plan.update(status="unchanged", after=existing,
@@ -717,17 +783,21 @@ def plan_wiki_proposal(item):
                 "old_value that occurs once."))
             return plan
         if hits == 1:
-            plan["after"] = existing.replace(old_val, new_val, 1)
-        elif _contains_block(existing, new_val):
+            span = found[0].group(0)
+            eol = "\r\n" if "\r\n" in span else ("\n" if "\n" in span else _eol_of(existing))
+            plan["after"] = existing[:found[0].start()] + new_n.replace("\n", eol) + existing[found[0].end():]
+        elif _contains_block(seen, new_n):
             # Already applied only when the WHOLE new block is there as whole
             # lines -- not because one of its words occurs somewhere.
             plan.update(status="unchanged", after=existing,
                         message=f"{rel} already has this change; nothing was written.")
             return plan
         else:
+            near = _nearest_text(seen, old_n)
             plan.update(status="stale", message=(
-                f"The text this edit replaces is no longer in {rel} (the page changed "
-                "since it was proposed); nothing was written. Read the page and propose again."))
+                f"The text this edit replaces was not found as written in {rel}; nothing was written. "
+                + (f"The closest text on the page is:\n{near}\n" if near else "")
+                + "Read the page and propose again with the text exactly as it stands."))
             return plan
     elif mode == "replace_file":
         plan["after"] = new_val if new_val.endswith("\n") else new_val + "\n"

@@ -437,19 +437,23 @@ _CARD_FIELDS = ("approval_id", "kind", "subject_type", "subject_id", "title", "d
 _SEAL_FIELDS = _CARD_FIELDS + ("status", "decided_by", "decided_source", "pre_approved")
 _CARD_TAG = b"agent-friday/approval-card/v1\0"
 _SEAL_TAG = b"agent-friday/approval/v1\0"
-#: The governance key, read once a minute at most (each read is an OS keychain call).
+#: The governance key, read once a minute at most (each read is an OS keychain call), and the reader it
+#: came from. A key is reused only while that reader is still the one in place: a key from a reader
+#: swapped since (a test's synthetic key) must not seal a card and then run out before the spend reads
+#: another (b80; tests/unit/test_approval_seal_key_cache.py). In the app the reader never changes.
 _KEY_CACHE: Dict[str, Any] = {"key": None, "at": 0.0}
 
 
 def _seal_key() -> bytes:
+    from agent_friday.governance import proof_of_integrity as _poi
+    reader = _poi.get_governance_key
     now = time.monotonic()
-    if _KEY_CACHE["key"] and now - _KEY_CACHE["at"] < 60:
+    if _KEY_CACHE["key"] and _KEY_CACHE.get("reader") is reader and now - _KEY_CACHE["at"] < 60:
         return _KEY_CACHE["key"]
-    from agent_friday.governance.proof_of_integrity import get_governance_key
-    key = get_governance_key()
+    key = reader()
     if not key:
         raise RuntimeError("governance key unavailable")
-    _KEY_CACHE.update(key=key, at=now)
+    _KEY_CACHE.update(key=key, at=now, reader=reader)
     return key
 
 

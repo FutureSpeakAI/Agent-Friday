@@ -64,6 +64,26 @@ _ALREADY_ANNOTATED = re.compile(
     r"^\s*\(?(?:%s)" % "|".join(_WEEKDAY_NAMES), re.IGNORECASE)
 
 
+_TAGGED_DATE_RE = re.compile(
+    r"\b(?:(\d{4})-(\d{2})-(\d{2})|(\d{1,2})/(\d{1,2})/(\d{4})) \((%s)\)" % "|".join(_WEEKDAY_NAMES))
+
+
+def strip_weekday_tags(text: str) -> str:
+    """Remove the ' (Weekday)' tags `annotate_weekdays` adds, and only a tag that is the date's true weekday.
+    What a reader showed for display is not page text; a tag that says something else is left alone."""
+    if not text or "(" not in text:
+        return text
+
+    def _drop(m):
+        if m.group(1):
+            wd = weekday_of(int(m.group(1)), int(m.group(2)), int(m.group(3)))
+        else:
+            wd = weekday_of(int(m.group(6)), int(m.group(4)), int(m.group(5)))
+        return m.group(0)[:m.start(7) - m.start(0) - 2] if wd == m.group(7) else m.group(0)
+
+    return _TAGGED_DATE_RE.sub(_drop, text)
+
+
 def annotate_weekdays(text: str) -> str:
     """Append a code-computed ' (Weekday)' after every unambiguous date in
     `text` that isn't already followed by a weekday name. Invalid dates are
