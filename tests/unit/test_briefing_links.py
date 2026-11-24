@@ -6,6 +6,8 @@ message id, a calendar entry's or an outing's own page. An item that cannot is d
 model typed is removed unless it is exactly one the tools returned. Nothing here builds or guesses an id or a URL.
 Synthetic stories, senders and events only.
 """
+import re
+
 import pytest
 
 from agent_friday.services import briefing_links as bl
@@ -356,25 +358,63 @@ def test_a_known_link_with_round_brackets_in_its_address_survives_every_pass_and
 
 KNOWN_SHAPES = ["https://calendar.example.test/event?eid=abc123", "https://calendar.example.test/e_(1)",
                 "https://en.wikipedia.example.test/wiki/Mercury_(planet)", "https://calendar.example.test/a/",
-                "https://www.calendar.example.test/e.html", "https://calendar.example.test/e?x=1&y=(2)"]
+                "https://www.calendar.example.test/e.html", "https://calendar.example.test/e?x=1&y=(2)",
+                "https://calendar.example.test/e()", "https://mail.google.com/mail/u/dana@example.test/#all/18f3a1b2c3"]
 PLACEMENTS = ["- Standup %s", "- Standup %s.", "- Standup (%s)", "- Standup (%s).", "- Standup %s, then lunch.",
               "- Standup: %s; then lunch.", "- Standup [agenda](%s)", "- Standup [agenda](%s).",
               "- Standup ([agenda](%s))", "- Standup [[draft] agenda](%s)!"]
 
 
+def _pipeline(briefing, src):
+    """validate, then attach_links, then the final pass over the whole briefing, in the order
+    news_engine._finish_briefing runs them."""
+    from agent_friday.services import news_links
+    got = bl.validate(briefing, src)
+    known = bl.known_links(src)
+    return got, known, bl.strip_unknown_links(news_links.attach_links(got.text, [], keep=known), known)
+
+
 @pytest.mark.parametrize("url", KNOWN_SHAPES)
 @pytest.mark.parametrize("placement", PLACEMENTS)
 def test_every_known_address_shape_in_every_placement_survives_the_whole_pipeline_and_nothing_is_counted(url, placement):
-    """Rounds 8 and 9 were one class of mistake (a pass cut a known address at a ")" or a "."): this is the check.
-    validate, then attach_links, then the final pass, in the order news_engine._finish_briefing runs them."""
-    from agent_friday.services import news_links
-    src = bl.collect(calendar=[{"id": "C1", "title": "Standup", "url": url}])
+    """No pass may cut, change or count a verified address, whatever characters it holds and wherever it stands."""
     line = placement % url
-    got = bl.validate("## Calendar\n%s\n" % line, src)
-    known = bl.known_links(src)
-    final = bl.strip_unknown_links(news_links.attach_links(got.text, [], keep=known), known)
+    got, known, final = _pipeline("## Calendar\n%s\n" % line, bl.collect(calendar=[{"id": "C1", "title": "Standup",
+                                                                                      "url": url}]))
     assert got.dropped_total == 0 and line in final
     assert bl.strip_unknown_links(final, known) == final
+
+
+#: An unknown address with "()" put at every position of its scheme or "www.", so that no pattern sees an address
+#: until a pass takes the brackets away.
+UNKNOWN_SHAPES = sorted({prefix[:i] + "()" + prefix[i:] + "evil.example.test/renew"
+                         for prefix in ("www.", "https://", "http://") for i in range(len(prefix) + 1)})
+UNKNOWN_PLACEMENTS = ["## Tasks\n- Renew at %s\n",                       # kept as is: not a sourced section
+                      "## Calendar\nNothing today, see %s\n",           # prose in a sourced section
+                      "## Calendar\n- Standup [C1] at %s\n",            # a cited item
+                      "## Tasks %s\n- Renew\n",                         # a heading
+                      "## Calendar\n- Standup [agenda](%s)\n"]          # a typed link
+
+
+@pytest.mark.parametrize("address", UNKNOWN_SHAPES)
+@pytest.mark.parametrize("placement", UNKNOWN_PLACEMENTS)
+def test_no_unknown_address_is_left_or_made_by_the_whole_pipeline_wherever_it_stands(address, placement):
+    """Nothing a renderer would link is left in the briefing: no http(s):// and no www. run, also one that only forms
+    when a pass takes text away; and running the final pass again changes nothing."""
+    got, known, final = _pipeline(placement % address, bl.collect(calendar=CAL))
+    rest = final
+    for url in known:                                   # the verified link [C1] became may stay
+        rest = rest.replace(url, "")
+    assert not re.search(r"(?i)https?:/|www\.", rest), final
+    assert bl.strip_unknown_links(final, known) == final
+
+
+def test_a_known_story_link_with_empty_brackets_keeps_them_in_the_sources_list():
+    from agent_friday.services import news_links
+    url = "https://news.example.test/story()"
+    stories = [{"id": "N1", "title": "Budget passes", "source": "Example Gazette", "url": url}]
+    final = bl.strip_unknown_links(news_links.attach_links("The budget passed. [N1]", stories), {url})
+    assert "(%s)" % url in final and final.count(url) == 2
 
 
 def test_a_known_target_set_aside_is_never_swallowed_by_an_unknown_one_before_it():
