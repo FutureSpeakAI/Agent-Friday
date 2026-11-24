@@ -133,14 +133,15 @@ def test_one_posting_whose_feeds_spell_its_location_differently_is_one_record_an
 
 
 #: Each place as feeds really spell it, in every format they use: city first, region first, codes joined by hyphens,
-#: a work mode with a region. Spellings of one place are one posting on a shared URL; two places are two postings,
-#: also when they share a country, a state, a word of their name, or "Remote".
+#: three-letter country codes, a ZIP after the state, a work mode with the place. Spellings of one place are one
+#: posting on a shared URL; two places are two postings, also when they share a country, a state, a word of their
+#: name, or "Remote".
 PLACES = {
-    "new york": ("New York", "New York, NY", "New York, New York, United States", "New York City, NY",
-                 "US - NY - New York", "United States, New York, New York"),
+    "new york": ("New York", "New York, NY", "New York, New York, United States", "US - NY - New York",
+                 "United States, New York, New York", "New York, NY 10001"),
     "york pa": ("York, PA", "York, Pennsylvania", "US-PA-York"),
     "austin": ("Austin, TX", "Austin, Texas, US", "US, TX, Austin", "United States - Texas - Austin", "US-TX-Austin",
-               "USA - Austin, TX", "Austin, TX (On-site)"),
+               "USA - Austin, TX", "Austin, TX (On-site)", "Austin, TX 78701", "Office - Austin, TX"),
     "dallas": ("Dallas, TX", "Dallas", "US, TX, Dallas", "USA - Dallas, TX", "United States - Texas - Dallas"),
     "santa clara": ("Santa Clara, CA", "US, CA, Santa Clara"),
     "san francisco": ("San Francisco, CA", "San Francisco", "California - San Francisco"),
@@ -148,20 +149,34 @@ PLACES = {
     "san jose": ("San Jose, CA",),
     "kansas city mo": ("Kansas City, MO",),
     "kansas city ks": ("Kansas City, KS",),
-    "portland or": ("Portland, OR", "Portland, Oregon"),
-    "portland me": ("Portland, ME",),
+    "portland or": ("Portland, OR", "Portland, Oregon", "Portland, OR 97201"),
+    "portland me": ("Portland, ME", "Portland, ME 04101"),
+    "arlington va": ("Arlington, VA", "Arlington, VA 22201", "Arlington, Virginia"),
+    "arlington tx": ("Arlington, TX 76010",),
     "washington dc": ("Washington, DC", "Washington, DC, United States"),
     "seattle": ("Seattle, WA", "Seattle, Washington"),
-    "london": ("London", "London, England, GB", "London, UK", "UK - London"),
-    "manchester": ("Manchester, UK",),
-    "berlin": ("Berlin, Germany", "Germany, Berlin"),
-    "munich": ("Germany, Munich", "Munich"),
-    "bangalore": ("Bangalore, Karnataka, India", "India - Bangalore"),
-    "hyderabad": ("India - Hyderabad",),
-    "toronto": ("Toronto, ON", "Toronto, Ontario, Canada"),
-    "remote us": ("Remote - US", "Remote (US)", "US Remote", "Remote, US", "Remote - United States"),
-    "remote canada": ("Remote - Canada", "Remote, Canada"),
+    "london": ("London", "London, England, GB", "London, UK", "UK - London", "GBR - London"),
+    "manchester": ("Manchester, UK", "GBR - Manchester"),
+    "newcastle upon tyne": ("Newcastle-upon-Tyne, UK",),
+    "newcastle under lyme": ("Newcastle-under-Lyme, UK",),
+    "berlin": ("Berlin, Germany", "Germany, Berlin", "DEU - Berlin"),
+    "munich": ("Germany, Munich", "Munich", "DEU - Munich"),
+    "bangalore": ("Bangalore, Karnataka, India", "India - Bangalore", "IND - Bangalore",
+                  "India - Karnataka - Bangalore"),
+    "mysore": ("India - Karnataka - Mysore",),
+    "hyderabad": ("India - Hyderabad", "IND - Hyderabad"),
+    "toronto": ("Toronto, ON", "Toronto, Ontario, Canada", "CAN - Toronto"),
+    "vancouver": ("CAN - Vancouver", "Vancouver, BC"),
+    "saint laurent": ("Saint-Laurent, QC",),
+    "saint hyacinthe": ("Saint-Hyacinthe, QC",),
+    "sydney": ("Australia, NSW, Sydney", "Sydney, NSW, Australia"),
+    "newcastle nsw": ("Australia, NSW, Newcastle",),
 }
+#: Two places that share an unknown region, a prefix, or nothing the tables know: always two records.
+TWO_PLACES = [("EMEA - London", "EMEA - Paris"), ("EMEA - London", "London, UK"), ("Bay Area - San Francisco",
+              "Bay Area - San Jose"), ("New York City, NY", "New York, NY"), ("IND - Bengaluru", "IND - Hyderabad"),
+              ("Remote - US", "Remote - Canada"), ("Remote (US)", "Remote, Canada"), ("Toronto, CA", "Toronto, ON"),
+              ("Office - Austin", "Office - Dallas"), ("Arlington, VA 22201", "Arlington, TX 76010")]
 SPELLINGS = [(place, spelling) for place, spellings in PLACES.items() for spelling in spellings]
 #: Sightings that name no place: on a careers page each joins the posting it was seen with, and never makes the
 #: next sighting (another place) join it too.
@@ -178,6 +193,28 @@ def test_every_pair_of_place_spellings_on_one_url_is_one_posting_exactly_when_it
     assert len(stored(_home)) == (1 if same else 2)
     # one place closes once; two places: the first closing never takes the other with it
     assert [j["location"] for j in js.list_recent(NOW)] == ([] if same else [second[1]])
+
+
+@pytest.mark.parametrize("first, second", TWO_PLACES + [(b, a) for a, b in TWO_PLACES])
+def test_two_places_that_each_name_something_the_other_lacks_are_two_postings(_home, first, second):
+    url = "https://careers.example.test/acme"
+    js.upsert(listing("Software Engineer", url=url, location=first, source="feed-a", external_id="A-1",
+                      closes_at=days(-1).isoformat()), days(-3))
+    js.upsert(listing("Software Engineer", url=url, location=second, source="feed-b", external_id="B-2"), days(-2))
+    assert len(stored(_home)) == 2
+    assert [j["location"] for j in js.list_recent(NOW)] == [second]
+
+
+@pytest.mark.parametrize("country_only", ["Remote, US", "US"])
+def test_a_country_only_sighting_between_two_cities_in_it_never_joins_them(_home, country_only):
+    url = "https://careers.example.test/acme"
+    js.upsert(listing("Software Engineer", url=url, location="Austin, TX", source="feed-a", external_id="A-1",
+                      closes_at=days(-1).isoformat()), days(-3))
+    js.upsert(listing("Software Engineer", url=url, location=country_only, source="feed-b", external_id="B-2"),
+              days(-2.5))
+    js.upsert(listing("Software Engineer", url=url, location="Dallas, TX", source="feed-c", external_id="C-3"), days(-2))
+    assert len(stored(_home)) == 2
+    assert [j["location"] for j in js.list_recent(NOW)] == ["Dallas, TX"]
 
 
 @pytest.mark.parametrize("between", PLACELESS)
