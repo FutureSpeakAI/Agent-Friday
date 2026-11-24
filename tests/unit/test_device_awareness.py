@@ -121,7 +121,7 @@ def test_the_whole_answer_names_every_kind_and_what_is_not_paired():
         "Your tablet is connected now.",
         "No TV is paired.",
         "No watch is paired with me. The watch app is a developer preview that reaches me through your phone "
-        "and never signs in to this PC, so I cannot tell whether one is in use.",
+        "and never signs in to me, so I cannot tell whether one is in use.",
         "The apps do not tell me which version they are running yet."]
 
 
