@@ -18,7 +18,9 @@ tables do not know). services/job_store uses it to tell two postings on one care
 * two locations with names are one place only when their names are the same and no state or country of one
   differs from the other's: "Dallas" and "Dallas, TX", "London" and "London, England, GB"; two without names are
   one only when they name the same state and country: "Remote - US" and "Remote, United States", "Remote - TX" and
-  "Texas". A location that names nothing (a bare "Remote") is one place with any.
+  "Texas". Two that both give a postcode are two places when the postcodes differ, whatever else they share
+  ("Austin, TX 78701" and "Austin, TX 78745"; "Austin, TX 78701" and "Austin, TX" stay one). A location that names
+  nothing (a bare "Remote") is one place with any.
 
 So a city never joins a location without that city ("Remote - WA" and "Washington, DC", "Ontario, Canada" and
 "Ontario, CA", "New York" and "New York, NY" are two), a country is never one of its states ("New York" and
@@ -89,6 +91,8 @@ class Place:
     country: Optional[str] = None
     state: Optional[str] = None
     names: FrozenSet[str] = frozenset()
+    #: the numbers after a known state or country ("TX 78701"): a postcode
+    postcodes: FrozenSet[str] = frozenset()
 
     def __bool__(self) -> bool:
         return bool(self.country or self.state or self.names)
@@ -175,13 +179,15 @@ def parse(location) -> Place:
             names.add(core)                                  # "Mexico, MO": a town, not the country
     if not names and numbers:
         names = numbers                                      # "TX 78701" alone: the ZIP is all that names the town
-    return Place(country, state, frozenset(names))
+    return Place(country, state, frozenset(names), frozenset(numbers))
 
 
 def differ(a: Place, b: Place) -> bool:
     """True when two locations are two places (see the module docstring)."""
     if not a or not b:
         return False
+    if a.postcodes and b.postcodes and a.postcodes != b.postcodes:
+        return True                          # two postcodes: two places, whatever the town ("Austin, TX 78701" / 78745)
     if a.names != b.names:
         return True
     if not a.names:                          # two regions: one only when they are the same region
