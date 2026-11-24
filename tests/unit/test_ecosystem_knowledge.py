@@ -406,13 +406,29 @@ def test_the_phone_and_tablet_are_said_to_open_chats_workspaces_and_a_widget(app
     overview = eco.info(app_id)
     assert "open the chats you have had with me on this PC" in overview
     assert "open workspaces from this PC" in overview and "home-screen widget" in overview
-    # The PC's voice on a device is asked for by no installed build, so it is not said as working.
+    # A live call in the PC's voice is asked for by no installed build, so it is not said as working.
     assert not eco.app(app_id).facts.holds("route:gateway/voice")
     assert caps["pc_voice"].status == "planned"
-    assert "A live spoken conversation in this PC's own voice isn't built yet" in overview
 
 
-def test_the_watch_is_said_to_reach_this_pc_through_the_phone_and_never_on_its_own():
+@pytest.mark.parametrize("app_id", ("phone", "tablet"))
+def test_reading_this_pc_from_a_device_is_said_to_need_its_own_press(app_id):
+    """tv_gateway/pc_read guards chats and workspaces with the pc_read right, which the pairing press
+    does not grant: it is its own press at the PC. A sentence that leaves that out promises a refusal."""
+    from agent_friday.services import device_pairing
+    from agent_friday.tv_gateway import pc_read
+    assert "pc_read" in device_pairing.PC_RIGHTS and "pc_read" not in device_pairing.RIGHTS
+    source = Path(pc_read.__file__).read_text(encoding="utf-8")
+    assert '"/tv/v1/chats"' in source and '"/tv/v1/workspaces"' in source
+    a = eco.app(app_id)
+    for cap in a.capabilities:
+        if cap.id in ("chats", "workspaces"):
+            assert cap.text.endswith(eco.NEEDS_READ_PRESS), cap.text
+    said = [line for line in a.adds if "chats" in line or "workspaces" in line]
+    assert said and all(line.startswith("Once you allow it to read this PC") for line in said)
+
+
+def test_the_watch_is_said_to_reach_me_through_the_phone_and_its_older_helper_is_named():
     watch = eco.app("watch")
     assert watch.pair.method == "phone_link"
     assert not watch.facts.holds("pairing:gateway")
@@ -421,18 +437,43 @@ def test_the_watch_is_said_to_reach_this_pc_through_the_phone_and_never_on_its_o
     assert "pair the phone with this PC first" in watch.pair.steps[0].text
     assert eco.sees(watch)[0] == eco.PHONE_LINK_TURN
     everything = "\n".join(eco.info("watch", topic) for topic in eco.TOPICS)
-    assert "helper program" not in everything
     assert "It cannot approve anything through the phone." in everything
     assert "through your phone" in everything
+    # The app still carries its own pairing with a helper program on the PC; while it does, that is said,
+    # and nothing claims the watch has no path to this PC at all.
+    assert watch.facts.holds("pairing:relay")
+    assert eco.WATCH_HELPER in watch.limits
+    assert "never signs in to this PC" not in everything and "does not pair with this PC" not in everything
+    assert "never signs in to me" in everything
+
+
+def test_the_watch_buzz_is_not_said_as_working_while_only_the_helper_feeds_it():
+    """The buzz is driven by the helper's events, not by the phone link (the link carries no events)."""
+    watch = eco.app("watch")
+    assert "events" not in {r.split("/", 1)[1] for r in watch.facts.routes if r.startswith("phone_link/")}
+    buzz = next(c for c in watch.capabilities if c.id == "buzz")
+    assert buzz.status == "built_off" and "helper" in buzz.until
+    assert "can buzz" not in eco.info("watch")
 
 
 @pytest.mark.parametrize("app_id,noun", [("phone", "phone"), ("tablet", "tablet"), ("tv", "TV")])
-def test_the_keep_paired_question_is_stated_with_the_gateways_own_number_of_days(app_id, noun):
+def test_the_keep_paired_rule_is_stated_as_the_gateway_applies_it(app_id, noun):
+    """device_pairing.reconfirm_state: asked from RECONFIRM_WARN_DAYS before the date, when the device
+    connects; it keeps working until the date and is refused after it until the owner approves."""
     from agent_friday.services import device_pairing
     days = device_pairing.reconfirm_days(app_id)
     assert (device_pairing.RECONFIRM_DAYS, device_pairing.RECONFIRM_DAYS_TV) == (30, 90)
-    assert f"Every {days} days I ask you on this PC whether to keep the {noun} paired." in eco.info(app_id, "limits")
-    assert "whether to keep" not in eco.info("watch", "limits")
+    assert device_pairing.RECONFIRM_WARN_DAYS == 7
+    import time
+    day, now = 86400, time.time()
+    state = lambda left: device_pairing.reconfirm_state({"kind": app_id, "reconfirm_by": now + left})  # noqa: E731
+    assert (state(8 * day), state(6 * day), state(-60)) == ("ok", "due", "overdue")
+    limits = eco.info(app_id, "limits")
+    assert (f"A paired {noun} is kept for {days} days at a time. In the last week, when it next connects, "
+            f"I ask you on this PC whether to keep it. It goes on working until the {days} days are up; "
+            "after that it is refused until you approve.") in limits
+    assert "Until you answer, it is refused" not in limits
+    assert "is kept for" not in eco.info("watch", "limits")
 
 
 def test_the_tv_entry_states_the_kids_mode_rule_and_pairs_behind_the_pin():
