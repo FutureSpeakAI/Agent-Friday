@@ -243,6 +243,9 @@ def _enter(st: dict, transcript: list, stage: str) -> None:
         _say(transcript, copy.MEMORY_RULES, stage)
     elif stage == "household":
         _say(transcript, copy.HOUSEHOLD_ASK, stage)
+    elif stage == "devices":
+        from agent_friday.services import ecosystem_setup
+        _say(transcript, ecosystem_setup.menu(ecosystem_setup.live()) + chr(10) + copy.DEVICES_ASK, stage)
     elif stage == "room_voice":
         _say(transcript, copy.ROOM_VOICE_ASK, stage)
     elif stage == "brain_warm":
@@ -366,6 +369,8 @@ def _prompt(st: dict) -> dict:
                         "ask": list(copy.MEMORY_ALWAYS_ASK)})
     elif stage == "household":
         p.update(input="text", chips=_chips(copy.HOUSEHOLD_CHIPS))
+    elif stage == "devices":
+        p.update(input="text", chips=_chips(_device_chips(st)))
     elif stage == "room_voice":
         p.update(chips=_chips(copy.ROOM_VOICE_CHIPS))
     elif stage == "brain_warm":
@@ -1398,7 +1403,54 @@ def _on_household(st, transcript, value, text):
     else:
         _heard(transcript, copy.SKIP, "household")
     record.append("household", choice or "not answered", "you" if choice else "default")
-    _enter(st, transcript, "room_voice")
+    _enter(st, transcript, "devices")
+
+
+# ── Companion devices ────────────────────────────────────────────────────────
+#
+# Optional, and read-only here: choosing a device reads out what it adds, what
+# it can see and where its set-up stands (services/ecosystem_setup). Nothing is
+# paired, opened or switched on by this stage; those are his presses at the PC.
+
+
+def _device_chips(st) -> tuple:
+    """One chip per offered device, the recommended one labelled, then the way out."""
+    from agent_friday.services import ecosystem as eco
+    from agent_friday.services import ecosystem_setup
+    chips = []
+    for device in copy.DEVICES_OFFERED:
+        noun = eco.app(device).noun
+        mark = ecosystem_setup.RECOMMENDED_LABEL if device in ecosystem_setup.RECOMMENDED else ""
+        chips.append((device, f"{noun[0].upper()}{noun[1:]}{mark}"))
+    chips.append(("none", copy.DEVICES_DONE if st.get("devices_heard") else copy.DEVICES_NONE))
+    return tuple(chips)
+
+
+def _on_devices(st, transcript, value, text):
+    from agent_friday.services import ecosystem_setup
+    text = _guard_text(text)
+    chips = _device_chips(st)
+    choice = "none" if (value == "skip" or _is_skip(text)) else _pick(value, text, {
+        "phone": ("phone", "my phone", "the phone"),
+        "tablet": ("tablet", "my tablet", "the tablet"),
+        "tv": ("tv", "my tv", "the tv", "television"),
+        "none": ("none", "no", "not now", "no thanks", "later", "carry on", "continue", "done")})
+    if choice is None:
+        _refuse_choice([lbl for _v, lbl in chips])
+    heard = list(st.get("devices_heard") or [])
+    if choice == "none":
+        _heard(transcript, dict(chips)["none"], "devices")
+        if not heard:
+            _say(transcript, copy.DEVICES_LATER, "devices")
+        record.append("devices", ", ".join(heard) or "none", "you")
+        _enter(st, transcript, "room_voice")
+        return
+    _heard(transcript, dict(chips)[choice], "devices")
+    _say(transcript, ecosystem_setup.walk(choice, ecosystem_setup.live()), "devices")
+    _say(transcript, copy.DEVICES_MORE, "devices")
+    if choice not in heard:
+        heard.append(choice)
+    st["devices_heard"] = heard
 
 
 # ── Spoken approvals with other people in the room ───────────────────────────
@@ -1506,7 +1558,7 @@ _HANDLERS = {
     "research_seeds": _on_research_seeds, "questions": _on_questions,
     "style": _on_style, "research_review": _on_research_review,
     "money": _on_money, "scheduled_cloud": _on_scheduled_cloud, "routines": _on_routines,
-    "memory_rules": _on_memory_rules, "household": _on_household,
+    "memory_rules": _on_memory_rules, "household": _on_household, "devices": _on_devices,
     "room_voice": _on_room_voice, "brain_warm": _on_brain_warm,
     "finish": _on_finish,
 }

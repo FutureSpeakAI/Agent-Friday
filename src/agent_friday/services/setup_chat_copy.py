@@ -27,7 +27,7 @@ STAGES = ("welcome", "offer", "agent_name", "voice", "pronouns", "framing",
           "connect", "knowledge", "reader",
           "research_ask", "research_seeds", "questions", "style",
           "research_review", "money", "scheduled_cloud", "routines",
-          "memory_rules", "household", "room_voice", "brain_warm",
+          "memory_rules", "household", "devices", "room_voice", "brain_warm",
           "finish", "done")
 
 #: What the progress rail shows. Several internal stages share a label.
@@ -41,7 +41,7 @@ STAGE_GROUPS = (
     ("research", "Research", ("reader", "research_ask", "research_seeds")),
     ("about", "Style", ("questions", "style", "research_review")),
     ("routine", "Money & routines", ("money", "scheduled_cloud", "routines")),
-    ("house", "House rules", ("memory_rules", "household", "room_voice", "brain_warm")),
+    ("house", "House rules", ("memory_rules", "household", "devices", "room_voice", "brain_warm")),
     ("finish", "Finish", ("finish", "done")),
 )
 
@@ -748,6 +748,24 @@ HOUSEHOLD_YES = (
     "people's things apart inside one account yet. The button beside this "
     "opens Windows' own page for adding someone. I don't put anything on the "
     "Windows lock screen.")
+
+
+# ── Companion devices (ecosystem spec, part C) ───────────────────────────────
+#
+# What each device adds, what it can see and its steps come from
+# services/ecosystem_setup, the same walk-through the tool gives later. Only
+# the framing lives here. Every device is optional; the recommended one is
+# labelled on its chip and nothing is chosen for him.
+DEVICES_ASK = "Would you like to hear what it takes to set one up now? You can leave it for later."
+DEVICES_NONE = "Not now"
+DEVICES_DONE = "Carry on"
+#: Offered in first run. The watch is a developer preview: named in the list above, never offered as a chip.
+DEVICES_OFFERED = ("phone", "tablet", "tv")
+DEVICES_LATER = ("No devices for now. Nothing was switched on or changed. Whenever you want one, ask me "
+                 "to help set up your phone, tablet or TV and I will pick it up from wherever it stands.")
+DEVICES_MORE = ("That is where it stands. I only read this out: pairing is opened and approved by you, "
+                "on this PC. Ask me to help set it up at any time and I will give you the next step. "
+                "Another device, or carry on?")
 
 
 # ── The receipt (first-run spec A13) ─────────────────────────────────────────

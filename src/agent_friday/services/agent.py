@@ -11639,6 +11639,26 @@ CLAUDE_TOOLS.append({
 CLAUDE_TOOL_HANDLERS["devices_status"] = _tool_devices_status
 TOOL_RINGS["devices_status"] = 0
 
+
+def _tool_ecosystem_setup(inp):
+    from agent_friday.services import ecosystem_setup as _es
+    return _es.tool_ecosystem_setup(inp)
+
+
+CLAUDE_TOOLS.append({
+    "name": "ecosystem_setup",
+    "description": ("Read-only (Ring 0): the guided set-up of a companion app (phone, tablet, TV, watch). "
+                    "With no device it lists them; with one it says what it adds, what it can see, where "
+                    "the set-up stands on this PC and the one next step. Give the steps as written. It "
+                    "cannot open pairing, approve or change anything: those are the owner's presses."),
+    "input_schema": {"type": "object", "properties": {
+        "device": {"type": "string", "enum": ["phone", "tablet", "tv", "watch"]},
+        "step": {"type": "string", "enum": ["install", "enable", "open", "pair", "verify", "test",
+                                            "phone_first", "link"]}}},
+})
+CLAUDE_TOOL_HANDLERS["ecosystem_setup"] = _tool_ecosystem_setup
+TOOL_RINGS["ecosystem_setup"] = 0
+
 try:        # registers the decision hook that starts an approved website task
     from agent_friday.services import web_tasks as _web_tasks
     _web_tasks.register_hooks()

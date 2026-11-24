@@ -436,6 +436,9 @@ INTERNAL_TOOLS = frozenset({
     # Paired devices: reads the PC's own signed device list and says kind,
     # pairing time and last sign-in. No device name, key or token is returned.
     "devices_status",
+    # Guided set-up of a companion app: reads the same notes and device list
+    # and says the next step. It opens nothing and changes nothing.
+    "ecosystem_setup",
 })
 
 #: Classified by argument: run_command by its command, content_create_post by

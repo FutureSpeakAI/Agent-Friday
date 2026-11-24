@@ -40,7 +40,7 @@ TOPICS = ("overview", "install", "pair", "sees", "limits")
 
 PROMPT_BLOCK_MAX_CHARS = 700
 SECTION_TITLE = "YOUR COMPANION APPS"
-PROMPT_TOOLS = "ecosystem_info and devices_status"
+PROMPT_TOOLS = "ecosystem_info, devices_status and ecosystem_setup"
 
 #: Said once before any step that uses Android's developer tools.
 ADVANCED_NOTICE = (
