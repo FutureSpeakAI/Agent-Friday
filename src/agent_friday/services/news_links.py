@@ -24,21 +24,22 @@ import re
 _CITE_RE = re.compile(r"\[\s*([A-Z]\d{1,3}(?:\s*[,;]\s*[A-Z]\d{1,3})*)\s*\]")
 _MD_LINK_RE = re.compile(r"\[([^\]\n]{1,300})\]\((https?://[^)\s]+)\)")
 _BARE_URL_RE = re.compile(r"(?<![(\[])\bhttps?://[^\s)\]>\"'\x00]+")
-#: What marked (gfm, as ui_parts/app.html renders a briefing) trims off the end of an address it links: these
-#: characters, and a ")" that closes nothing in the address.
-_TRIMMED = "?!.,:;*_'\"~"
+#: marked's own rule (9.1.6, inline._backpedal, applied until it stops changing) for where an address it links
+#: ends: closing punctuation and a ")" that opens nothing are trimmed off the end, a "(" with no ")" ends it, and
+#: so does an "&" that starts an entity at the end. ui_parts/app.html renders a briefing with marked (gfm).
+_BACKPEDAL = re.compile(r"(?:[^?!.,:;*_'\"~()&]+|\([^)]*\)|&(?![a-zA-Z0-9]+;\Z)|[?!.,:;*_'\"~)]+(?!\Z))+")
 
 
 def _linked(run: str) -> str:
-    """The address marked links when it meets `run` (an address and everything glued to it, up to a space)."""
-    while run:
-        if run[-1] in _TRIMMED:
-            run = run[:-1]
-        elif run[-1] == ")" and run.count(")") > run.count("("):
-            run = run[:-1]
-        else:
-            break
-    return run
+    """The address marked links when it meets `run`: an address and everything glued to it, up to a space."""
+    while True:
+        found = _BACKPEDAL.match(run)
+        linked = found.group(0) if found else ""
+        if linked == run:
+            return run
+        run = linked
+
+
 _MARK = re.compile("\x00(\\d+)\x00")
 
 
@@ -58,9 +59,11 @@ def set_aside_known(text: str, known, kept: list) -> str:
         if span in text:
             text = text.replace(span, mark(span))
     for url in ordered:
-        # Everything glued to the address, up to a space (or a mark), is what marked would link; it stands alone
-        # only when that is exactly the address. "K)evil.example", "K<@evil.example" and "K]x" are other addresses.
-        text = re.sub(re.escape(url) + "[^\\s\x00]*",
+        # Everything glued to the address up to a space is what marked would link, a link set aside before it
+        # included (put_back restores it, glued as it was); the address stands alone only when that is exactly
+        # the address. "K)evil.example", "K<@evil.example", "K]x" and K glued to another known link are other
+        # addresses, and go.
+        text = re.sub(re.escape(url) + "\\S*",
                       lambda m, url=url: mark(m.group(0)) if _linked(m.group(0)) == url else m.group(0), text)
     return text
 
