@@ -334,7 +334,7 @@ def test_the_proposals_route_itself_refuses_a_device_that_may_not_approve(client
 # ── a proposal body the fingerprint can't be taken of is a 400, never a 500 (slice 3 design critic, 2026-11-24) ──
 
 @pytest.mark.parametrize("raw", [
-    '{"base_rev": "r", "change": {"customization": {"summary": "\ud800"}}}',     # a lone surrogate
+    r'{"base_rev": "r", "change": {"customization": {"summary": "\ud800"}}}',    # a lone surrogate, sent escaped
     '{"base_rev": "r", "change": {"customization": {"density": NaN}}}',          # not JSON, but Python parses it
     '{"base_rev": "r", "change": {"customization": {"density": Infinity}}}',
 ])
