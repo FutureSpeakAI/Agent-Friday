@@ -252,7 +252,10 @@ def save(view_id: str, doc, *, ctx: prof.Context, base_rev: str, label: str, by:
 
 
 def _default_ctx(view: dict) -> prof.Context:
-    return prof.Context(subject=view.get("subject") or "", authorship=view.get("authorship") or "composer")
+    """The context a stored view was checked under. A view that holds a document he approved keeps
+    model_authored (tests/unit/test_tv_ws_view_documents.py: test_restore_and_undo_check_as_strictly_as_save)."""
+    return prof.Context(subject=view.get("subject") or "", authorship=view.get("authorship") or "composer",
+                        model_authored=bool(view.get("model_authored")))
 
 
 def restore(view_id: str, version_id: str, *, base_rev: str, by: str, ctx: Optional[prof.Context] = None) -> dict:

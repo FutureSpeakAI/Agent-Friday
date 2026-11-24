@@ -92,6 +92,37 @@ def ctx(ws: str) -> prof.Context:
     return prof.Context(subject=subject(ws), authorship="builtin")
 
 
+#: The phone's approval-card strings; a document he approves may not echo them (V11 extra_reserved).
+CARD_STRINGS = ("Approve", "Deny", "Not now", "Friday needs you", "On your PC only")
+LABEL_MAX = 80
+
+
+def doc_ctx(ws: str) -> prof.Context:
+    """The one context for a document he approves, and for every restore, undo and reset of a view: checked as
+    Friday's own documents are (composer, model_authored: no data of its own), no verb lookup (V9 fails closed), and
+    the card strings reserved. Design: ftv/program/specs/A2UI_SLICE3_OWNER_DOCUMENTS_2026-11-24.md, rev 2 and 3."""
+    return prof.Context(subject=subject(ws), authorship="composer", model_authored=True, extra_reserved=CARD_STRINGS)
+
+
+def _check_reads(doc: list, sections) -> None:
+    """Every binding is in the broker's vocabulary and reads a section the device block serves; otherwise the view
+    would be hidden after the write and every later proposal, restore included, would 404."""
+    from agent_friday.services import a2ui_broker
+    try:
+        read = a2ui_broker.sections_read(doc)
+    except a2ui_broker.BrokerRefused as e:
+        raise store.ViewRefused("bindings", str(e)) from e
+    if sections is None or not read <= set(sections):
+        raise store.ViewRefused("bindings", "this workspace does not serve what that document reads")
+
+
+def _label(value) -> str:
+    if not isinstance(value, str) or not value.strip() or len(value) > LABEL_MAX \
+            or any(ord(c) < 32 or 0x7f <= ord(c) < 0xa0 for c in value):
+        raise store.ViewRefused("label", "a label is one line of at most %d characters" % LABEL_MAX)
+    return value.strip()
+
+
 def carried_look(ws: str, doc: list) -> dict:
     """His Studio look for ws as the document properties this format takes: each of CARRIED_KEYS the A2UI look
     accepts on its own. An unreadable Studio file carries nothing."""
@@ -149,14 +180,30 @@ def current(ws: str) -> dict | None:
             "customization": look, "versions": 0, "stored": False}
 
 
-def apply_change(ws: str, change, *, base_rev: str, by: str) -> dict:
-    """Apply an owner's change as a new version: `{"customization": patch}` or `{"restore": version_id}`.
-    Returns {rev, version}. Raises store.ViewRefused, store.ViewStale, store.ViewCorrupt, PermissionError."""
-    if not isinstance(change, dict) or len(change) != 1 or not (set(change) <= {"customization", "restore"}):
-        raise store.ViewRefused("change", "a change is {customization} or {restore}")
+def _kind(change) -> str:
+    if isinstance(change, dict):
+        if set(change) == {"document", "label"}:
+            return "document"
+        if change == {"reset": True}:
+            return "reset"
+        if len(change) == 1 and set(change) <= {"customization", "restore"}:
+            return next(iter(change))
+    raise store.ViewRefused("change", "a change is {customization}, {restore}, {document, label} or {reset: true}")
+
+
+def apply_change(ws: str, change, *, base_rev: str, by: str, sections=None) -> dict:
+    """Apply an owner's change as a new version: `{"customization": patch}`, `{"restore": version_id}`,
+    `{"document": [...], "label": str}` or `{"reset": true}`. `sections` are the device block's declared sections;
+    a document or a restore that reads anything else is refused. Returns {rev, version[, dropped_hidden]}.
+    Raises store.ViewRefused, store.ViewStale, store.ViewCorrupt, PermissionError."""
+    kind = _kind(change)
     view = current(ws)
     if view is None:
         raise store.ViewRefused("version", "there is no such view")
+    if kind == "document":
+        return _document(ws, view, change["document"], _label(change["label"]), base_rev, by, sections)
+    if kind == "reset":
+        return _reset(ws, view, base_rev, by)
     if not view["stored"]:
         if base_rev != view["rev"]:
             raise store.ViewStale(view["rev"])
@@ -166,7 +213,57 @@ def apply_change(ws: str, change, *, base_rev: str, by: str) -> dict:
     if "customization" in change:
         got = store.set_customization(ws, change["customization"], base_rev=base_rev, by=by)
     else:
-        got = store.restore(ws, str(change["restore"]), base_rev=base_rev, by=by, ctx=ctx(ws))
+        target = next((v for v in (store.load(ws) or {}).get("versions", []) if v.get("id") == str(change["restore"])),
+                      None)
+        if target is not None:
+            _check_reads(target["doc"], sections)
+        got = store.restore(ws, str(change["restore"]), base_rev=base_rev, by=by, ctx=doc_ctx(ws))
+    return {"rev": got["rev"], "version": got["versions"]}
+
+
+def _document(ws: str, view: dict, doc, label: str, base_rev: str, by: str, sections) -> dict:
+    """His approved document as the view's new current one. The first one keeps the builtin (with its carried look)
+    as the earlier version, in the same write. His customization stays; hidden ids the new document no longer has are
+    dropped and named."""
+    store._validated(doc, doc_ctx(ws))
+    _check_reads(doc, sections)
+    ids = store._component_ids(doc)
+    if not view["stored"] and base_rev != view["rev"]:
+        raise store.ViewStale(view["rev"])
+    hidden = list((view["customization"] or {}).get("hidden") or [])
+    dropped = [h for h in hidden if h not in ids]
+
+    def build(previous):
+        if previous is None:
+            previous = {"id": ws, "label": LABELS.get(ws, ws), "subject": subject(ws), "authorship": "builtin",
+                        "doc": view["doc"], "customization": dict(view["customization"]), "versions": [],
+                        "updated_by": "builtin", "updated": None}
+        versions = list(previous["versions"]) + [store._snapshot(previous, store.KIND_CHANGE)]
+        return {**previous, "label": label, "subject": subject(ws), "authorship": "composer", "model_authored": True,
+                "approved_by": by, "doc": doc, "customization": store._kept_hidden(previous["customization"], doc),
+                "versions": versions[-store.MAX_VERSIONS:], "updated_by": by}
+    got = store._commit(ws, build, base_rev if view["stored"] else store.NEW_REVISION)
+    return {"rev": got["rev"], "version": got["versions"], "dropped_hidden": dropped}
+
+
+def _reset(ws: str, view: dict, base_rev: str, by: str) -> dict:
+    """Back to the builtin document and its carried Studio look, rebuilt from code, as a new version (so the version
+    cap can never put the builtin out of reach). With nothing stored it changes nothing and answers the builtin rev."""
+    if ws not in BUILTINS:
+        raise store.ViewRefused("version", "this view has no builtin to go back to")
+    if not view["stored"]:
+        if base_rev != view["rev"]:
+            raise store.ViewStale(view["rev"])
+        return {"rev": view["rev"], "version": 0}
+    doc = builtin(ws)
+    store._validated(doc, doc_ctx(ws))
+
+    def build(previous):
+        versions = list(previous["versions"]) + [store._snapshot(previous, store.KIND_CHANGE)]
+        return {**previous, "label": LABELS.get(ws, ws), "authorship": "builtin", "model_authored": False,
+                "approved_by": by, "doc": doc, "customization": carried_look(ws, doc),
+                "versions": versions[-store.MAX_VERSIONS:], "updated_by": by}
+    got = store._commit(ws, build, base_rev)
     return {"rev": got["rev"], "version": got["versions"]}
 
 
