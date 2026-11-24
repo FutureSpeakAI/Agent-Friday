@@ -37,6 +37,7 @@ _clock = time.time
 
 _kept: dict[str, tuple[float, Optional[dict]]] = {}
 _reading: dict[str, tuple[float, Future]] = {}      # workspace -> (when the read began, its answer)
+_threads: set = set()                                # every read thread not yet finished, given up on or not
 _lock = threading.Lock()
 
 
@@ -126,6 +127,8 @@ def _read(ws: str, fut: Future) -> None:
             if current:                                       # nor clears the read that replaced it
                 del _reading[ws]
         fut.set_result(got)
+        with _lock:
+            _threads.discard(threading.current_thread())
 
 
 def lines(ids: Iterable[str]) -> dict[str, dict]:
@@ -148,7 +151,9 @@ def lines(ids: Iterable[str]) -> dict[str, dict]:
                 continue                                     # its answer lands in _kept for a later list
             fut = Future()
             _reading[ws] = (now, fut)
-            threading.Thread(target=_read, args=(ws, fut), name="ws-line-" + ws, daemon=True).start()
+            t = threading.Thread(target=_read, args=(ws, fut), name="ws-line-" + ws, daemon=True)
+            _threads.add(t)
+            t.start()
             waiting[ws] = fut
     if waiting:
         wait(list(waiting.values()), timeout=BUDGET_S)
@@ -161,9 +166,10 @@ def lines(ids: Iterable[str]) -> dict[str, dict]:
 def settle(timeout: float) -> None:
     """Wait for reads still under way (tests)."""
     with _lock:
-        pending = [fut for _, fut in _reading.values()]
-    if pending:
-        wait(pending, timeout=timeout)
+        pending = list(_threads)
+    end = time.monotonic() + timeout
+    for t in pending:
+        t.join(max(0.0, end - time.monotonic()))
 
 
 def forget() -> None:

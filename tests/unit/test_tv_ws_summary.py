@@ -261,7 +261,5 @@ def test_a_read_given_up_on_never_overwrites_the_newer_line(client, monkeypatch)
     monkeypatch.setattr(ws_summary, "_clock", lambda: ws_summary._clock_real() + ws_summary.HUNG_S + 1)
     assert _live(dev)["news"]["text"] == "NEW", "a fresh read replaces the stuck one"
     gate.set()
-    ws_summary.settle(2.0)
-    import time
-    time.sleep(0.2)                                      # the given-up read's thread finishes its finally
+    ws_summary.settle(2.0)                               # waits for the given-up read too
     assert _live(dev)["news"]["text"] == "NEW", "the late OLD answer is not kept over the newer one"
