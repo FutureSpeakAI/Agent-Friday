@@ -66,6 +66,8 @@ _CONTROL = re.compile("[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f\u200b-\u200f\u2028-\
 #: The target of ANY markdown link or image, whatever its label holds: what follows "](" up to the closing ")".
 #: It stops at a set-aside mark, so an unknown target never swallows a known link set aside after it.
 _LINK_TARGET = re.compile(r"\]\(([^)\n\x00]*)\)")
+#: A set-aside mark after an odd run of backslashes (the run, then the mark).
+_ESCAPED_MARK = re.compile(r"((?<!\\)(?:\\\\)*\\)" + "\x00\\d+\x00")
 _HAS_WORDS = re.compile(r"[A-Za-z0-9]")
 LABELS = {EMAIL: "Open email", CALENDAR: "Calendar event", EVENT: "Event page"}
 
@@ -151,6 +153,9 @@ def strip_unknown_links(text: str, known: Iterable[str]) -> str:
         text = _ANGLE_URL.sub("", text)
         text = _BARE_URL.sub("", text.replace("<", "&lt;"))
         text = re.sub(r"\(\s*\)", "", text.replace("@", "&#64;"))
+        # A known link that taking text away has left right after a backslash would come back escaped ("\<K>" is
+        # a literal "<" and an autolink to K> in marked): it goes, its backslashes stay.
+        text = _ESCAPED_MARK.sub(lambda m: m.group(1), text)
         if text == before:         # ends: the escapes are made once each; every other change takes text away
             return news_links.put_back(text, kept)
 

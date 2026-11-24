@@ -76,7 +76,7 @@ def set_aside_known(text: str, known, kept: list) -> str:
         text = re.sub(_UNESCAPED + re.escape("<%s>" % url), lambda m: mark(m.group(0)), text)
     for url in ordered:
         span = "](%s)" % url
-        if span in text and url.count("(") == url.count(")"):
+        if span in text and _balanced(url):
             text = re.sub(_LABEL + re.escape(span), lambda m, span=span: m.group(0)[:-len(span)] + mark(span), text)
     for url in ordered:
         text = re.sub(_UNESCAPED + re.escape(url) + "\\S*", lambda m, url=url: (
@@ -94,9 +94,21 @@ CITE_RULE = (
     "address or a markdown link; the links are added for you from the ids.")
 
 
+def _balanced(url: str) -> bool:
+    """Every ")" in the address closes a "(" before it, and every "(" is closed: marked ends a link's target at the
+    first ")" that closes nothing ("https://a.test/a)(b" would link https://a.test/a)."""
+    depth = 0
+    for c in url:
+        depth += (c == "(") - (c == ")")
+        if depth < 0:
+            return False
+    return depth == 0
+
+
 def working(url: str) -> bool:
-    """A link a reader can open: an http(s) address with a host."""
-    return bool(re.match(r"^https?://[^\s/]+\.[^\s/]+", url or ""))
+    """A link a reader can open, and that marked links whole: an http(s) address with a host, no space, angle
+    bracket or control character, and brackets that balance."""
+    return bool(re.match(r"^https?://[^\s/]+\.[^\s/]+", url or "")) and not _UNFIT.search(url) and _balanced(url)
 
 
 def number(items: list[dict], prefix: str = "N") -> list[dict]:
