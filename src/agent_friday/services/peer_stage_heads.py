@@ -41,6 +41,12 @@ Rules, each with the test that enforces it (tests/unit/test_peer_stage_heads.py)
       test_a_transition_cannot_loop_or_make_genesis
   a cycle through two priors freezes the stage:
       test_a_cycle_through_two_priors_freezes_instead_of_looping
+  a reconcile covers only the competing heads it saw; a new one on that prior freezes the stage again:
+      test_a_new_head_on_a_reconciled_fork_freezes_again
+  a reconcile that would close a cycle is refused:
+      test_a_reconcile_that_would_close_a_cycle_is_refused
+  every small set in every order gives one state, and a reconcile that succeeds moves the head off the fork:
+      test_every_small_set_in_every_order_gives_one_state_and_a_reconcile_that_succeeds_moves_on
   imports only the standard library:
       test_the_module_imports_only_the_standard_library
 """
@@ -64,6 +70,7 @@ class ReconcileRefusal(str, Enum):
     NOT_FROZEN = "not_frozen"
     NOT_INDEPENDENT = "not_independent"
     NOT_A_KEPT_HEAD = "not_a_kept_head"
+    CLOSES_A_CYCLE = "closes_a_cycle"
 
 
 @dataclass(frozen=True)
@@ -91,6 +98,7 @@ class StageHeads:
 
     def _walk(self) -> None:
         node, visited = GENESIS, {GENESIS}
+        self._path = visited
         while True:
             kids = self._children.get(node, set())
             if not kids:
@@ -136,14 +144,18 @@ class StageHeads:
         return Outcome.ADVANCED if self._head != was_head else Outcome.STALE
 
     def reconcile(self, reviewer: str, chosen: str) -> ReconcileRefusal | None:
-        """None when reconciled; otherwise the refusal. The choice covers exactly the competing heads seen now: a
-        further head on the same prior freezes the stage again, and so does a later fork on the chosen chain."""
+        """None when reconciled (the head then moves past the fork); otherwise the refusal. The choice covers exactly
+        the competing heads seen now: a further head on the same prior freezes the stage again, and so does a later
+        fork on the chosen chain. A head already on the chain cannot be chosen: that would close a cycle, so a stage
+        frozen only by a cycle stays frozen, and ending it is the job's decision, outside this recorder."""
         if not self._frozen:
             return ReconcileRefusal.NOT_FROZEN
         if reviewer in self._parties:
             return ReconcileRefusal.NOT_INDEPENDENT
         if chosen not in self._kept:
             return ReconcileRefusal.NOT_A_KEPT_HEAD
+        if chosen in self._path:
+            return ReconcileRefusal.CLOSES_A_CYCLE
         self._resolved[self._head] = (chosen, self._kept)
         self._walk()
         return None
