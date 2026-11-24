@@ -148,7 +148,7 @@ def test_a_picked_model_starts_a_chat_bound_to_it_and_the_turn_runs_in_that_chat
     r = ask(client, phone(), model="claude-haiku-5-5")
     assert r.status_code == 200
     # created without a seat, then bound through the desktop's checked PATCH (the create route does not check)
-    assert desk.api_calls == [("POST", "/api/conversations", {"title": "Phone chat"}),
+    assert desk.api_calls == [("POST", "/api/conversations", {"title": "New chat"}),
                               ("PATCH", "/api/conversations/conv-new", {"seat": {"model": "claude-haiku-5-5"}})]
     assert desk.convs["conv-new"]["seat"] == {"model": "claude-haiku-5-5"}
     assert desk.turns[0]["conversation_id"] == "conv-new" and block(r)["conversation_id"] == "conv-new"

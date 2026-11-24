@@ -62,8 +62,9 @@ RIGHT_CARDS = {
         "without a yes on the TV, and no shared channel gets website access from here."),
     "pc_read": (
         "Let this phone or tablet read what is on this PC?",
-        "The device may read your chat list and chats, workspaces, jobs and their journals, and the media "
-        "index on this PC, from home or over your private link. It can only read: it cannot change anything, "
+        "The device may read your chat list and chats, your projects (their chats, instructions and file names), "
+        "workspaces, jobs and their journals, and the media index on this PC, from home or over your private "
+        "link. It can only read: it cannot change anything, "
         "run an action or approve a card. Each kind of reading is listed in the PC's receipts, and removing "
         "the device here ends it."),
     "pc_act": (

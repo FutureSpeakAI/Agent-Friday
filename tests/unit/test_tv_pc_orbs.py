@@ -5,7 +5,9 @@ able to multitask with the phone app just like I can with the desktop app." The 
 running task from /api/processes. These tests hold what the phone is sent from that same feed
 (tv_gateway/pc_orbs.py):
 
-* an orb exists only while its process runs: every finished status leaves, and an orb has no "done" state;
+* the phone gets exactly the orbs the desktop draws (window.fridaySyncOrbs: ``orb_visible`` and not ``dismissed``):
+  running ones, and a finished or failed one while the desktop still shows it, with how it ended;
+* progress, category, icon and steps are the PC's own values; a step is a tool's name and status only;
 * the label is the PC's own model value; a voice turn that calls five tools is still one orb;
 * a tool's arguments and results never leave the PC, and no string carries a URL or a host path;
 * a PC that cannot answer is a 503, never an empty list that reads as "nothing is running";
@@ -25,7 +27,8 @@ client = shared.client
 _clean = shared._clean
 
 ORB_KEYS = {"id", "job_id", "parent_id", "kind", "title", "stage", "state", "model", "started_at",
-            "last_event_at", "approval_id", "can_stop", "can_stop_after_step", "origin"}
+            "last_event_at", "approval_id", "can_stop", "can_stop_after_step", "origin",
+            "status", "progress", "category", "icon", "failed", "steps", "step_n", "step_total", "trace_id", "ended_at"}
 
 
 class Desk:
@@ -68,10 +71,54 @@ def test_a_running_process_is_one_orb_with_the_pcs_own_model_label(client, desk)
     assert orb["started_at"] == 1000 and orb["last_event_at"] == 1010
 
 
-def test_every_finished_status_leaves_and_nothing_finished_is_ever_listed(client, desk):
+def test_the_phone_gets_exactly_the_rows_the_desktop_draws(client, desk):
+    # the desktop keeps a finished orb on screen for ORB_VISIBLE_AFTER_DONE_S and a failed one with a warning; the server
+    # says which by orb_visible, and the phone draws the same set
     finished = sorted(set(ORB_TERMINAL_STATES) | {"done", "complete", "completed"})
-    desk.processes = [proc("run")] + [proc("end-" + s, s) for s in finished]
-    assert [o["id"] for o in orbs(client)] == ["run"]
+    desk.processes = ([proc("run")] + [proc("end-" + s, s) for s in finished]
+                      + [proc("gone-" + s, s, orb_visible=False) for s in finished] + [proc("bye", "completed", dismissed=True)])
+    got = {o["id"]: o for o in orbs(client)}
+    assert set(got) == {"run"} | {"end-" + s for s in finished}
+    assert got["run"]["state"] == "running" and got["run"]["can_stop"]
+    for s in finished:
+        assert got["end-" + s]["state"] in ("done", "failed", "stopped") and not got["end-" + s]["can_stop"]
+    assert got["end-completed"]["state"] == "done" and got["end-cancelled"]["state"] == "stopped"
+    # the desktop marks a cancel orb_failed too (its warning stays): still "stopped", never "failed"
+    desk.processes = [proc("x", "cancelled", orb_failed=True), proc("y", "interrupted", orb_failed=True), proc("z", "error", orb_failed=True)]
+    got = {o["id"]: o for o in orbs(client)}
+    assert [got[k]["state"] for k in "xyz"] == ["stopped", "stopped", "failed"] and got["x"]["icon"] == "\u26a0"
+
+
+def test_the_orb_carries_what_the_desktop_draws_it_from(client, desk):
+    desk.processes = [proc("a", progress=0.42, category="search", icon="\U0001f50d", trace_id="tr_c380a403",
+                           steps=[{"name": "search_web", "status": "done", "args": "SECRET"}, {"name": "read_page"}],
+                           step_n=2, step_total=5),
+                      proc("b", progress=None, category="weird-thing"),
+                      proc("c", "failed", orb_failed=True, trace_id="../../etc"),
+                      proc("d", progress=7)]
+    got = {o["id"]: o for o in orbs(client)}
+    a = got["a"]
+    assert a["progress"] == 0.42 and a["category"] == "search" and a["icon"] == "\U0001f50d" and a["trace_id"] == "tr_c380a403"
+    assert a["steps"] == [{"name": "search_web", "status": "done"}, {"name": "read_page", "status": None}]
+    assert (a["step_n"], a["step_total"]) == (2, 5) and a["failed"] is False and a["ended_at"] is None
+    assert got["b"]["progress"] is None and got["b"]["category"] == "default"       # unknown: an arc, never a made-up amount
+    assert got["c"]["state"] == "failed" and got["c"]["failed"] and got["c"]["icon"] == "\u26a0" and got["c"]["trace_id"] is None
+    assert got["d"]["progress"] == 1.0
+
+
+def test_the_live_desktop_row_shape_reads(client, desk):
+    # a row exactly as the running desktop answered /api/processes (2026-11-22), finished and not dismissed
+    row = {"category": "monitoring", "color": None, "cost_usd": 0.0, "dismissed": False, "elapsed": 29, "ended": 1795338571.45,
+           "eta_s": None, "goal_id": None, "icon": "\U0001f9e0", "id": "openai-d8e3ec39", "label": "Reasoning (step 2)",
+           "log": ["model: bonsai2:27b via arbiter-local", "intent: OK."], "milestone_id": None, "model": "bonsai2:27b",
+           "name": "Cloud Inference", "off_record": False, "orb_failed": False, "orb_visible": True, "principal": "owner",
+           "progress": 1.0, "receipt_id": None, "result": "You said", "schedule_id": None, "started": 1795338541.51,
+           "status": "completed", "step_n": 2, "step_total": None, "steps": [], "stop_capability": "stop_everything",
+           "task_id": None, "trace_id": "tr_c380a403e8b048dd", "updated": 1795338571.52}
+    desk.processes = [row]
+    [o] = orbs(client)
+    assert o["state"] == "done" and o["progress"] == 1.0 and o["model"]["label"] == "bonsai2:27b" and o["ended_at"] == 1795338571
+    assert "You said" not in json.dumps(o) and "intent" not in json.dumps(o)
 
 
 def test_a_dismissed_or_hidden_process_is_not_an_orb(client, desk):
@@ -242,3 +289,100 @@ def test_the_route_streams_events_and_refuses_a_device_that_may_not_read(client,
     first = next(iter(r.response))
     r.close()
     assert b"event: heartbeat" in first
+
+
+# ── stop, as the desktop orb's Cancel does ──────────────────────────────────────────────────────────────────
+
+class Posts:
+    def __init__(self):
+        self.calls, self.answer = [], (200, {"ok": True, "stopped": ["the job"]})
+
+    def __call__(self, path, body=None):
+        self.calls.append(path)
+        return self.answer
+
+
+@pytest.fixture
+def posts(monkeypatch):
+    from agent_friday.tv_gateway import pc_act
+    p = Posts()
+    monkeypatch.setattr(pc_act, "_desk_post", p)
+    return p
+
+
+def controller():
+    from agent_friday.services import device_pairing
+    dev = paired()
+    device_pairing.set_right(dev.id, "pc_act", True)
+    return dev
+
+
+def stop(client, dev, orb_id):
+    from tests.unit.test_tv_gateway import auth, open_session
+    return client.post("/tv/v1/orbs/%s/stop" % orb_id, headers=auth(open_session(client, dev)))
+
+
+def test_stop_does_what_the_desktop_cancel_does(client, desk, posts):
+    desk.processes = [proc("helper", task_id="t-9", stop_capability="after_this_step"), proc("image-1")]
+    dev = controller()
+    r = stop(client, dev, "helper")
+    assert r.status_code == 200 and r.get_json()["how"] == "after_this_step"
+    r = stop(client, dev, "image-1")
+    assert r.status_code == 200 and r.get_json()["how"] == "cancelled" and r.get_json()["stopped"] == ["the job"]
+    assert posts.calls == ["/api/tasks/t-9/stop-after-step", "/api/processes/image-1/cancel"]
+
+
+def test_stop_says_when_nothing_was_stopped(client, desk, posts):
+    desk.processes = [proc("done-1", "completed"), proc("t", task_id="t-1")]
+    dev = controller()
+    assert stop(client, dev, "done-1").status_code == 409
+    assert stop(client, dev, "nope").status_code == 404
+    posts.answer = (409, {"ok": False, "status": "paused"})
+    r = stop(client, dev, "t")
+    assert r.status_code == 409 and r.get_json()["code"] == "not_running"
+
+
+def test_stop_needs_the_right_to_control_the_pc(client, desk, posts):
+    desk.processes = [proc("a")]
+    assert stop(client, paired(), "a").status_code == 403          # pc_read alone reads orbs; it never stops one
+    assert stop(client, paired("tv"), "a").status_code == 403
+    assert posts.calls == []
+
+
+def test_stop_refuses_a_bad_id_and_never_answers_with_a_bare_500(client, desk, posts, monkeypatch):
+    desk.processes = [proc("a")]
+    dev = controller()
+    assert stop(client, dev, ".hidden").status_code in (400, 404) and posts.calls == []
+
+    def boom(path, body=None):
+        raise RuntimeError("desktop fell over")
+    from agent_friday.tv_gateway import pc_act
+    monkeypatch.setattr(pc_act, "_desk_post", boom)
+    r = stop(client, dev, "a")
+    assert r.status_code == 503 and r.get_json()["code"] == "pc_unavailable"
+
+
+def test_every_stop_attempt_leaves_a_receipt_with_its_outcome(client, desk, posts, monkeypatch):
+    from agent_friday.services import device_pairing
+    seen = []
+    monkeypatch.setattr(device_pairing, "_receipt", lambda kind, dev, **kw: seen.append((kind, kw)))
+    desk.processes = [proc("a"), proc("done-1", "completed")]
+    dev = controller()
+    stop(client, dev, "a")
+    stop(client, dev, "done-1")
+    stops = [kw for kind, kw in seen if kind == "device_orb_stop"]
+    assert [(s["orb"], s["outcome"]) for s in stops] == [("a", "stopped"), ("done-1", "not_running")]
+
+
+def test_a_task_id_the_gateway_cannot_use_refuses_the_stop_instead_of_changing_it(client, desk, posts):
+    # the desktop's Cancel stops a task after its step; a cancel of the bare process is not the same stop
+    desk.processes = [proc("a", task_id="../t 9")]
+    r = stop(client, controller(), "a")
+    assert r.status_code == 409 and r.get_json()["code"] == "cannot_stop_here" and posts.calls == []
+
+
+def test_an_icon_too_long_to_show_whole_is_left_out_never_cut():
+    from agent_friday.tv_gateway import pc_orbs
+    family = "\U0001F468\u200d\U0001F469\u200d\U0001F467\u200d\U0001F466"
+    assert pc_orbs.icon(family) == family
+    assert pc_orbs.icon("x" * 40) is None and pc_orbs.icon("") is None and pc_orbs.icon("\U0001F50D") == "\U0001F50D"
