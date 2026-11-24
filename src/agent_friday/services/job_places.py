@@ -96,9 +96,10 @@ class Place:
 
 def words(text) -> List[str]:
     """The words of a text in any script: letters with their marks (a Devanagari or Thai vowel sign is part of its
-    word) and digits, after NFC and case folding; everything else separates. services/job_store keys on these too."""
+    word), digits, and the "+" and "#" that tell C++, C# and F# from C and F, after NFC and case folding; everything
+    else separates. services/job_store keys titles and companies on these too."""
     text = unicodedata.normalize("NFC", str(text or "")).casefold()
-    return "".join(c if unicodedata.category(c)[0] in "LMN" else " " for c in text).split()
+    return "".join(c if unicodedata.category(c)[0] in "LMN" or c in "+#" else " " for c in text).split()
 
 
 def _words(text: str) -> List[str]:

@@ -94,7 +94,8 @@ def make_keys(listing: dict) -> List[str]:
     """Every key the posting can be known by, strongest first: feed id, company+title+location, URL.
     Raises ValueError when the listing names nothing to key on."""
     source, external = _words(listing.get("source")), str(listing.get("external_id") or "").strip().lower()
-    company, title, location = _words(listing.get("company")), _words(listing.get("title")), _words(listing.get("location"))
+    company, title = _words(listing.get("company")), _words(listing.get("title"))
+    location = _words(listing.get("location"))
     url = normalize_url(listing.get("url") or listing.get("source_url"))
     bases = []
     if source and external:
@@ -176,10 +177,11 @@ def _save(data: dict) -> None:
 def _contradicts(record: dict, listing: dict) -> bool:
     """True when both name a company and they differ, or both a title and they differ, or the listing's place
     differs from a place the record was seen at (job_places.differ, against every location in its "locations"):
-    then a shared URL is a careers page that lists several postings, not one posting. Austin, TX and Dallas, TX are two postings however
-    a feed orders them ("US, TX, Austin"); "New York, NY" and "New York, New York, United States" are one. A sighting
-    that names no place (a bare "Remote") contradicts nothing, so on a careers page it joins the first record that
-    page's URL was seen with, and changes none of that record's places."""
+    then a shared URL is a careers page that lists several postings, not one posting. Austin, TX and Dallas, TX
+    are two postings however a feed orders them ("US, TX, Austin"); "New York, NY" and "New York, New York, United
+    States" are one; "C++ Developer" and "C Developer" are two titles. A sighting that names no place (a bare
+    "Remote") contradicts nothing, so on a careers page it joins the first record that page's URL was seen with,
+    and changes none of that record's places."""
     for field in ("company", "title"):                    # each on its own: a missing company keeps the title check
         mine, theirs = _words(record.get(field)), _words(listing.get(field))
         if mine and theirs and mine != theirs:
