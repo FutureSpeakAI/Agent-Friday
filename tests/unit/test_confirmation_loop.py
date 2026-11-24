@@ -275,40 +275,30 @@ class TestTwoSurfacesOneDay:
         assert len(agent._PENDING_CONFIRMATIONS.get(SID) or {}) == 2, (
             "the second surface overwrote the first surface's pending action")
 
-    def test_a_yes_on_one_surface_does_not_grant_the_others_action(self):
-        """The leak, stated as the user would experience it: they answer the
-        front page and the chat tab quietly writes a file."""
+    def test_a_yes_with_two_questions_waiting_grants_neither_and_asks_which(self):
+        """A bare yes does not say which of two waiting questions it answers. It binds to none and approves
+        none (never a guess, never both): the model is told to ask which, and each question stays pending."""
         chat = agent.prepare_confirmation_ctx(SID, "write me the brief", {"owner_surface": True})
         _gate("write_file", {"path": "brief.md"}, chat)
         front = agent.prepare_confirmation_ctx(SID, "switch to code", {"owner_surface": True})
         _gate("navigate", {"workspace": "code"}, front)
 
-        yes = agent.prepare_confirmation_ctx(SID, "yes", {"owner_surface": True})   # meant: navigate
-        assert not _allowed(_gate("write_file", {"path": "brief.md"}, yes)), (
-            "a yes intended for the front page's navigate authorised the chat "
-            "tab's file write")
-        assert _allowed(_gate("navigate", {"workspace": "code"}, yes)), (
-            "the action the user actually approved was refused")
+        yes = agent.prepare_confirmation_ctx(SID, "yes", {"owner_surface": True})
+        assert not yes.get("confirm_granted_fp"), "a yes that could mean either was bound to one of them"
+        for name, inp in (("write_file", {"path": "brief.md"}), ("navigate", {"workspace": "code"})):
+            v = _gate(name, inp, yes)
+            assert not _allowed(v), "a yes that could mean either approved " + name
+            assert "WHICH ONE" in _text(v), _text(v)
+        assert len(agent._PENDING_CONFIRMATIONS.get(SID) or {}) == 2, "a question was dropped by the guess"
 
-    def test_the_newest_question_wins_when_both_were_asked_in_one_clock_tick(
-            self, monkeypatch):
-        """Windows' wall clock advances in ~15 ms steps, so two questions asked
-        back to back can carry the same timestamp. Ordering by that timestamp
-        then picks the OLDER question on a tie, and the yes meant for the
-        front page's navigate authorises the chat tab's file write."""
-        import time as _t
-        monkeypatch.setattr(_t, "time", lambda: 1758500000.0)
-        chat = agent.prepare_confirmation_ctx(SID, "write me the brief", {"owner_surface": True})
-        _gate("write_file", {"path": "brief.md"}, chat)
+    def test_the_one_waiting_question_is_the_one_a_yes_answers(self):
+        """With a single question waiting the yes is that question's, whichever surface asked it."""
         front = agent.prepare_confirmation_ctx(SID, "switch to code", {"owner_surface": True})
         _gate("navigate", {"workspace": "code"}, front)
-
-        yes = agent.prepare_confirmation_ctx(SID, "yes", {"owner_surface": True})   # meant: navigate
+        yes = agent.prepare_confirmation_ctx(SID, "yes", {"owner_surface": True})
         assert yes.get("confirm_granted_tool") == "navigate"
-        assert not _allowed(_gate("write_file", {"path": "brief.md"}, yes)), (
-            "a yes intended for the front page's navigate authorised the chat "
-            "tab's file write")
         assert _allowed(_gate("navigate", {"workspace": "code"}, yes))
+        assert not _allowed(_gate("write_file", {"path": "brief.md"}, yes))
 
 
 # ═══════════════════════════════════════════════════════════════════════════

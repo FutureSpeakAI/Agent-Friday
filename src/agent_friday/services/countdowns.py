@@ -17,6 +17,7 @@ that fails adds nothing and is named in the reply; the others still answer.
 """
 from __future__ import annotations
 
+import hashlib
 import logging
 import re
 from datetime import date, datetime, timedelta
@@ -351,6 +352,14 @@ def _clean(text: str) -> str:
     return re.sub(r"\s+", " ", _MARKUP.sub(" ", text)).strip(" :-–—,(")
 
 
+def wiki_id(rel: str, kind: str, head, mo: int, d: int, y) -> str:
+    """A wiki countdown's id: its page and what the line says (kind, words, date), not where the line is, so a
+    countdown the owner hid stays hidden when a dated line is added above it
+    (tests/unit/test_countdowns.py::test_a_wiki_countdown_keeps_its_id_when_a_line_is_added_above_it)."""
+    what = "%s|%s|%02d-%02d|%s" % (kind, _norm(head or ""), int(mo), int(d), y or "")
+    return "wiki:%s#%s" % (rel, hashlib.sha1(what.encode("utf-8")).hexdigest()[:10])
+
+
 def dated_lines(text: str):
     """Each dated line as (kind, lead, head, month, day, year): ``lead`` is what
     comes before the keyword, and ``head`` what the line calls the date, both
@@ -456,7 +465,7 @@ def from_wiki(now: datetime) -> list:
                     links = {}
             linked = min(int(links.get("page:" + _page_key(rel)) or 0), 20) / 20.0
             weight = 1.25 if section == SELF_SECTION else 0.75 + 0.5 * linked
-            for n, (kind, lead, head, mo, d, y) in enumerate(dated_lines(text)):
+            for kind, lead, head, mo, d, y in dated_lines(text):
                 if kind == "wedding" and y and _on(y, mo, d) < today:
                     kind = "anniversary"          # a wedding that has happened
                     head = head or "wedding"
@@ -472,7 +481,7 @@ def from_wiki(now: datetime) -> list:
                 subject = _norm(re.sub(r"['’]s\b.*$", "", label))
                 if subject in gone:
                     continue
-                it = _item(now, id="wiki:%s#%d" % (rel, n), label=label, start=when,
+                it = _item(now, id=wiki_id(rel, kind, head, mo, d, y), label=label, start=when,
                            kind="personal", source="wiki", why=WHY_WIKI, emoji=EMOJI[kind],
                            matters=MATTERS[kind] * weight)
                 if it:

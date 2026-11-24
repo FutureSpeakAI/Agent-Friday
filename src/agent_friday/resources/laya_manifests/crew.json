@@ -99,5 +99,25 @@
   }
  ],
  "resolver_sources": [],
- "workspace_tools": {"key": null, "pools": []}
+ "workspace_tools": {"key": null, "pools": []},
+ "device": {
+  "expose": true,
+  "sensitivity": "personal",
+  "sections": {
+   "roster": {"view": "list", "kind": "agent", "label": "Crew"}
+  },
+  "kinds": {
+   "agent": {
+    "roles": {"title": "name", "line": "role and model", "when": "updated_at", "state": "status", "thumb": null},
+    "item_view": "reader",
+    "search": true,
+    "preview": false,
+    "stream": false,
+    "offline": "opened",
+    "row_verbs": [],
+    "item_verbs": [],
+    "new_verb": null
+   }
+  }
+ }
 }

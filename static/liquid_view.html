@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Agent Friday™ workspace</title>
+<link href="/static/fonts/fonts.css" rel="stylesheet">
+<style>
+  :root { --bg: #0b0f17; --card: #131a26; --line: #243044; --ink: #e8edf6; --muted: #93a1b8; --a2ui-accent: #5aa9ff; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font: 15px/1.45 Inter, system-ui, sans-serif; }
+  main { max-width: 880px; margin: 0 auto; padding: 24px 16px 48px; }
+  [data-a2ui-view] h2 { font-size: 26px; margin: 0 0 4px; color: var(--a2ui-accent); }
+  [data-a2ui-summary] { color: var(--muted); margin: 0 0 16px; }
+  section[data-a2ui="status_block"] { background: var(--card); border: 1px solid var(--line); border-left: 3px solid var(--a2ui-accent);
+    border-radius: 12px; padding: 14px 16px; margin: 14px 0; }
+  [data-a2ui-title] { font-weight: 600; margin: 0 0 8px; }
+  table { width: 100%; border-collapse: collapse; }
+  th { text-align: left; color: var(--muted); font-weight: 500; text-transform: capitalize; padding: 6px 8px; border-bottom: 1px solid var(--line); }
+  td { padding: 8px; border-bottom: 1px solid var(--line); }
+  [data-density="compact"] section[data-a2ui="status_block"] { padding: 8px 12px; margin: 8px 0; }
+  [data-density="compact"] td { padding: 4px 8px; }
+  #meta { color: var(--muted); font-size: 12px; margin-top: 20px; }
+  button[data-a2ui="nav_link"] { background: none; border: 1px solid var(--a2ui-accent); color: var(--a2ui-accent); border-radius: 999px;
+    padding: 6px 14px; font: inherit; cursor: pointer; margin: 4px 0 2px; }
+</style>
+</head>
+<body>
+<main>
+  <div id="view" aria-live="polite"></div>
+  <p id="meta"></p>
+</main>
+<script src="/static/friday_a2ui.js"></script>
+<script>
+(function () {
+  var ws = location.pathname.split('/').filter(Boolean).pop();
+  var tok = window.__FRIDAY_API_TOKEN || '';
+  function load() {
+    fetch('/api/liquid/views/' + encodeURIComponent(ws) + '/rendered', { cache: 'no-store', headers: { 'X-Friday-Token': tok } })
+      .then(function (r) { return r.json(); })
+      .then(function (p) {
+        window.FridayA2ui.mount(document.getElementById('view'), p);
+        document.title = (p.label || 'Workspace') + ' - Friday';
+        document.getElementById('meta').textContent = p.as_of ? 'As of ' + p.as_of + ' · version ' + String(p.rev || '').slice(0, 15) : '';
+      })
+      .catch(function () { window.FridayA2ui.mount(document.getElementById('view'), null); });
+  }
+  window.FridayA2ui.wireNav(document.getElementById('view'), function (to) { location.href = to; });
+  load();
+  setInterval(load, 30000);
+}());
+</script>
+</body>
+</html>

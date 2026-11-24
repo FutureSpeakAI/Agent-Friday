@@ -138,26 +138,14 @@ def set_personality():
     if not trait:
         return jsonify({"status": "error", "message": "No trait specified"}), 400
 
-    pfile = FRIDAY_DIR / "personality.json"
+    from agent_friday.services import personality_state
     try:
-        pdata = {}
-        if pfile.exists():
-            pdata = json.loads(pfile.read_text(encoding='utf-8'))
-
-        if trait.startswith('style.'):
-            style_key = trait.split('.', 1)[1]
-            if 'style' not in pdata:
-                pdata['style'] = {}
-            pdata['style'][style_key] = float(value)
-        elif trait == 'temperature':
-            pdata['temperature'] = float(value)
-        else:
-            if 'traits' not in pdata:
-                pdata['traits'] = {}
-            pdata['traits'][trait] = float(value)
-
-        pfile.write_text(json.dumps(pdata, indent=2), encoding='utf-8')
-        return jsonify({"status": "ok", "trait": trait, "value": float(value)})
+        number = personality_state.set_trait(trait, value)
+        return jsonify({"status": "ok", "trait": trait, "value": number})
+    except (TypeError, ValueError):
+        return jsonify({"status": "error", "message": "The value must be a number."}), 400
+    except personality_state.SetupNotFinished:
+        return jsonify({"status": "error", "message": "Finish first-run setup before changing the personality."}), 409
     except Exception as e:
         return api_error(e, "Couldn't save the personality")
 

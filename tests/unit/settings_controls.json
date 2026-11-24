@@ -2650,6 +2650,20 @@
  },
  {
   "section": "Appearance",
+  "panel": "Start screen",
+  "label": "Hide a countdown (the x beside each one)",
+  "kind": "button (per countdown)",
+  "keys": [
+   "dismissed_countdowns"
+  ],
+  "route": "POST /api/settings",
+  "reader_file": "index.html",
+  "reader_needle": "agentSettings.dismissed_countdowns",
+  "status": "ok",
+  "note": "Not a Settings-panel control: the start screen writes it. A map of countdown id to the epoch second the countdown passes; the page drops entries that have passed, so a yearly one comes back next year."
+ },
+ {
+  "section": "Appearance",
   "panel": "Appearance & 3D",
   "label": "3D dazzle: Off / Subtle / Full",
   "kind": "radio-buttons",

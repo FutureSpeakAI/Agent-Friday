@@ -576,12 +576,30 @@ def resolve_approval(approval_id: str) -> int:
     This is the approval's own outcome, never a dismissal on its behalf."""
     if not approval_id:
         return 0
-    key = "approval:%s" % approval_id
+    # The card's own notice, and any notice an old mirror made for it ("tasks-inbox-tick:<id>").
+    keys = {"approval:%s" % approval_id, "tasks-inbox-tick:%s" % approval_id,
+            "tasks-inbox-change:%s" % approval_id}
     closed = 0
     with _LOCK:
         items = _load()
         for n in items:
-            if n.get("dedupe_key") == key and not n.get("dismissed"):
+            if n.get("dedupe_key") in keys and not n.get("dismissed"):
+                n["dismissed"] = True
+                n["read"] = True
+                n["resolved_at"] = _now_iso()
+                closed += 1
+        if closed:
+            _save(items)
+    return closed
+
+
+def dismiss_kinds(kinds) -> int:
+    """Dismiss every live notice of the given kinds (retired emitters). Returns how many."""
+    kinds, closed = set(kinds or ()), 0
+    with _LOCK:
+        items = _load()
+        for n in items:
+            if n.get("kind") in kinds and not n.get("dismissed"):
                 n["dismissed"] = True
                 n["read"] = True
                 n["resolved_at"] = _now_iso()
