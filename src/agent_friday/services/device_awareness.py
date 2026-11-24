@@ -41,6 +41,7 @@ STREAM_KINDS = ("phone", "tablet")
 CONNECTED, SEEN, NEVER = "connected_now", "seen", "never_seen"
 CANNOT_TELL = "I cannot tell whether it is in use right now."
 UNREADABLE = "I cannot read the list of paired devices right now, so I will not guess."
+REFUSED = "this PC refuses it until you approve keeping it, on this PC's screen."
 NO_VERSIONS = "The apps do not tell me which version they are running yet."
 
 
@@ -51,6 +52,7 @@ class DeviceView:
     paired_at: Optional[float]
     last_seen: Optional[float]
     reach: str
+    refused: bool = False      # past its keep-paired date: the gateway refuses it until the owner approves
 
 
 def _number(value) -> Optional[float]:
@@ -67,9 +69,9 @@ def reach_of(kind: str, connected: bool, last_seen: Optional[float]) -> str:
 
 
 def view(devices: Iterable, *, owner_ids: Iterable = (), connected_ids: Iterable = (),
-         ) -> tuple:
+         overdue_ids: Iterable = ()) -> tuple:
     """One DeviceView per well-formed row, ordered by kind then pairing time."""
-    owner_ids, connected_ids = set(owner_ids), set(connected_ids)
+    owner_ids, connected_ids, overdue_ids = set(owner_ids), set(connected_ids), set(overdue_ids)
     out = []
     for row in devices or ():
         if not isinstance(row, dict) or row.get("kind") not in KINDS:
@@ -78,7 +80,8 @@ def view(devices: Iterable, *, owner_ids: Iterable = (), connected_ids: Iterable
         last_seen = _number(row.get("last_seen"))
         out.append(DeviceView(
             kind=row["kind"], owner_device=device_id in owner_ids, paired_at=_number(row.get("paired_at")),
-            last_seen=last_seen, reach=reach_of(row["kind"], device_id in connected_ids, last_seen)))
+            last_seen=last_seen, reach=reach_of(row["kind"], device_id in connected_ids, last_seen),
+            refused=device_id in overdue_ids))
     return tuple(sorted(out, key=lambda d: (KINDS.index(d.kind), d.paired_at or 0)))
 
 
@@ -102,6 +105,8 @@ def sentence(dev: DeviceView, now: float, *, one_of_several: bool = False) -> st
     who = f"Your {noun}" if dev.owner_device else f"The household {noun}"
     if one_of_several:
         who += f" paired {ago(dev.paired_at, now)}" if dev.paired_at else " with no pairing date"
+    if dev.refused:
+        return f"{who} is paired, but its time is up: {REFUSED}"
     if dev.reach == CONNECTED:
         return f"{who} is connected now."
     if dev.reach == NEVER:
@@ -165,7 +170,8 @@ def gather() -> tuple:
               if household.member_for_device(row.get("id")) == household.OWNER_ID}
     connected = {device_id for device_id, streams in list(pc_events._STREAMS.items()) if streams}
     gateway_on = device_pairing.gateway_config().get("enabled") is True
-    return view(rows, owner_ids=owners, connected_ids=connected), gateway_on
+    overdue = {row.get("id") for row in rows if device_pairing.reconfirm_state(row) == "overdue"}
+    return view(rows, owner_ids=owners, connected_ids=connected, overdue_ids=overdue), gateway_on
 
 
 def tool_devices_status(inp) -> str:
