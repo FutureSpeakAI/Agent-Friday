@@ -212,7 +212,8 @@
         "Today's builds are test builds, not a store release.",
         "A phone I pair is signed in as you. I cannot yet give another person their own space on their own phone, so if it belongs to someone else in the house it is safer to wait.",
         "Pairing only works at home, on the same network as this PC. Using it away from home needs Tailscale on both, which you set up yourself.",
-        "A paired phone is kept for 30 days at a time. In the last week, when it next connects, I ask you on this PC whether to keep it. It goes on working until the 30 days are up; after that it is refused until you approve."
+        "A paired phone is kept for 30 days at a time. In the last week, when it next connects, I ask you on this PC whether to keep it. It goes on working until the 30 days are up; after that it is refused until you approve.",
+        "In the build installed now, approving from a phone needs a fingerprint enrolled on it. A build that accepts the phone's own screen lock is written but not installed yet."
       ]
     },
     {
