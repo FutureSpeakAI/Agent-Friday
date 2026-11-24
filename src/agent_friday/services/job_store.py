@@ -66,7 +66,8 @@ def path() -> Path:
 # -- keys -------------------------------------------------------------------------------------
 
 def _words(text) -> str:
-    return re.sub(r"[^a-z0-9]+", " ", str(text or "").lower()).strip()
+    """Letters and digits of any script, case folded ("Straße" is "strasse"); everything else a single space."""
+    return re.sub(r"[\W_]+", " ", str(text or "").casefold()).strip()
 
 
 def _is_tracking(param: str) -> bool:

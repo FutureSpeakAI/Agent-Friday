@@ -91,7 +91,7 @@ class Place:
 
 
 def _words(text: str) -> List[str]:
-    return [w for w in re.sub(r"[^a-z0-9]+", " ", text).split() if w not in _NOT_A_PLACE]
+    return [w for w in re.sub(r"[\W_]+", " ", text).split() if w not in _NOT_A_PLACE]   # any script: 東京, Москва
 
 
 def _core(words: List[str]) -> str:
@@ -115,7 +115,7 @@ def _pieces(text: str) -> List[List[str]]:
 
 def parse(location) -> Place:
     """The place a free-text location names (see the module docstring); Place() when it names none."""
-    text = re.sub(r"\bon[\s-]?site\b", "onsite", str(location or "").lower())
+    text = re.sub(r"\bon[\s-]?site\b", "onsite", str(location or "").casefold())
     states, countries, names = [], [], set()
     for words in _pieces(text):
         core = _core(words)
