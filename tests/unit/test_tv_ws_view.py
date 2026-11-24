@@ -331,15 +331,28 @@ def test_the_proposals_route_itself_refuses_a_device_that_may_not_approve(client
     assert store.load("knowledge") is None
 
 
-# ── a proposal body the fingerprint can't be taken of is a 400, never a 500 (slice 3 design critic, 2026-11-24) ──
+# ── a proposal body the fingerprint can't be taken of is a 400, never a 500 ──
 
-@pytest.mark.parametrize("raw", [
-    r'{"base_rev": "r", "change": {"customization": {"summary": "\ud800"}}}',    # a lone surrogate, sent escaped
-    '{"base_rev": "r", "change": {"customization": {"density": NaN}}}',          # not JSON, but Python parses it
-    '{"base_rev": "r", "change": {"customization": {"density": Infinity}}}',
-])
-def test_a_proposal_that_cannot_be_fingerprinted_is_refused_not_a_crash(client, raw):
-    dev = Enrolled(client)
-    for path in ("/tv/v1/workspaces/knowledge/view/proposals/challenge", "/tv/v1/workspaces/knowledge/view/proposals"):
-        r = client.post(path, data=raw, content_type="application/json", headers=dev.session())
-        assert r.status_code == 400, (path, r.status_code)
+UNPRINTABLE = [
+    r'"summary": "\ud800"',       # a lone surrogate, sent escaped
+    '"density": NaN',             # not JSON, but Python parses it
+    '"density": Infinity',
+]
+
+
+@pytest.mark.parametrize("bad", UNPRINTABLE)
+def test_a_challenge_that_cannot_be_fingerprinted_is_refused_not_a_crash(client, bad):
+    r = client.post("/tv/v1/workspaces/knowledge/view/proposals/challenge",
+                    data='{"base_rev": "r", "change": {"customization": {%s}}}' % bad,
+                    content_type="application/json", headers=Enrolled(client).session())
+    assert r.status_code == 400 and r.get_json()["code"] == "bad_request", r.status_code
+
+
+@pytest.mark.parametrize("bad", UNPRINTABLE)
+def test_a_signed_proposal_that_cannot_be_fingerprinted_is_refused_before_its_nonce(client, bad):
+    # nonce, time and sig are well formed, so the only thing wrong is the change itself
+    raw = ('{"base_rev": "r", "change": {"customization": {%s}}, "nonce": "%s", "time": %d, "sig": "%s"}'
+           % (bad, "n" * 32, int(time.time()), base64.b64encode(b"x" * 70).decode()))
+    r = client.post("/tv/v1/workspaces/knowledge/view/proposals", data=raw, content_type="application/json",
+                    headers=Enrolled(client).session())
+    assert r.status_code == 400 and r.get_json()["code"] == "bad_request", r.status_code
