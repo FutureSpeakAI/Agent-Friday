@@ -313,7 +313,10 @@ TWO_PLACES = [("Mexico, Mexico", "Remote - Mexico"), ("TX 78701", "TX 75001"), (
               ("EMEA - London", "London, UK"), ("Bay Area - San Francisco", "Bay Area - San Jose"),
               ("New York City, NY", "New York, NY"), ("IND - Bengaluru", "IND - Hyderabad"),
               ("Remote - US", "Remote - Canada"), ("Remote (US)", "Remote, Canada"), ("Toronto, CA", "Toronto, ON"),
-              ("Office - Austin", "Office - Dallas"), ("Arlington, VA 22201", "Arlington, TX 76010")]
+              ("Office - Austin", "Office - Dallas"), ("Arlington, VA 22201", "Arlington, TX 76010"),
+              ("Austin, TX 78701", "Austin, TX 78745"), ("Arlington, VA 22201", "Arlington, VA 22202"),
+              ("New York, NY 10001", "New York, NY 11201"), ("Bangalore, India 560001", "Bangalore, India 560103"),
+              ("Germany 10115, Berlin", "Germany 10178, Berlin"), ("Austin, TX 78701-1234", "Austin, TX 78745-1234")]
 SPELLINGS = [(place, spelling) for place, spellings in PLACES.items() for spelling in spellings]
 #: Sightings that name no place: on a careers page each joins the posting it was seen with, and never makes the
 #: next sighting (another place) join it too.
@@ -341,7 +344,12 @@ SAME_JOB_SPLITS = [("Store #12, Austin, TX", "Store 12, Austin, TX"), ("İzmir",
                    ("NYC", "New York, NY"), ("Bengaluru", "Bangalore"), ("Zürich", "Zurich"),
                    ("New York", "New York, NY"), ("Ft. Worth, TX", "Fort Worth, TX"),
                    ("Singapore, Singapore", "Singapore"), ("Bangalore, Karnataka, India", "Bangalore, India"),
-                   ("EMEA - London", "London, UK")]
+                   ("EMEA - London", "London, UK"),
+                   ("תֵּל אָבִיב", "תל אביב")]
+#: FOLLOW-UPS (PR #1110 body): one title spelled two ways (a "#", an emoji presentation selector, a skin tone) that
+#: the company+title+location key keeps as two records. A duplicate, never a wrong merge. xfail(strict) so a fix shows.
+SAME_TITLE_SPLITS = [("Engineer #2", "Engineer 2"), ("Engineer ❤", "Engineer ❤️"),
+                     ("Engineer \U0001f44d", "Engineer \U0001f44d\U0001f3fd")]
 
 
 @pytest.mark.xfail(strict=True, reason="follow-up: one job spelled two ways stays two records (safe side)")
@@ -350,6 +358,14 @@ def test_follow_up_one_job_spelled_two_ways_is_one_record(_home, first, second):
     url = "https://careers.example.test/acme"
     js.upsert(listing("Software Engineer", url=url, location=first, source="feed-a", external_id="A-1"), days(-3))
     js.upsert(listing("Software Engineer", url=url, location=second, source="feed-b", external_id="B-2"), days(-2))
+    assert len(stored(_home)) == 1
+
+
+@pytest.mark.xfail(strict=True, reason="follow-up: one title spelled two ways stays two records (safe side)")
+@pytest.mark.parametrize("first, second", SAME_TITLE_SPLITS)
+def test_follow_up_one_title_spelled_two_ways_is_one_record(_home, first, second):
+    js.upsert(listing(first, url="https://jobs.example.test/a", location="Austin, TX"), days(-3))
+    js.upsert(listing(second, url="https://jobs.example.test/b", location="Austin, TX"), days(-2))
     assert len(stored(_home)) == 1
 
 
