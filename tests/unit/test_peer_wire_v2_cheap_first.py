@@ -1,7 +1,8 @@
-"""NS-40.2-13: schema, signature, pinned key and type are checked before any content inspection.
+"""NS-40.2-13: schema, pinned key and signature are checked before the offer's terms are hashed.
 
-A spy replaces the content checks (offer terms hashing, share sums). An event that fails a
-cheap check must be refused with that check's code without the spy being called."""
+A spy replaces terms_hash, the first content check verify_event runs on a job.offer. An event that
+fails one of those three cheap checks must be refused with that check's code without the spy being
+called. Not covered here: the order of the type, role and share-sum checks among themselves."""
 from __future__ import annotations
 
 import copy
