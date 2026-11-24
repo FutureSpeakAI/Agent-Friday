@@ -1,4 +1,4 @@
-"""One live line per workspace for the owner's phone list (UI-CRITIC Q6; contract draft 3, section 4 addition).
+"""One live line per workspace for the owner's phone list (contract draft 3, section 4: the workspace list).
 
     GET /tv/v1/workspaces?live=1   each row may carry live: {text, as_of[, taint]}
 
@@ -8,9 +8,13 @@ the list route checks. Nothing here reads anything the phone could not already o
 row carries that row's taint (a headline is an outlet's words, not Friday's). A row holding a URL never becomes a
 line (the broker's rule), checked again after invisible characters are taken out; the text is one plain line of at
 most TEXT_MAX characters. A workspace with nothing to say, a section that can't be read or a manifest that can't be
-read gives no line, and the list still answers. Lines are read side by side, each on its own daemon thread, within BUDGET_S; one still being read
-when the budget runs out is left off this answer and kept for the next. Each is kept TTL_S seconds with the time it
-was true. tests/unit/test_tv_ws_summary.py holds the rules.
+read gives no line, and the list still answers.
+
+Reads: each on its own daemon thread (a hung desk read never holds up the PC's shutdown), at most one per workspace.
+A list waits at most BUDGET_S, and only for reads it started itself: a read already under way is not waited for again,
+so a hung section costs one list its budget and no more. A read still running after HUNG_S no longer blocks a fresh
+one (its thread is left to finish or hang on its own; at most one more per workspace per HUNG_S). Each line is kept
+TTL_S seconds with the time it was true. tests/unit/test_tv_ws_summary.py holds the rules.
 """
 from __future__ import annotations
 
@@ -27,11 +31,12 @@ _log = logging.getLogger(__name__)
 TEXT_MAX = 80
 TTL_S = 30            # the broker's ttl_s: a tightened block or a hold reaches the list within this
 BUDGET_S = 1.5        # the most the list waits for its lines
+HUNG_S = 20           # a read running longer than this is given up on
 _clock_real = time.time
 _clock = time.time
 
 _kept: dict[str, tuple[float, Optional[dict]]] = {}
-_reading: dict[str, Future] = {}
+_reading: dict[str, tuple[float, Future]] = {}      # workspace -> (when the read began, its answer)
 _lock = threading.Lock()
 
 
@@ -84,7 +89,7 @@ def _compute(ws: str, now: float) -> Optional[dict]:
     from agent_friday.tv_gateway import ws_content
     section, say = SAYS[ws]
     try:                                                    # one workspace being down never takes the list down
-        served = ws_content._serving(ws)
+        served = ws_content.serving(ws)
         if served is None or section not in served[0]:
             return None
         rows = served[0][section].pages(served[1]["sensitivity"])
@@ -116,13 +121,14 @@ def _read(ws: str, fut: Future) -> None:
     finally:
         with _lock:
             _kept[ws] = (now, got)
-            _reading.pop(ws, None)
+            if _reading.get(ws, (0, None))[1] is fut:    # a read given up on never clears the one that replaced it
+                del _reading[ws]
         fut.set_result(got)
 
 
 def lines(ids: Iterable[str]) -> dict[str, dict]:
-    """{workspace id: {text, as_of[, taint]}} for the ids that have a line now. Kept ones are answered at once; the
-    rest are read side by side, at most one read per workspace at a time, and waited for at most BUDGET_S."""
+    """{workspace id: {text, as_of[, taint]}} for the ids that have a line now. Kept ones are answered at once; for the
+    rest a read is started unless one is already under way, and only the reads started here are waited for."""
     out: dict[str, dict] = {}
     waiting: dict[str, Future] = {}
     now = _clock()
@@ -135,10 +141,12 @@ def lines(ids: Iterable[str]) -> dict[str, dict]:
                 if hit[1] is not None:
                     out[ws] = hit[1]
                 continue
-            fut = _reading.get(ws)
-            if fut is None:                                  # at most one read per workspace, and SAYS is short
-                fut = _reading[ws] = Future()
-                threading.Thread(target=_read, args=(ws, fut), name="ws-line-" + ws, daemon=True).start()
+            under_way = _reading.get(ws)
+            if under_way is not None and now - under_way[0] < HUNG_S:
+                continue                                     # its answer lands in _kept for a later list
+            fut = Future()
+            _reading[ws] = (now, fut)
+            threading.Thread(target=_read, args=(ws, fut), name="ws-line-" + ws, daemon=True).start()
             waiting[ws] = fut
     if waiting:
         wait(list(waiting.values()), timeout=BUDGET_S)
@@ -148,14 +156,10 @@ def lines(ids: Iterable[str]) -> dict[str, dict]:
     return out
 
 
-def line(ws: str) -> Optional[dict]:
-    return lines([ws]).get(ws)
-
-
 def settle(timeout: float) -> None:
     """Wait for reads still under way (tests)."""
     with _lock:
-        pending = list(_reading.values())
+        pending = [fut for _, fut in _reading.values()]
     if pending:
         wait(pending, timeout=timeout)
 

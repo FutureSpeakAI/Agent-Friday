@@ -66,6 +66,11 @@ def _serving(ws: str):
     return (adapters, block) if adapters else None
 
 
+def serving(ws: str):
+    """The public name of _serving, for the workspace list's live line (tv_gateway/ws_summary.py)."""
+    return _serving(ws)
+
+
 def view_block(ws: str):
     """The device block of a workspace whose A2UI document reads only sections the block declares, or None. The one
     answer to "does this PC serve that view": the device's /view, the desktop's /rendered and /liquid page, and the
