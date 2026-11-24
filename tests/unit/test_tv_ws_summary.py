@@ -113,3 +113,76 @@ def test_the_line_is_dated_and_kept_for_a_while(client, monkeypatch):
     monkeypatch.setattr(ws_summary, "_clock", lambda: ws_summary._clock_real() + ws_summary.TTL_S + 1)
     _live(dev)
     assert len(calls) == 2
+
+
+# ── after the security critic (CHANGES): taint, a failed manifest, held and undeclared, text, time ─────────────────
+
+def test_an_outside_headline_keeps_its_taint(client, monkeypatch):
+    monkeypatch.setattr(ws_news, "pages", lambda sensitivity: [dict(r, taint="outside:news") for r in NEWS])
+    live = _live(Enrolled(client))
+    assert live["news"]["taint"] == "outside:news", "the words are an outlet's, and the phone is told so"
+    assert "taint" not in live["knowledge"], "Friday's own count carries no taint"
+
+
+def test_a_manifest_that_cannot_be_read_drops_the_line_not_the_list(client, monkeypatch):
+    from agent_friday.tv_gateway import ws_content
+    real = ws_content._serving
+
+    def broken(ws):
+        if ws == "news":
+            raise OSError("manifest unreadable")
+        return real(ws)
+    monkeypatch.setattr(ws_content, "_serving", broken)
+    live = _live(Enrolled(client))
+    assert live["news"] is None and live["knowledge"]["text"] == "3 pages"
+
+
+def test_a_section_the_device_block_does_not_serve_says_nothing(client, monkeypatch):
+    from agent_friday.tv_gateway import ws_content
+    real = ws_content._serving
+    monkeypatch.setattr(ws_content, "_serving", lambda ws: None if ws == "calendar" else real(ws))
+    assert _live(Enrolled(client))["calendar"] is None
+
+
+def test_the_rows_are_read_at_the_blocks_own_sensitivity(client, monkeypatch):
+    from agent_friday.tv_gateway import ws_content
+    seen = []
+    monkeypatch.setattr(ws_knowledge, "pages", lambda sensitivity: seen.append(sensitivity) or [dict(r) for r in PAGES])
+    _live(Enrolled(client))
+    assert seen == [ws_content._serving("knowledge")[1]["sensitivity"]]
+
+
+def test_a_link_hidden_by_invisible_characters_is_still_a_link(client, monkeypatch):
+    sneaky = "Read h​tt⁠ps://example.invalid/x"
+    monkeypatch.setattr(ws_news, "pages", lambda sensitivity: [{"ref": "news:9", "title": sneaky, "when": "x"}])
+    assert _live(Enrolled(client))["news"] is None
+
+
+def test_the_next_event_reads_the_pcs_own_clock(client, monkeypatch):
+    # calendar times are the PC's local time with no offset; a past one is never "next", whatever the zone
+    from datetime import datetime, timedelta
+    now = datetime.now()
+    rows = [{"ref": "event:a", "title": "Earlier today", "line": "a", "when": (now - timedelta(hours=1)).strftime("%Y-%m-%dT%H:%M:%S")},
+            {"ref": "event:c", "title": "Odd", "line": "c", "when": "not a time"},
+            {"ref": "event:b", "title": "Soon", "line": "b", "when": (now + timedelta(hours=1)).strftime("%Y-%m-%dT%H:%M:%S")}]
+    monkeypatch.setattr(ws_calendar, "pages", lambda sensitivity: [dict(r) for r in rows])
+    assert _live(Enrolled(client))["calendar"]["text"] == "Soon · b"
+
+
+def test_a_slow_section_never_holds_the_list(client, monkeypatch):
+    import threading
+    import time
+    gate = threading.Event()
+
+    def slow(sensitivity):
+        gate.wait(5)
+        return [dict(r) for r in NEWS]
+    monkeypatch.setattr(ws_news, "pages", slow)
+    monkeypatch.setattr(ws_summary, "BUDGET_S", 0.2)
+    t0 = time.monotonic()
+    live = _live(Enrolled(client))
+    assert time.monotonic() - t0 < 2.0, "the list answers inside its budget"
+    assert live["news"] is None and live["knowledge"]["text"] == "3 pages"
+    gate.set()
+    ws_summary.settle(2.0)
+    assert _live(Enrolled(client))["news"]["text"] == NEWS[0]["title"], "the slow line lands for the next read"
