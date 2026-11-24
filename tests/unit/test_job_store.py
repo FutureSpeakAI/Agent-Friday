@@ -132,21 +132,40 @@ def test_one_posting_whose_feeds_spell_its_location_differently_is_one_record_an
     assert js.list_recent(NOW) == []                       # closed once, on one record: no open copy left behind
 
 
-#: Each place as feeds really spell it. Spellings of one place are one posting on a shared URL; two places are two
-#: postings, also when they share a state, a country, a word of their name, or "Remote".
+#: Each place as feeds really spell it, in every format they use: city first, region first, codes joined by hyphens,
+#: a work mode with a region. Spellings of one place are one posting on a shared URL; two places are two postings,
+#: also when they share a country, a state, a word of their name, or "Remote".
 PLACES = {
-    "new york": ("New York", "New York, NY", "New York, New York, United States", "New York City, NY"),
-    "york pa": ("York, PA", "York, Pennsylvania"),
-    "austin": ("Austin, TX", "Austin, Texas, US"),
-    "dallas": ("Dallas, TX", "Dallas"),
-    "london": ("London", "London, England, GB", "London, UK"),
-    "manchester": ("Manchester, UK",),
-    "san francisco": ("San Francisco, CA", "San Francisco"),
+    "new york": ("New York", "New York, NY", "New York, New York, United States", "New York City, NY",
+                 "US - NY - New York", "United States, New York, New York"),
+    "york pa": ("York, PA", "York, Pennsylvania", "US-PA-York"),
+    "austin": ("Austin, TX", "Austin, Texas, US", "US, TX, Austin", "United States - Texas - Austin", "US-TX-Austin",
+               "USA - Austin, TX", "Austin, TX (On-site)"),
+    "dallas": ("Dallas, TX", "Dallas", "US, TX, Dallas", "USA - Dallas, TX", "United States - Texas - Dallas"),
+    "santa clara": ("Santa Clara, CA", "US, CA, Santa Clara"),
+    "san francisco": ("San Francisco, CA", "San Francisco", "California - San Francisco"),
+    "palo alto": ("California - Palo Alto", "Palo Alto, CA"),
     "san jose": ("San Jose, CA",),
-    "remote us": ("Remote - US", "Remote (US)", "US Remote", "Remote, US"),
+    "kansas city mo": ("Kansas City, MO",),
+    "kansas city ks": ("Kansas City, KS",),
+    "portland or": ("Portland, OR", "Portland, Oregon"),
+    "portland me": ("Portland, ME",),
+    "washington dc": ("Washington, DC", "Washington, DC, United States"),
+    "seattle": ("Seattle, WA", "Seattle, Washington"),
+    "london": ("London", "London, England, GB", "London, UK", "UK - London"),
+    "manchester": ("Manchester, UK",),
+    "berlin": ("Berlin, Germany", "Germany, Berlin"),
+    "munich": ("Germany, Munich", "Munich"),
+    "bangalore": ("Bangalore, Karnataka, India", "India - Bangalore"),
+    "hyderabad": ("India - Hyderabad",),
+    "toronto": ("Toronto, ON", "Toronto, Ontario, Canada"),
+    "remote us": ("Remote - US", "Remote (US)", "US Remote", "Remote, US", "Remote - United States"),
     "remote canada": ("Remote - Canada", "Remote, Canada"),
 }
 SPELLINGS = [(place, spelling) for place, spellings in PLACES.items() for spelling in spellings]
+#: Sightings that name no place: on a careers page each joins the posting it was seen with, and never makes the
+#: next sighting (another place) join it too.
+PLACELESS = ("Remote", "", "Hybrid", "Anywhere")
 
 
 @pytest.mark.parametrize("first, second", list(itertools.combinations(SPELLINGS, 2)),
@@ -159,6 +178,27 @@ def test_every_pair_of_place_spellings_on_one_url_is_one_posting_exactly_when_it
     assert len(stored(_home)) == (1 if same else 2)
     # one place closes once; two places: the first closing never takes the other with it
     assert [j["location"] for j in js.list_recent(NOW)] == ([] if same else [second[1]])
+
+
+@pytest.mark.parametrize("between", PLACELESS)
+def test_a_sighting_with_no_place_between_two_places_never_joins_them(_home, between):
+    url = "https://careers.example.test/acme"
+    js.upsert(listing("Software Engineer", url=url, location="Austin, TX", source="feed-a", external_id="A-1",
+                      closes_at=days(-1).isoformat()), days(-3))
+    js.upsert(listing("Software Engineer", url=url, location=between, source="feed-b", external_id="B-2"), days(-2.5))
+    js.upsert(listing("Software Engineer", url=url, location="Dallas, TX", source="feed-c", external_id="C-3"), days(-2))
+    assert len(stored(_home)) == 2
+    assert [j["location"] for j in js.list_recent(NOW)] == ["Dallas, TX"]     # Austin's record still says Austin
+
+
+def test_a_posting_seen_at_a_bare_city_never_joins_a_namesake_in_another_state_on_its_url(_home):
+    url = "https://careers.example.test/acme"
+    js.upsert(listing("Software Engineer", url=url, location="Austin, TX", source="feed-a", external_id="A-1",
+                      closes_at=days(-1).isoformat()), days(-3))
+    js.upsert(listing("Software Engineer", url=url, location="Austin", source="feed-b", external_id="B-2"), days(-2.5))
+    js.upsert(listing("Software Engineer", url=url, location="Austin, MN", source="feed-c", external_id="C-3"), days(-2))
+    assert len(stored(_home)) == 2
+    assert [j["location"] for j in js.list_recent(NOW)] == ["Austin, MN"]
 
 
 def test_a_sighting_that_names_no_location_is_still_the_posting_on_its_url(_home):
