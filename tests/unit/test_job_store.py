@@ -85,7 +85,38 @@ def test_one_place_in_any_script_and_case_is_one_posting(_home, here, there):
 
 #: Titles that differ only in the symbols that name a language: two jobs.
 SYMBOL_TITLES = [("Embedded C++ Developer", "Embedded C Developer"), ("Senior C# Engineer", "Senior C++ Engineer"),
-                 ("F# Developer", "F Developer"), ("C# Developer", "C Developer")]
+                 ("F# Developer", "F Developer"), ("C# Developer", "C Developer"), ("C♯ Developer", "C Developer"),
+                 ("F♯ Developer", "F Developer"), ("C﹟ Developer", "C Developer"),
+                 ("Ｃ＋＋ 開発エンジニア", "Ｃ 開発エンジニア"),
+                 ("Ｃ＃ 開発エンジニア", "Ｃ＋＋ 開発エンジニア"),
+                 ("Software Engineer 🇩🇪", "Software Engineer 🇺🇸")]
+
+
+def test_no_character_but_a_separator_is_dropped_from_a_title():
+    """Generated over every symbol and punctuation code point of the Basic Multilingual Plane: "C{c} Developer" and
+    "C Developer" have different company+title+location keys unless c (after NFKC) is only separators, so no
+    symbol anyone forgot to list can make two titles one."""
+    import sys
+    import unicodedata
+    from agent_friday.services import job_places
+    plain = js.make_keys(listing("C Developer", source=None, url=None))
+    merged = []
+    for cp in range(0x10000):
+        c = chr(cp)
+        if unicodedata.category(c)[0] not in "SP":
+            continue
+        if all(job_places.is_separator(x) for x in unicodedata.normalize("NFKC", c)):
+            continue
+        if js.make_keys(listing("C%s Developer" % c, source=None, url=None)) == plain:
+            merged.append("U+%04X" % cp)
+    assert not merged, merged[:20]
+
+
+@pytest.mark.parametrize("here, there", [("C＋＋ Developer", "C++ Developer"), ("C＃ Developer", "C# Developer")])
+def test_a_full_width_title_is_the_same_job_as_its_ascii_spelling(_home, here, there):
+    js.upsert(listing(here, url="https://a.example.test/1", source=None), days(-2))
+    js.upsert(listing(there, url="https://b.example.test/2", source=None), NOW)
+    assert len(stored(_home)) == 1
 
 
 @pytest.mark.parametrize("first, second", SYMBOL_TITLES + [(b, a) for a, b in SYMBOL_TITLES])
@@ -262,11 +293,12 @@ def test_every_pair_of_place_spellings_on_one_url_is_one_posting_exactly_when_it
 
 #: FOLLOW-UPS (PR #1110 body): one job spelled two ways that the place rule keeps as two records. Each costs a
 #: duplicate in Career Ops, never a wrong merge; the rule fails apart on purpose. xfail(strict) so a fix shows.
-SAME_JOB_SPLITS = [("İzmir", "Izmir, Turkey"), ("Germany 10115", "Berlin, Germany"),
-                   ("Toronto, ON M5V 2T6", "Toronto, ON"), ("Toronto, CA", "Toronto, ON"),
-                   ("Paris, FR", "Paris, France"), ("Washington, D.C.", "Washington, DC"),
-                   ("Remote in Austin, TX", "Austin, TX"), ("NYC", "New York, NY"), ("Bengaluru", "Bangalore"),
-                   ("Zürich", "Zurich"), ("New York", "New York, NY"), ("Ft. Worth, TX", "Fort Worth, TX"),
+SAME_JOB_SPLITS = [("Store #12, Austin, TX", "Store 12, Austin, TX"), ("İzmir", "Izmir, Turkey"),
+                   ("Germany 10115", "Berlin, Germany"), ("Toronto, ON M5V 2T6", "Toronto, ON"),
+                   ("Toronto, CA", "Toronto, ON"), ("Paris, FR", "Paris, France"),
+                   ("Washington, D.C.", "Washington, DC"), ("Remote in Austin, TX", "Austin, TX"),
+                   ("NYC", "New York, NY"), ("Bengaluru", "Bangalore"), ("Zürich", "Zurich"),
+                   ("New York", "New York, NY"), ("Ft. Worth, TX", "Fort Worth, TX"),
                    ("Singapore, Singapore", "Singapore"), ("Bangalore, Karnataka, India", "Bangalore, India"),
                    ("EMEA - London", "London, UK")]
 
