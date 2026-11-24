@@ -36,6 +36,7 @@ from pathlib import Path
 from agent_friday.core import runtime_dir
 from agent_friday.services import hardware_profile as hwp
 from agent_friday.services import residency_catalog as rc
+from agent_friday.services import seat_timing as _seat_timing
 from agent_friday.services import residency_policy as rp
 
 STATE_DEFAULT = "DEFAULT"
@@ -1481,6 +1482,7 @@ class LlamaServerBackend:
                                    lora_path=lora_path,
                                    mmproj_path=mmproj_path)
                 _ENGINE_MEMO[model_id] = str(binary)
+                _seat_timing.record(model_id, took)
                 return took
             except PortRefused:
                 raise

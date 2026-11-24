@@ -21,6 +21,17 @@ import agent_friday.services.agent as agent
 from tests import ledger_support
 
 
+def _start_with_no_settler_marked_active():
+    """A test starts with no receipt settler marked active or holding work, and no sweep thread still running.
+    Teardown resets this too, but an earlier test in the same worker may have left it set (F6, F12, F15)."""
+    th = getattr(agent, "_RECEIPT_SWEEP", {}).get("thread")
+    if th is not None:
+        th.join(timeout=10)
+    with agent._SETTLE_GUARD:
+        agent._SETTLE_DIRTY.clear()
+        agent._SETTLER["active"] = False
+
+
 @pytest.fixture
 def isolated(tmp_path, monkeypatch):
     from agent_friday.services import task_journal as tj
@@ -28,6 +39,7 @@ def isolated(tmp_path, monkeypatch):
     tj.reset_for_tests()
     import agent_friday.notifications_engine as ne
     monkeypatch.setattr(ne, "push", lambda **kw: kw)
+    _start_with_no_settler_marked_active()
     with agent.TASKS_LOCK:
         saved = dict(agent.TASKS)
     yield
@@ -154,6 +166,21 @@ def test_waiting_on_a_card_is_not_the_ending(isolated):
     assert _receipt("t-end-5")["status"] == "declined"
 
 
+@pytest.fixture
+def _leaked_settler():
+    """What an earlier test in the same worker can leave behind: the receipt settler marked active. While it is
+    marked, a status change only queues its task for 'the settler', and nobody settles it (F6, F12, F15)."""
+    with agent._SETTLE_GUARD:
+        agent._SETTLER["active"] = True
+    yield
+
+
+def test_a_settler_left_active_by_an_earlier_test_does_not_swallow_this_tests_ending(_leaked_settler, isolated):
+    _running("t-end-leak")
+    agent._task_set("t-end-leak", status="complete", ended=3.0)
+    assert _receipt("t-end-leak")["status"] == "complete"
+
+
 def test_a_resumed_task_gets_a_receipt_for_its_new_ending(isolated):
     _running("t-end-6")
     agent._task_set("t-end-6", status="failed", ended=3.0)
@@ -170,13 +197,17 @@ def test_a_resumed_task_gets_a_receipt_for_its_new_ending(isolated):
 def test_a_stop_racing_the_worker_writes_one_receipt(isolated):
     """The same ending set twice at once: one entry (the second finds it written)."""
     import threading
+    import traceback
     _running("t-end-7")
     gate = threading.Barrier(2)
+    writers = []        # who wrote each task_end: the thread and the few calls above it (F6)
     from agent_friday.services import action_ledger
     real = action_ledger.try_append
 
     def slow(kind, rec, **kw):
         if kind == "task_end":
+            writers.append((threading.current_thread().name,
+                            " | ".join(traceback.format_stack(limit=7)[:-1]).replace(chr(10), " ")))
             try:
                 gate.wait(timeout=1)
             except threading.BrokenBarrierError:
@@ -192,7 +223,33 @@ def test_a_stop_racing_the_worker_writes_one_receipt(isolated):
             t.join(timeout=10)
     finally:
         action_ledger.try_append = real
-    assert len(_rows_for("t-end-7")) == 1
+    rows = _rows_for("t-end-7")
+    assert len(rows) == 1, "receipts: %r; written by: %s" % (
+        [(r.get("status"), r.get("ended")) for r in rows],
+        " ;; ".join("%s <- %s" % (name, stack[-700:]) for name, stack in writers))
+
+
+def test_a_second_receipt_for_a_racing_stop_names_who_wrote_it(isolated, monkeypatch):
+    """F6: a Windows CI run failed the race test as `assert 2 == 1` with two receipts that differed in `ended`
+    (3.0 and the wall clock): something other than the two calls wrote one. A stray writer is injected here; the
+    failure of the race test must name it, so the next red run says who it was."""
+    import threading
+    real = agent._task_terminal_receipt
+    fired = []
+
+    def with_a_stray_writer(task_id, snap, supersedes=None):
+        if task_id == "t-end-7" and not fired:
+            fired.append(1)
+            stray = threading.Thread(target=real, name="stray-sweeper",
+                                     args=(task_id, dict(snap, ended=1795040834.9)))
+            stray.start()
+            stray.join(timeout=10)
+        return real(task_id, snap, supersedes=supersedes)
+
+    monkeypatch.setattr(agent, "_task_terminal_receipt", with_a_stray_writer)
+    with pytest.raises(AssertionError) as caught:
+        test_a_stop_racing_the_worker_writes_one_receipt(isolated)
+    assert "stray-sweeper" in str(caught.value)
 
 
 def test_a_different_ending_arriving_mid_write_is_not_lost(isolated):

@@ -211,6 +211,32 @@ def render(messages, ctx: Context, *, data: dict | None = None,
     return Rendered(True, tree, to_html(tree), None, line, actions)
 
 
+DENSITIES = ("comfortable", "compact")
+
+
+def apply_customization(tree: list, customization: dict) -> dict:
+    """The shell rule for his customizations (contract draft 3, section 2), the same on the desktop and the phone:
+    every part whose id is in `hidden` goes, with its subtree (root never goes; unknown ids are ignored), and the
+    look is {accent, density, summary} with defaults. The summary is the shell's plain text, never the document's.
+    tests/unit/test_a2ui_conformance.py: test_the_shell_removes_hidden_parts_and_fills_the_look."""
+    custom = customization if isinstance(customization, dict) else {}
+    hidden = {i for i in custom.get("hidden") or [] if isinstance(i, str) and i != "root"}
+
+    def keep(node: dict) -> dict:
+        out = {k: v for k, v in node.items() if k != "children"}
+        if "children" in node:
+            out["children"] = [keep(k) for k in node["children"] if k.get("id") not in hidden]
+        return out
+
+    accent = custom.get("accent")
+    density = custom.get("density")
+    summary = custom.get("summary")
+    look = {"accent": accent if isinstance(accent, str) else None,
+            "density": density if density in DENSITIES else "comfortable",
+            "summary": summary if isinstance(summary, str) and summary else None}
+    return {"tree": [keep(n) for n in tree], "look": look}
+
+
 def action_to_verb(message: dict, rendered: Rendered, ctx: Context) -> tuple[str, dict]:
     """The verb and context a renderer `action` stands for, or ProfileError. Only a button that
     was drawn can act, its name must be its verb, and the manifest is read again now. The caller

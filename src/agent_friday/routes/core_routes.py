@@ -1,6 +1,7 @@
 import os
 import io
 import json
+import math
 import glob
 import subprocess
 import base64
@@ -1611,8 +1612,8 @@ def _check_cloud_voice_switch(new_settings):
         return _lvr_g.gate_settings_write(new_settings)
     except Exception:
         # Fail CLOSED: a gate that cannot run must not let voice move to the cloud unasked.
-        eng = str((new_settings or {}).get("voice_engine") or "").strip().lower() if isinstance(new_settings, dict) else ""
-        if eng in ("gemini", "gemini-live", "openai"):
+        from agent_friday.services.voice_engines import is_cloud
+        if isinstance(new_settings, dict) and is_cloud(new_settings.get("voice_engine")):
             return {"http": 409, "body": {"status": "error",
                                           "message": "Cloud voice could not be asked about just now, so nothing "
                                                      "was changed. Try again in Settings, Voice."}}
@@ -1655,6 +1656,22 @@ def _check_podcast_length(new_settings):
     return {"status": "error",
             "message": ("podcasts.length maps a show (%s) to a length (%s); got %r"
                         % (", ".join(_pe.LENGTH_SHOWS), ", ".join(_pe.LENGTHS), val))}
+
+
+def _check_dismissed_countdowns(new_settings):
+    """`dismissed_countdowns` maps a countdown id to the epoch seconds when it passes (the start screen's hide
+    control writes it). Anything else would be read as nothing hidden, so a hidden countdown would come back.
+    An error dict, or None."""
+    if "dismissed_countdowns" not in (new_settings or {}):
+        return None
+    val = new_settings["dismissed_countdowns"]
+    ok = isinstance(val, dict) and len(val) <= 500 and all(
+        isinstance(k, str) and 0 < len(k) <= 300 and isinstance(v, (int, float)) and not isinstance(v, bool)
+        and math.isfinite(v) and v >= 0                 # Infinity/NaN would make the settings answer unparseable
+        for k, v in val.items())
+    if ok:
+        return None
+    return {"status": "error", "message": "dismissed_countdowns maps a countdown id to the time it passes, in seconds"}
 
 
 def _check_interruption_settings(new_settings):
@@ -1743,7 +1760,14 @@ def api_capabilities_state():
     Absent and unconfigured are distinct, and unconfigured names its key."""
     try:
         from agent_friday.services import capability_state as _cs
+        try:
+            federation = _cs.federation_as_dicts()
+        except Exception as fed_err:  # noqa: BLE001 - the six federation rows failing must not take the other capabilities with them
+            import logging as _lg
+            _lg.getLogger("friday.capabilities").warning("federation capability rows failed: %s", fed_err)
+            federation = []
         return jsonify({"status": "ok", "capabilities": _cs.as_dicts(),
+                        "federation": federation,
                         "states": list(_cs.STATES), "health_states": list(_cs.HEALTH_STATES),
                         "groups": list(_cs.GROUPS)})
     except Exception as e:
@@ -1978,6 +2002,10 @@ def api_settings():
         interrupt_error = _check_interruption_settings(new_settings)
         if interrupt_error is not None:
             return jsonify(interrupt_error), 400
+
+        countdown_error = _check_dismissed_countdowns(new_settings)
+        if countdown_error is not None:
+            return jsonify(countdown_error), 400
 
         from agent_friday.services import owner_choices as _oc
         choice_error = _oc.validate(new_settings)

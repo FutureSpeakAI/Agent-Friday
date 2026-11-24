@@ -108,9 +108,11 @@ def protect_keystore(passphrase: str) -> tuple:
         return False, ("the passphrase could not be saved on this computer (credential manager or "
                        "Friday's protected file), so the saved keys were not locked with it; they "
                        "stay protected by this account's file permissions")
+    previous = None
     try:
         ks.root_key()                           # a fresh install has no key store file yet
-        if (ks.describe() or {}).get("wrap") == "passphrase":
+        previous = (ks.describe() or {}).get("wrap")
+        if previous == "passphrase":
             return True, ""
         ks.set_wrap("passphrase", passphrase)
         ks.root_key(use_cache=False)            # the next start can unwrap it
@@ -118,10 +120,10 @@ def protect_keystore(passphrase: str) -> tuple:
     except Exception as e:
         _log.warning("key store passphrase wrap failed: %s", type(e).__name__)
         try:
-            ks.set_wrap("none")
+            ks.restore_wrap(previous)           # the wrap it found, never a plain key where there was a sealed one
         except Exception:
             pass
-        return False, ("the saved keys stay protected by this account's file permissions; you can "
+        return False, ("the saved keys stay protected the way they were; you can "
                        "lock them later in Settings > Privacy & Data")
 
 

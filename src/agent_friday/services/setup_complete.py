@@ -20,6 +20,7 @@ writes:
 from __future__ import annotations
 
 import json
+import logging
 import os
 from datetime import datetime
 
@@ -160,22 +161,18 @@ def complete_setup(data: dict, *, routing_via: str = "unverified") -> dict:
                    routing_change_via=routing_via)
 
     # 5) personality.json -- only now.
+    # Through services/personality_state, the file's one writer: atomic, keeps the session count and maturity, and
+    # leaves an unreadable file as it is rather than replacing it.
     if 'preferred_scene_index' in data:
-        pfile = FRIDAY_DIR / 'personality.json'
-        pdata = {}
-        if pfile.exists():
-            try:
-                pdata = json.loads(pfile.read_text('utf-8'))
-            except Exception:
-                pass
+        from agent_friday.services import personality_state
         try:
-            pdata['preferred_scene_index'] = int(data['preferred_scene_index'])
+            index = int(data['preferred_scene_index'])
         except (TypeError, ValueError):
-            pdata['preferred_scene_index'] = 0
+            index = 0
         try:
-            pfile.write_text(json.dumps(pdata, indent=2), encoding='utf-8')
-        except Exception:
-            pass
+            personality_state.update({'preferred_scene_index': index})
+        except (OSError, ValueError):
+            logging.getLogger(__name__).warning("first-run scene choice not saved: personality.json was not written")
 
     # 6) The marker.
     try:
