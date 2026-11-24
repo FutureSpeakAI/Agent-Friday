@@ -190,7 +190,7 @@ def test_the_final_pass_keeps_only_known_links_anywhere_in_the_text():
     assert "evil.example.test" not in out and "Presale" in out and "](https://gazette.example.test/budget)" in out
 
 
-# -- round 2: link shapes the first pattern missed, prose in a sourced section, the briefing's title ----------------
+# -- every link shape, prose in a sourced section, the briefing's title ---------------------------------------------
 
 EVIL = "evil.example.test"
 
@@ -213,7 +213,7 @@ def test_no_link_shape_carries_an_address_the_tools_did_not_return(label, target
     known = {"https://gazette.example.test/budget"}
     bare = target.strip()
     glued = ["See%s now" % bare, "_%s_" % bare, "a.%s" % bare, "a/%s" % bare, "1%s" % bare, "x%s" % bare,
-             "[web:x%s]" % bare, "(see%s)" % bare]                    # round 4: an address glued to a word
+             "[web:x%s]" % bare, "(see%s)" % bare]                    # an address glued to a word
     for text in ["[%s](%s)" % (label, target), "![%s](%s)" % (label, target), "see %s now" % target,
                  "[ref]: %s" % target, "<%s>" % bare.strip("<>")] + glued:
         out = bl.strip_unknown_links(text, known)
@@ -256,7 +256,7 @@ def test_the_briefings_title_does_not_make_its_sections_sourced():
     assert "Coffee" not in nested.text                       # a level-2 kind still carries down
 
 
-# -- round 3: a www. host inside a known link; links made by raw HTML or a reference definition -------------------
+# -- a www. host inside a known link; links made by raw HTML or a reference definition ------------------------------
 
 GCAL = "https://www.google.com/calendar/event?eid=abc123"
 WWW_NEWS = "https://www.gazette.example.test/budget"
@@ -333,7 +333,7 @@ def test_the_final_pass_can_run_twice_without_changing_the_text_again():
     assert bl.strip_unknown_links(once, known) == once and "a &lt; b" in once
 
 
-# -- round 8: a known address with round brackets in it ------------------------------------------------------------
+# -- a known address with round brackets in it ----------------------------------------------------------------------
 
 PAREN_NEWS = "https://en.wikipedia.example.test/wiki/Mercury_(planet)"
 PAREN_CAL = "https://calendar.example.test/e(1)"
@@ -360,8 +360,8 @@ KNOWN_SHAPES = ["https://calendar.example.test/event?eid=abc123", "https://calen
                 "https://en.wikipedia.example.test/wiki/Mercury_(planet)", "https://calendar.example.test/a/",
                 "https://www.calendar.example.test/e.html", "https://calendar.example.test/e?x=1&y=(2)",
                 "https://calendar.example.test/e()", "https://mail.google.com/mail/u/dana@example.test/#all/18f3a1b2c3"]
-PLACEMENTS = ["- Standup %s", "- Standup %s.", "- Standup (%s)", "- Standup (%s).", "- Standup %s, then lunch.",
-              "- Standup: %s; then lunch.", "- Standup [agenda](%s)", "- Standup [agenda](%s).",
+PLACEMENTS = ["- Standup %s", "- Standup %s.", "- Standup **%s**", "- Standup \"%s\".", "- Standup `%s`",
+              "- Standup (%s)", "- Standup (%s).", "- Standup %s, then lunch.", "- Standup: %s; then lunch.", "- Standup [agenda](%s)", "- Standup [agenda](%s).",
               "- Standup ([agenda](%s))", "- Standup [[draft] agenda](%s)!"]
 
 
@@ -382,12 +382,13 @@ def test_every_known_address_shape_in_every_placement_survives_the_whole_pipelin
     got, known, final = _pipeline("## Calendar\n%s\n" % line, bl.collect(calendar=[{"id": "C1", "title": "Standup",
                                                                                       "url": url}]))
     assert got.dropped_total == 0 and line in final
+    assert set(_live_links(final, known)) <= known, final
     assert bl.strip_unknown_links(final, known) == final
 
 
 #: An unknown address with "()" put at every position of its scheme or "www.", so that no pattern sees an address
 #: until a pass takes the brackets away.
-UNKNOWN_SHAPES = sorted({prefix[:i] + "()" + prefix[i:] + "evil.example.test/renew"
+UNKNOWN_SHAPES = sorted({prefix[:i] + gap + prefix[i:] + "evil.example.test/renew" for gap in ("()", "( )")
                          for prefix in ("www.", "https://", "http://") for i in range(len(prefix) + 1)})
 UNKNOWN_PLACEMENTS = ["## Tasks\n- Renew at %s\n",                       # kept as is: not a sourced section
                       "## Calendar\nNothing today, see %s\n",           # prose in a sourced section
@@ -402,11 +403,61 @@ def test_no_unknown_address_is_left_or_made_by_the_whole_pipeline_wherever_it_st
     """Nothing a renderer would link is left in the briefing: no http(s):// and no www. run, also one that only forms
     when a pass takes text away; and running the final pass again changes nothing."""
     got, known, final = _pipeline(placement % address, bl.collect(calendar=CAL))
-    rest = final
-    for url in known:                                   # the verified link [C1] became may stay
-        rest = rest.replace(url, "")
-    assert not re.search(r"(?i)https?:/|www\.", rest), final
+    assert set(_live_links(final, known)) <= known, final
     assert bl.strip_unknown_links(final, known) == final
+
+
+#: What may follow a known address with no space between: a tail that is not part of it, so the run is another
+#: address, never the known one with something after it.
+GLUED_TAILS = [")evil.example.test", ")@evil.example.test/x", ".)/../../phish", "]x", ">x", "evil", "/../phish",
+               "?next=https://evil.example.test", ")x(", "'x", "*x", ".x", ":8080"]
+GLUED_PLACEMENTS = ["## Calendar\n- Standup [C1] %s\n", "## Tasks\n- See %s\n", "## Calendar\nNothing today: %s\n"]
+
+
+@pytest.mark.parametrize("tail", GLUED_TAILS)
+@pytest.mark.parametrize("placement", GLUED_PLACEMENTS)
+def test_an_unknown_tail_glued_to_a_known_address_never_renders_as_a_link(tail, placement):
+    """A known address with anything glued after it is another address: it goes, and nothing a renderer links is
+    left but the known links themselves."""
+    url = CAL[0]["url"]
+    got, known, final = _pipeline(placement % (url + tail), bl.collect(calendar=CAL))
+    assert set(_live_links(final, known)) <= known, final
+    assert bl.strip_unknown_links(final, known) == final
+
+
+def _live_links(text, known):
+    """Every link a GFM renderer (marked, as ui_parts/app.html uses it) makes of the text: link and image targets,
+    extended autolinks (http(s):// and www. runs to the next space or "<", less trailing punctuation and unbalanced
+    ")"), and email autolinks (outside the known links). Nothing in a code span is a link."""
+    links = []
+    text = re.sub(r"`[^`\n]*`", " ", text)
+    for m in re.finditer(r"\]\(", text):
+        i = j = m.end()
+        depth = 0
+        while j < len(text) and not text[j].isspace():
+            if text[j] == "(":
+                depth += 1
+            elif text[j] == ")":
+                if depth == 0:
+                    break
+                depth -= 1
+            j += 1
+        links.append(text[i:j])
+    for m in re.finditer(r"(?i)(?<![A-Za-z0-9/])(?:https?://|www\.)[^\s<]*", text):
+        url = m.group(0)
+        while url:
+            if url[-1] in "?!.,:;*_~'\"":
+                url = url[:-1]
+            elif url[-1] == ")" and url.count(")") > url.count("("):
+                url = url[:-1]
+            else:
+                break
+        links.append(url)
+    outside = text
+    for url in known:
+        outside = outside.replace(url, " ")
+    links += ["mailto:" + m.group(0) for m in re.finditer(r"[\w.+-]+@[\w-]+(?:\.[\w-]+)+", outside)]
+    return links
 
 
 def test_a_known_story_link_with_empty_brackets_keeps_them_in_the_sources_list():
