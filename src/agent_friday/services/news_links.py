@@ -48,11 +48,15 @@ _UNFIT = re.compile("[\\s<>\x00-\x1f\x7f]")
 #: What opens a markdown link before its "](": an unescaped "[", then a label holding no bracket but one balanced
 #: "[...]" pair at most ("[[draft] plan]").
 _LABEL = r"(?<!\\)\[(?:[^\[\]\n\\]|\\.|\[[^\[\]\n]*\])*"
+#: Not after a backslash: "\<K>" is a literal "<" to marked, and its extended autolink would run on through the
+#: ">"; an escaped known address is never set aside (it goes).
+_UNESCAPED = r"(?<!\\)"
 
 
 def set_aside_known(text: str, known, kept: list) -> str:
     """The text with every known link replaced by a mark, its spelling saved in `kept`, for put_back to restore in
-    a form marked (gfm, as ui_parts/app.html renders a briefing) can neither extend nor cut:
+    a form marked (gfm, as ui_parts/app.html renders a briefing) can neither extend nor cut. A known address after
+    a backslash is never set aside (_UNESCAPED: "\\<K>" is no autolink), and goes like an unknown one:
       1. a known address already in angle brackets ("<K>") stays so: an autolink marked ends at the ">", before
          any emphasis;
       2. a known link target ("](K)") stays so when a label opens it, so it is a real link, and K's brackets
@@ -69,14 +73,13 @@ def set_aside_known(text: str, known, kept: list) -> str:
         return "\x00%d\x00" % (len(kept) - 1)
     ordered = sorted({url for url in known if url and not _UNFIT.search(url)}, key=len, reverse=True)
     for url in ordered:
-        if "<%s>" % url in text:
-            text = text.replace("<%s>" % url, mark("<%s>" % url))
+        text = re.sub(_UNESCAPED + re.escape("<%s>" % url), lambda m: mark(m.group(0)), text)
     for url in ordered:
         span = "](%s)" % url
         if span in text and url.count("(") == url.count(")"):
             text = re.sub(_LABEL + re.escape(span), lambda m, span=span: m.group(0)[:-len(span)] + mark(span), text)
     for url in ordered:
-        text = re.sub(re.escape(url) + "\\S*", lambda m, url=url: (
+        text = re.sub(_UNESCAPED + re.escape(url) + "\\S*", lambda m, url=url: (
             mark("<%s>%s" % (url, m.group(0)[len(url):])) if _linked(m.group(0)) == url else m.group(0)), text)
     return text
 
