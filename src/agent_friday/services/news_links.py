@@ -45,10 +45,13 @@ _MARK = re.compile("\x00(\\d+)\x00")
 
 #: An address marked could read as another one is never set aside (it goes), and no link is ever written to it.
 #: An allowlist, not a list of known troubles: anything but plain URL characters (letters, digits and
-#: -._~:/?#[]@!$&'()*+,;=%) is unfit, and so is anything entity-like ("&amp;", "&#41;"), which marked keeps in an
-#: href for the browser to decode. So a space, "<", ">", "|" (ends a table cell), "\" (marked drops it before
+#: -._~:/?#[]@!$&'()*+,;=%) is unfit, and so is anything the browser would decode as a character reference in an
+#: href: "&name;", any "&#" (numeric, with or without ";"), and a legacy "&amp", "&lt", "&gt", "&quot" or "&nbsp"
+#: without ";" that no "=", letter or digit follows ("?q&tab=x" and "&ampm=pm" are fit; ui_parts/app.html's
+#: sanitizer decodes the same way). So a space, "<", ">", "|" (ends a table cell), "\" (marked drops it before
 #: punctuation in a target), a backtick, and every non-ASCII character fail closed.
-_UNFIT = re.compile(r"[^A-Za-z0-9\-._~:/?#\[\]@!$&'()*+,;=%]|&#?[A-Za-z0-9]+;")
+_UNFIT = re.compile(r"[^A-Za-z0-9\-._~:/?#\[\]@!$&'()*+,;=%]"
+                    r"|&#|&[A-Za-z0-9]+;|&(?i:amp|lt|gt|quot|nbsp)(?![=A-Za-z0-9])")
 #: What opens a markdown link before its "](": an unescaped "[", then a label holding no bracket but one balanced
 #: "[...]" pair at most ("[[draft] plan]").
 _LABEL = r"(?<!\\)\[(?:[^\[\]\n\\]|\\.|\[[^\[\]\n]*\])*"

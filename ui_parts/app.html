@@ -2109,13 +2109,17 @@ if (typeof document !== 'undefined') {
 }
 function fridaySanitizeMarkup(html) {
   const esc = s => String(s).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-  const dec = s => String(s).replace(/&(#x[0-9a-f]+|#\d+|amp|lt|gt|quot|apos|nbsp|colon|newline|tab);?/gi, (m, e) => {
-    const k = e.toLowerCase();
-    if (k[0] === '#') {
+  // An attribute value decoded the way the browser decodes it, so the value checked is the value it will use
+  // and a real address keeps its query: a numeric reference with or without ";", a named one with its ";", and
+  // only a legacy name (amp lt gt quot nbsp) without one, and then not before "=" or a letter or digit
+  // ("?id=7&tab=x", "&ampm=pm" and "&lt=5" stay as written). The value is re-escaped below.
+  const dec = s => String(s).replace(/&(?:(#x[0-9a-f]+|#\d+);?|(amp|lt|gt|quot|apos|nbsp|colon|newline|tab);|(amp|lt|gt|quot|nbsp)(?![=a-z0-9]))/gi, (m, num, named, legacy) => {
+    if (num) {
+      const k = num.toLowerCase();
       const n = k[1] === 'x' ? parseInt(k.slice(2), 16) : parseInt(k.slice(1), 10);
       return n > 0 && n < 0x110000 ? String.fromCodePoint(n) : '';
     }
-    return ({amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: ' ', colon: ':', newline: '\n', tab: '\t'})[k];
+    return ({amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: ' ', colon: ':', newline: '\n', tab: '\t'})[(named || legacy).toLowerCase()];
   });
   const TAG = /<(\/?)([a-zA-Z][a-zA-Z0-9]*)((?:\s+[^\s"'<>\/=]+(?:\s*=\s*(?:"[^"]*"|'[^']*'|[^\s"'=<>`]+))?)*)\s*(\/?)>/y;
   const ATTR = /([^\s"'<>\/=]+)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+)))?/g;
