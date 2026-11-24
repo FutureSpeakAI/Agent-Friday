@@ -68,12 +68,14 @@ def test_futurespeak_is_a_builtin_document_with_no_data_of_its_own():
     assert aws.LABELS["futurespeak"] == "Sites"          # the registry's name for it
 
 
-def test_his_projects_reach_the_document_through_the_broker_and_a_url_row_is_dropped():
+def test_his_projects_reach_the_document_through_the_broker_and_a_project_named_after_its_site_never_does():
+    # the adapter leaves the address-like name out, so the broker never sees it (its own URL filter is held by
+    # test_a2ui_broker for every query)
     got = broker.resolve(aws.builtin("futurespeak"), sensitivity="personal")
     assert got["data"]["futurespeak"]["projects"] == [
         {"name": "Alpha", "status": "live", "when": None},
         {"name": "zeta.site", "status": "changes waiting", "when": "2026-11-20T15:30:00Z"}]
-    assert got["dropped"] == 1
+    assert got["dropped"] == 0
     rendered = rend.render(aws.builtin("futurespeak"), aws.ctx("futurespeak"), data=got["data"])
     assert rendered.ok, rendered.receipt
 
