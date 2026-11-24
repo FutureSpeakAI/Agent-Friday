@@ -11,6 +11,7 @@ FutureSpeak had a verb list and nothing to draw on the phone. These tests hold t
 Synthetic data only.
 """
 import json
+from urllib.parse import unquote
 
 import pytest
 
@@ -51,7 +52,7 @@ class Desk:
         if path == "/api/futurespeak/projects":
             return 200, json.dumps({"status": "ok", "projects": self.projects}).encode(), "application/json"
         if path.startswith("/api/futurespeak/project/"):
-            name = path[len("/api/futurespeak/project/"):]
+            name = unquote(path[len("/api/futurespeak/project/"):])
             found = next((p for p in self.projects or [] if p["name"].lower() == name.lower()), None)
             if found is None:
                 return 404, b'{"status":"error"}', "application/json"
@@ -107,7 +108,7 @@ def test_no_path_address_description_or_commit_message_leaves_anywhere(client, d
         for word in SECRET_WORDS:
             assert word not in text, (path, word)
     assert {c[0] for c in desk.calls} <= {"/api/futurespeak/projects", "/api/futurespeak/project/zeta.site",
-                                          "/api/futurespeak/project/Beta Shop"}
+                                          "/api/futurespeak/project/Beta%20Shop"}
 
 
 def test_search_finds_a_project_by_name_or_how_it_stands(client, desk):

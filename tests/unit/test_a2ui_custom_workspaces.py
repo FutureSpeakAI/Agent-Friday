@@ -65,7 +65,7 @@ def test_futurespeak_is_a_builtin_document_with_no_data_of_its_own():
     store._validated(doc, aws.ctx("futurespeak"))          # V1-V14 as authored builtin, or it raises
     assert broker.check_bindings(doc) == [("/futurespeak/projects", "futurespeak.projects", {})]
     assert broker.sections_read(doc) == {"projects"}
-    assert aws.LABELS["futurespeak"] == "FutureSpeak"
+    assert aws.LABELS["futurespeak"] == "Sites"          # the registry's name for it
 
 
 def test_his_projects_reach_the_document_through_the_broker_and_a_url_row_is_dropped():
