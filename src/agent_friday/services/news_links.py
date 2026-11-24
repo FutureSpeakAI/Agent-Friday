@@ -23,7 +23,35 @@ import re
 #: Matches [N3], [N3, N5], [N3][N5]: citations by story id.
 _CITE_RE = re.compile(r"\[\s*([A-Z]\d{1,3}(?:\s*[,;]\s*[A-Z]\d{1,3})*)\s*\]")
 _MD_LINK_RE = re.compile(r"\[([^\]\n]{1,300})\]\((https?://[^)\s]+)\)")
-_BARE_URL_RE = re.compile(r"(?<![(\[])\bhttps?://[^\s)\]>\"']+")
+_BARE_URL_RE = re.compile(r"(?<![(\[])\bhttps?://[^\s)\]>\"'\x00]+")
+#: Where a known address standing in the text may end: closing punctuation at most, then a space, the end, or a
+#: bracket that closes it. Anything else glued on makes it another address.
+_KNOWN_END = r"(?=[.,;:!?]*(?:[ \t\r\n]|$|[)\]>]))"
+_MARK = re.compile("\x00(\\d+)\x00")
+
+
+def set_aside_known(text: str, known, kept: list) -> str:
+    """The text with every known link replaced by a mark, its spelling saved in `kept`: first each exact "](known)"
+    target, then each known address standing on its own up to a natural end. Every pass that removes links runs
+    on the marked text, so no pattern of its own can cut a known address short (a ")" or a "." in it, or after it)
+    and take it for an unknown one; put_back restores them. The one place both link passes decide what is known
+    (services/briefing_links.strip_unknown_links and attach_links); tests/unit/test_briefing_links.py runs every
+    address shape through both."""
+    def mark(spelling: str) -> str:
+        kept.append(spelling)
+        return "\x00%d\x00" % (len(kept) - 1)
+    ordered = sorted(set(known), key=len, reverse=True)
+    for url in ordered:
+        span = "](%s)" % url
+        if span in text:
+            text = text.replace(span, mark(span))
+    for url in ordered:
+        text = re.sub(re.escape(url) + _KNOWN_END, lambda m: mark(m.group(0)), text)
+    return text
+
+
+def put_back(text: str, kept: list) -> str:
+    return _MARK.sub(lambda m: kept[int(m.group(1))], text)
 
 CITE_RULE = (
     "Each story below has an id in square brackets, like [N3]. Cite a story by "
@@ -90,21 +118,11 @@ def attach_links(text: str, stories: list[dict], *, sources_heading: str = "Sour
     known = {s["url"] for s in stories if s.get("url")} | set(keep)
 
     # 1. Links and addresses the model typed: keep the words, drop the address,
-    #    unless it is exactly a fetched story's URL. A known link's own target is
-    #    set aside first: its address may hold a ")" ("/wiki/Mercury_(planet)"),
-    #    where the patterns below would end it early.
-    text, kept = (text or "").replace("\x00", ""), []
-    for url in sorted(known, key=len, reverse=True):
-        span = "](%s)" % url
-        if span in text:
-            kept.append(span)
-            text = text.replace(span, "\x00%d\x00" % (len(kept) - 1))
-
-    def md(m):
-        return m.group(0) if m.group(2) in known else m.group(1)
-    text = _MD_LINK_RE.sub(md, text)
-    text = _BARE_URL_RE.sub(lambda m: m.group(0) if m.group(0) in known else "", text)
-    text = re.sub("\x00(\\d+)\x00", lambda m: kept[int(m.group(1))], text)
+    #    unless it is exactly a fetched story's URL (set aside first: set_aside_known).
+    kept: list = []
+    text = set_aside_known((text or "").replace("\x00", ""), known, kept)
+    text = _MD_LINK_RE.sub(lambda m: m.group(1), text)
+    text = put_back(_BARE_URL_RE.sub("", text), kept)
 
     # 2. Ids to links.
     def cite(m):

@@ -57,9 +57,8 @@ _CITE = re.compile(r"\[\s*([A-Z]\d{1,3}(?:\s*[,;]\s*[A-Z]\d{1,3})*)\s*\]")
 _MD_LINK = re.compile(r"\[([^\]\n]{1,300})\]\((https?://[^)\s]+)\)")
 #: An address run anywhere in the text, glued to a word or not (markdown renderers link "www." runs too). No rule
 #: says where one may start: the known links are set aside first (strip_unknown_links), so every run left is unknown.
-_BARE_URL = re.compile(r"(?:https?://|www\.)[^\s<>\"'\])]*", re.I)
-_ANGLE_URL = re.compile(r"<((?:https?://|www\.)[^\s>]+)>", re.I)
-_SET_ASIDE = re.compile("\x00(\\d+)\x00")
+_BARE_URL = re.compile(r"(?:https?://|www\.)[^\s<>\"'\])\x00]*", re.I)
+_ANGLE_URL = re.compile(r"<((?:https?://|www\.)[^\s>\x00]+)>", re.I)
 #: Control and invisible characters a briefing has no use for: removed first, so they can neither spoof a
 #: set-aside mark nor make an address look as though it ends where the renderer does not end it; the bidi
 #: controls (U+202A-202E, U+2066-2069) go too, so no text shows reversed.
@@ -133,33 +132,21 @@ def strip_unknown_links(text: str, known: Iterable[str]) -> str:
       3. every "<" becomes "&lt;" (no raw HTML: an anchor, however its address is spelled), every http(s):// or www.
          run left goes, glued to a word or not, and every "@" left becomes "&#64;" (it shows, but is no mailto: link);
       4. the known links are put back."""
-    known = set(known)
     kept: list = []
-
-    def aside(link: str) -> str:
-        kept.append(link)
-        return "\x00%d\x00" % (len(kept) - 1)
-
     text = _CONTROL.sub("", text or "").replace("]:", "]\\:")
-    # A known link's own target first, exactly: its address may hold a ")" ("/wiki/Mercury_(planet)"), where the
-    # passes below would end it early and take the link for an unknown one.
-    for link in sorted(known, key=len, reverse=True):
-        span = "](%s)" % link
-        if span in text:
-            text = text.replace(span, aside(span))
-    text = _MD_LINK.sub(lambda m: m.group(0) if m.group(2) in known else m.group(1), text)
+    # The known links, as targets and standing alone, are set aside first (news_links.set_aside_known, shared
+    # with attach_links): nothing below can cut one short at a ")" or a "." and take it for an unknown one.
+    text = news_links.set_aside_known(text, known, kept)
+    text = _MD_LINK.sub(lambda m: m.group(1), text)
     # A label with brackets in it ("[[draft] plan](...)") is no _MD_LINK match; its target is caught here.
-    text = _LINK_TARGET.sub(lambda m: aside(m.group(0)) if m.group(1) in known else "]", text)
+    text = _LINK_TARGET.sub("]", text)
     # Every "](" left opens a link this pass did not see (its target or title on the next line, which
     # CommonMark allows): escaped, it is text. The known links are set aside, so none of theirs is touched.
     text = text.replace("](", "]\\(")
-    for link in sorted(known, key=len, reverse=True):
-        # only where it ends: closing punctuation at most, then a space, the end, or a bracket that closes it
-        text = re.sub(re.escape(link) + r"(?=[.,;:!?]*(?:[ \t\r\n]|$|[)\]>]))", lambda m: aside(m.group(0)), text)
     text = _ANGLE_URL.sub("", text)
     text = _BARE_URL.sub("", text.replace("<", "&lt;"))
     text = text.replace("@", "&#64;")
-    text = _SET_ASIDE.sub(lambda m: kept[int(m.group(1))], text)
+    text = news_links.put_back(text, kept)
     return re.sub(r"\(\s*\)", "", text)
 
 
