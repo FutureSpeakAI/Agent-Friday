@@ -437,12 +437,43 @@ def test_a_known_address_with_only_what_a_renderer_trims_after_it_stands():
         assert "%s%s" % (url, tail) in final, tail
 
 
+#: marked 9.1.6's inline._backpedal, copied from static/vendor/marked-9.1.6.min.js: where an extended autolink ends.
+MARKED_BACKPEDAL = re.compile(r"(?:[^?!.,:;*_'\"~()&]+|\([^)]*\)|&(?![a-zA-Z0-9]+;\Z)|[?!.,:;*_'\"~)]+(?!\Z))+")
+
+
+def _marked_autolink(run):
+    while True:
+        found = MARKED_BACKPEDAL.match(run)
+        cut = found.group(0) if found else ""
+        if cut == run:
+            return run
+        run = cut
+
+
+#: Every shape a known link can be glued to another known link in: bare to bare, bare to a link target, a link
+#: to a bare address, and a bare address to a link.
+KNOWN_GLUES = ["%s%s", "%s](%s)", "[x](%s)%s", "%s[x](%s)"]
+
+
+@pytest.mark.parametrize("glue", KNOWN_GLUES)
+@pytest.mark.parametrize("placement", GLUED_PLACEMENTS)
+@pytest.mark.parametrize("first, second", [(a, b) for a in KNOWN_SHAPES for b in KNOWN_SHAPES if a != b])
+def test_a_known_address_glued_to_another_known_link_never_renders_as_a_link_to_neither(glue, placement, first,
+                                                                                         second):
+    src = bl.collect(calendar=[{"id": "C1", "title": "Standup", "url": first},
+                               {"id": "C2", "title": "Review", "url": second}])
+    got, known, final = _pipeline(placement % (glue % (first, second)), src)
+    assert set(_live_links(final, known)) <= known, final
+    assert bl.strip_unknown_links(final, known) == final
+
+
 def _live_links(text, known):
-    """Every link a GFM renderer (marked, as ui_parts/app.html uses it) makes of the text: link and image targets,
-    extended autolinks (http(s):// and www. runs, anywhere in a word, to the next space, less trailing punctuation
-    and unbalanced ")"), and email autolinks (outside the known links). Code spans are not left out: no address may
-    stand in one either."""
-    links = []
+    """Every link the app makes of the text: link and image targets, its own [web:address] links
+    (ui_parts/app.html fridayCitationize), marked's extended autolinks (an http(s):// or www. run anywhere in a word,
+    to the next space, ended by marked's own rule, MARKED_BACKPEDAL), and email autolinks (outside the known links).
+    Code spans are not left out: no address may stand in one either."""
+    links = [m.group(1) for m in re.finditer(r"\[web:([^\]\s]+)\]", text)]
+    scanned = text                      # the text marked scans for autolinks: a real link's target is not in it
     for m in re.finditer(r"\]\(", text):
         i = j = m.end()
         depth = 0
@@ -455,16 +486,10 @@ def _live_links(text, known):
                 depth -= 1
             j += 1
         links.append(text[i:j])
-    for m in re.finditer(r"(?i)(?:https?://|www\.)\S*", text):
-        url = m.group(0)
-        while url:
-            if url[-1] in "?!.,:;*_~'\"":
-                url = url[:-1]
-            elif url[-1] == ")" and url.count(")") > url.count("("):
-                url = url[:-1]
-            else:
-                break
-        links.append(url)
+        line_start = text.rfind("\n", 0, m.start()) + 1
+        if "[" in text[line_start:m.start()] and j < len(text) and text[j] == ")":
+            scanned = scanned[:i] + " " * (j - i) + scanned[j:]
+    links += [_marked_autolink(m.group(0)) for m in re.finditer(r"(?i)(?:https?://|www\.)\S*", scanned)]
     outside = text
     for url in known:
         outside = outside.replace(url, " ")
