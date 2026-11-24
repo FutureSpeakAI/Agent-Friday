@@ -157,7 +157,7 @@ def test_every_rule_in_the_docstring_names_a_test_that_exists():
     own = pathlib.Path(__file__)
     found = re.findall(r"(?<![a-z_/])(test_[a-z_0-9]+)", psh.__doc__)
     named = set(found) - {own.stem}
-    assert len(named) == 8
+    assert len(named) == 14
     body = ast.parse(own.read_text(encoding="utf-8")).body
     here = {n.name for n in body if isinstance(n, ast.FunctionDef)}
     assert named <= here
