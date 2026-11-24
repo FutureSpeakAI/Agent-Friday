@@ -83,33 +83,74 @@ def test_one_place_in_any_script_and_case_is_one_posting(_home, here, there):
     assert len(stored(_home)) == 1 and js.list_recent(NOW) == []
 
 
-#: Titles that differ only in the symbols that name a language: two jobs.
+def _flag(region: str) -> str:
+    """A subdivision flag: the black flag, the region in tag characters, the cancel tag (England is gbeng)."""
+    return chr(0x1F3F4) + "".join(chr(0xE0000 + ord(c)) for c in region) + chr(0xE007F)
+
+
+#: Titles that differ only in the symbols that name a language, or a flag: two jobs.
 SYMBOL_TITLES = [("Embedded C++ Developer", "Embedded C Developer"), ("Senior C# Engineer", "Senior C++ Engineer"),
                  ("F# Developer", "F Developer"), ("C# Developer", "C Developer"), ("C♯ Developer", "C Developer"),
                  ("F♯ Developer", "F Developer"), ("C﹟ Developer", "C Developer"),
                  ("Ｃ＋＋ 開発エンジニア", "Ｃ 開発エンジニア"),
                  ("Ｃ＃ 開発エンジニア", "Ｃ＋＋ 開発エンジニア"),
-                 ("Software Engineer 🇩🇪", "Software Engineer 🇺🇸")]
+                 ("Software Engineer 🇩🇪", "Software Engineer 🇺🇸"),
+                 ("Software Engineer " + _flag("gbeng"), "Software Engineer " + _flag("gbsct")),
+                 ("Software Engineer " + _flag("gbsct"), "Software Engineer " + _flag("gbwls"))]
+
+#: Reviewed here, apart from the code: the only format characters (Cf) that may separate words.
+REVIEWED_INVISIBLE = set(map(chr, (0x00AD, 0x200B, 0x200C, 0x200D, 0x2060, 0xFEFF, 0x200E, 0x200F))) \
+    | set(map(chr, range(0x202A, 0x202F))) | set(map(chr, range(0x2066, 0x206A)))
+REVIEWED_SEPARATING = {"Zs", "Zl", "Zp", "Cc", "Pd", "Ps", "Pe", "Pi", "Pf", "Pc"}
+
+
+def _symbols_and_formats():
+    import unicodedata
+    for cp in range(0x110000):
+        c = chr(cp)
+        if unicodedata.category(c)[0] in "SP" or unicodedata.category(c) == "Cf":
+            yield c
+
+
+def test_every_separator_is_a_reviewed_one():
+    """Over every plane: a symbol, punctuation or format character separates words only when this file's reviewed
+    lists say it may (plain punctuation but # % & * @, a dash, bracket or quote, a listed invisible)."""
+    import unicodedata
+    from agent_friday.services import job_places
+    unreviewed = [c for c in _symbols_and_formats() if job_places.is_separator(c)
+                  and unicodedata.category(c) not in REVIEWED_SEPARATING and c not in REVIEWED_INVISIBLE
+                  and not (unicodedata.category(c) == "Po" and c not in "#%&*@")]
+    assert not unreviewed, ["U+%04X" % ord(c) for c in unreviewed[:20]]
 
 
 def test_no_character_but_a_separator_is_dropped_from_a_title():
-    """Generated over every symbol and punctuation code point of the Basic Multilingual Plane: "C{c} Developer" and
+    """Generated over every symbol, punctuation and format code point of every plane: "C{c} Developer" and
     "C Developer" have different company+title+location keys unless c (after NFKC) is only separators, so no
-    symbol anyone forgot to list can make two titles one."""
-    import sys
+    character anyone forgot to list can make two titles one."""
     import unicodedata
     from agent_friday.services import job_places
     plain = js.make_keys(listing("C Developer", source=None, url=None))
     merged = []
-    for cp in range(0x10000):
-        c = chr(cp)
-        if unicodedata.category(c)[0] not in "SP":
-            continue
+    for c in _symbols_and_formats():
         if all(job_places.is_separator(x) for x in unicodedata.normalize("NFKC", c)):
             continue
         if js.make_keys(listing("C%s Developer" % c, source=None, url=None)) == plain:
-            merged.append("U+%04X" % cp)
+            merged.append("U+%04X" % ord(c))
     assert not merged, merged[:20]
+
+
+#: Fields whose text would run into the next one if a key joined them with a character a word can hold.
+KEY_BOUNDARIES = [({"company": "Acme|Health", "title": "Nurse"}, {"company": "Acme", "title": "Health|Nurse"}),
+                  ({"title": "Engineer|Backend", "location": "Austin, TX"},
+                   {"title": "Engineer", "location": "Backend|Austin, TX"}),
+                  ({"source": "feed|a", "external_id": "1"}, {"source": "feed", "external_id": "a|1"})]
+
+
+@pytest.mark.parametrize("first, second", KEY_BOUNDARIES)
+def test_no_field_of_a_key_reaches_into_the_next(_home, first, second):
+    base = {"source": None, "url": None, "location": "Boston, MA"}
+    one, two = listing(**{**base, **first}), listing(**{**base, **second})
+    assert js.make_keys(one)[0] != js.make_keys(two)[0]        # the key built from the fields that differ
 
 
 @pytest.mark.parametrize("here, there", [("C＋＋ Developer", "C++ Developer"), ("C＃ Developer", "C# Developer")])
