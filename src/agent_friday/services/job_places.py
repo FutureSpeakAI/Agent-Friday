@@ -1,29 +1,31 @@
-"""Where a job posting is, as a set of place tokens read from the free-text location a feed sends, in whatever order
-it writes them ("Austin, TX", "US, TX, Austin", "United States - Texas - Austin", "US-TX-Austin", "DEU - Berlin",
-"Arlington, VA 22201", "Remote (US)"). services/job_store uses it to tell two postings on one careers-page URL apart.
+"""Where a job posting is, read from the free-text location a feed sends, in whatever order it writes it ("Austin,
+TX", "US, TX, Austin", "United States - Texas - Austin", "US-TX-Austin", "DEU - Berlin", "Arlington, VA 22201",
+"Remote (US)"): its country, its state or province, and its names (every other part: the city, and any region the
+tables do not know). services/job_store uses it to tell two postings on one careers-page URL apart.
 
 * a part is what lies between commas, semicolons, colons, slashes, brackets and spaced dashes; a part joined by
   hyphens ("US-TX-Austin") is several parts when at most one of its pieces is not a known region, and one name
-  otherwise ("Saint-Laurent", "Newcastle-upon-Tyne");
-* work modes ("Remote", "Hybrid", "On-site", "Office", "Anywhere") and numbers (ZIP codes) are not places;
-* a US state or Canadian province, by name or postal code, is its state token and its country's token; a country,
-  by name or three-letter code, is its country token; a state name is also a name of its own, since it is a city
-  too ("New York", "Washington"); every other part is a name, compared whole, wherever it stands;
-* two locations are one place only when every token of one is among the other's: "Dallas" and "Dallas, TX", "New
-  York, NY" and "New York, New York, United States". Two that each name something the other lacks are two places,
-  whatever it is: another city, another state, a ZIP-coded state, an unknown region ("EMEA - London" and "EMEA -
-  Paris"). A location that names nothing (a bare "Remote") is one place with any.
+  otherwise ("Saint-Laurent", "Newcastle-upon-Tyne"); work modes ("Remote", "Hybrid", "On-site", "Office") are
+  not places, and a number after a known region (a ZIP code: "TX 78701") is dropped;
+* a US state or Canadian province (by postal code, or by name) is the state, and a country (by name or
+  three-letter code) the country; when a location has several, a postal code is the state before a name, the last
+  name before an earlier one, and a country agreeing with the state before one that does not; every one not
+  chosen is a name ("Washington, DC" is Washington in DC; "Mexico, MO" and "Holland, MI" are towns in the US;
+  "New York, New York, United States" is New York in New York);
+* two locations are one place only when their names are the same and no state or country of one differs from
+  the other's: "Dallas" and "Dallas, TX", "London" and "London, England, GB", "Remote - US" and "Remote, United
+  States". A location that names nothing (a bare "Remote") is one place with any.
 
-So a merge needs one location to say nothing the other does not, and every limit splits instead: "NYC" and "New
-York", "Bengaluru" and "Bangalore", "EMEA - London" and "London, UK" are two records. One that names only a
-country or a bare city ("Remote, US", "Austin") joins a fuller one in it; services/job_store checks a sighting
-against every location the record was seen at, so a record seen at "Austin, TX" and "Remote, US" still never
-takes "Dallas, TX".
+So a city never joins a location without that city ("Remote - WA" and "Washington, DC", "Ontario, Canada" and
+"Ontario, CA", "New York" and "New York, NY" are two), and every spelling the tables cannot read as one place is
+two places: "NYC" and "New York", "Bengaluru" and "Bangalore", "EMEA - London" and "London, UK". Two records for
+one posting can happen; one record for two only when both feeds name the same place.
 """
 from __future__ import annotations
 
 import re
-from typing import FrozenSet
+from dataclasses import dataclass
+from typing import FrozenSet, List, Optional
 
 _US_STATES = {
     "AL": "alabama", "AK": "alaska", "AZ": "arizona", "AR": "arkansas", "CA": "california", "CO": "colorado",
@@ -76,40 +78,70 @@ _DASHES = "-" + chr(0x2013) + chr(0x2014)
 _PARTS = re.compile(r"[,;:|/()\[\]]|\s[%s]\s" % _DASHES)
 _PIECES = re.compile("[%s]" % _DASHES)
 
-Place = FrozenSet[str]
+@dataclass(frozen=True)
+class Place:
+    country: Optional[str] = None
+    state: Optional[str] = None
+    names: FrozenSet[str] = frozenset()
+
+    def __bool__(self) -> bool:
+        return bool(self.country or self.state or self.names)
 
 
-def _phrase(text: str) -> str:
-    words = re.sub(r"[^a-z0-9]+", " ", text).split()
-    return " ".join(w for w in words if w not in _NOT_A_PLACE and not w.isdigit())
+def _words(text: str) -> List[str]:
+    return [w for w in re.sub(r"[^a-z0-9]+", " ", text).split() if w not in _NOT_A_PLACE]
 
 
-def _known(phrase: str) -> bool:
-    return phrase in _STATES or phrase in _COUNTRIES
+def _core(words: List[str]) -> str:
+    """The part without numbers: what is looked up in the tables."""
+    return " ".join(w for w in words if not w.isdigit())
 
 
-def _tokens(phrase: str) -> set:
-    if phrase in _STATES:
-        country, code = _STATES[phrase]
-        return {"state:" + code, "country:" + country} | ({phrase} if phrase in _STATE_NAMES else set())
-    if phrase in _COUNTRIES:
-        return {"country:" + _COUNTRIES[phrase]}
-    return {phrase}
+def _known(core: str) -> bool:
+    return core in _STATES or core in _COUNTRIES
+
+
+def _pieces(text: str) -> List[List[str]]:
+    out = []
+    for part in _PARTS.split(text):
+        pieces = [w for w in (_words(piece) for piece in _PIECES.split(part)) if w]
+        if sum(not _known(_core(w)) for w in pieces) > 1:
+            pieces = [w for w in [_words(part)] if w]        # a hyphenated name: one name
+        out += pieces
+    return out
 
 
 def parse(location) -> Place:
-    """The place tokens of a free-text location (see the module docstring); empty when it names no place."""
+    """The place a free-text location names (see the module docstring); Place() when it names none."""
     text = re.sub(r"\bon[\s-]?site\b", "onsite", str(location or "").lower())
-    out: set = set()
-    for part in _PARTS.split(text):
-        pieces = [q for q in (_phrase(piece) for piece in _PIECES.split(part)) if q]
-        if sum(not _known(q) for q in pieces) > 1:
-            pieces = [q for q in [_phrase(part)] if q]       # a hyphenated name: one name
-        for q in pieces:
-            out |= _tokens(q)
-    return frozenset(out)
+    states, countries, names = [], [], set()
+    for words in _pieces(text):
+        core = _core(words)
+        if core in _STATES:
+            states.append(core)
+        elif core in _COUNTRIES:
+            countries.append(core)
+        else:
+            names.add(" ".join(words))                       # an unknown part keeps its numbers ("Store 12")
+    state = country = None
+    if states:
+        codes = [s for s in states if s not in _STATE_NAMES]
+        chosen = (codes or states)[-1]
+        country, state = _STATES[chosen]
+        rest = states[::-1]
+        rest.remove(chosen)                                  # once: "New York, New York" keeps New York as a name
+        names |= set(rest)
+    for core in countries:
+        if country is None or _COUNTRIES[core] == country:
+            country = _COUNTRIES[core]
+        else:
+            names.add(core)                                  # "Mexico, MO": a town, not the country
+    return Place(country, state, frozenset(names))
 
 
 def differ(a: Place, b: Place) -> bool:
-    """True when two locations are two places: each names something the other does not."""
-    return bool(a and b) and not (a <= b or b <= a)
+    """True when two locations are two places (see the module docstring)."""
+    if not a or not b:
+        return False
+    return (a.names != b.names or bool(a.state and b.state and a.state != b.state)
+            or bool(a.country and b.country and a.country != b.country))
