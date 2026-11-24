@@ -169,15 +169,17 @@ def _save(data: dict) -> None:
 
 
 def _contradicts(record: dict, listing: dict) -> bool:
-    """True when both name a company and a title and they differ, or both name a location and it differs: then a
-    shared URL is a careers page that lists several postings, not one posting. A location is part of what makes a
-    posting distinct (make_keys keys on it), so one role in two cities is two postings."""
+    """True when both name a company and a title and they differ, or both name a location and the two share no word:
+    then a shared URL is a careers page that lists several postings, not one posting. One role in New York and in
+    London is two postings; "New York, NY" and "New York, New York, United States" are two feeds spelling one place,
+    and stay one posting. A sighting that names no location contradicts nothing, so on a careers page it joins the
+    first record that page's URL was seen with."""
     mine = (_words(record.get("company")), _words(record.get("title")))
     theirs = (_words(listing.get("company")), _words(listing.get("title")))
     if all(mine) and all(theirs) and mine != theirs:
         return True
-    here, there = _words(record.get("location")), _words(listing.get("location"))
-    return bool(here and there and here != there)
+    here, there = set(_words(record.get("location")).split()), set(_words(listing.get("location")).split())
+    return bool(here and there and not here & there)
 
 
 def _find(data: dict, keys: List[str], listing: dict) -> Optional[dict]:
