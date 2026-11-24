@@ -105,7 +105,9 @@ def _whole(value) -> bool:
 
 
 def _rows(shares) -> list:
-    return sorted((s["beneficiary"], s["role"], s["units"]) for s in shares)
+    """The rows as a multiset to compare. Sorted by repr so peer rows of any JSON type order without raising; a row
+    with a non-whole amount is already named UNITS_NOT_WHOLE, and any other bad row simply fails to match."""
+    return sorted(((s["beneficiary"], s["role"], s["units"]) for s in shares), key=repr)
 
 
 def _hash_or_none(schedule):
