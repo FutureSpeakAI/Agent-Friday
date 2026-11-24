@@ -135,3 +135,29 @@ def test_a_name_that_is_not_a_plain_project_name_never_reaches_the_desktop(clien
 
 def test_a_project_that_is_not_there_is_404(client, desk):
     assert get(client, paired(), "/tv/v1/workspaces/futurespeak/item/project:nope").status_code == 404
+
+
+def test_an_item_ref_must_name_the_project_exactly(client, desk):
+    # the desktop finds names without regard to case; the phone's ref is the name as the list gave it, or nothing
+    assert get(client, paired(), "/tv/v1/workspaces/futurespeak/item/project:alpha").status_code == 404
+
+
+@pytest.mark.parametrize("name", ["Gamma
+", "Gamma ", "www.example.test", "shop.example.test/home"])
+def test_a_name_that_is_not_plain_or_looks_like_an_address_is_left_out_everywhere(client, desk, name):
+    desk.projects.append(project(name))
+    dev = paired()
+    assert "Gamma" not in [r["title"] for r in listing(client)["rows"]]
+    assert all("example.test" not in r["title"] for r in listing(client)["rows"])
+    for q in ("Gamma", "example"):
+        assert get(client, dev, "/tv/v1/workspaces/futurespeak/search?q=" + q).get_json()["rows"] == []
+
+
+def test_a_project_named_after_its_site_has_no_item(client, desk):
+    desk.projects.append(project("www.example.test"))
+    assert get(client, paired(), "/tv/v1/workspaces/futurespeak/item/project:www.example.test").status_code == 404
+
+
+def test_a_change_time_without_an_offset_is_no_time(client, desk):
+    desk.projects = [project("Alpha", last_commit_date="2026-11-20T09:30:00")]
+    assert listing(client)["rows"][0]["when"] is None

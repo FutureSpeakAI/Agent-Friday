@@ -150,3 +150,9 @@ def test_the_phone_gets_futurespeak_with_his_projects_and_his_look(client):
     assert "border-radius" not in text and "Draft a blog post" not in text and ".fs-legal" not in text
     rows = dev.get("/tv/v1/workspaces").get_json()["workspaces"]
     assert next(w for w in rows if w["id"] == "futurespeak")["renderer"] == "a2ui"
+
+
+def test_a_project_list_the_pc_cannot_read_makes_the_view_503_never_an_empty_table(client, monkeypatch):
+    monkeypatch.setattr(pc_read, "_desk", lambda path, params=None: (500, b"{}", "application/json"))
+    r = Enrolled(client).get(VIEW)
+    assert r.status_code == 503 and r.get_json()["code"] == "pc_unavailable"
