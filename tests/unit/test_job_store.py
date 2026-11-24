@@ -65,20 +65,34 @@ def test_the_same_posting_is_one_record_however_it_is_spelled(_home):
     assert len(stored(_home)) == 1
 
 
-@pytest.mark.parametrize("here, there", [("東京", "大阪"), ("Москва", "Киев"), ("서울", "부산"), ("Zürich", "Zug")])
+@pytest.mark.parametrize("here, there", [("東京", "大阪"), ("Москва", "Киев"), ("서울", "부산"), ("Zürich", "Zug"),
+                                         ("पुणे", "पेण"), ("दीव", "दिवा")])
 def test_a_place_in_any_script_is_part_of_the_posting_key(_home, here, there):
     js.upsert(listing(location=here, url="https://a.example.test/1"), days(-2))
     js.upsert(listing(location=there, url="https://b.example.test/2"), NOW)
     assert len(stored(_home)) == 2
 
 
-@pytest.mark.parametrize("here, there", [("Москва", "МОСКВА"), ("東京, Japan", "東京, JPN"), ("Straße 5", "STRASSE 5")])
+@pytest.mark.parametrize("here, there", [("Москва", "МОСКВА"), ("東京, Japan", "東京, JPN"), ("Straße 5", "STRASSE 5"),
+                                         ("Zu\u0308rich", "Zürich"), ("पुणे, India", "पुणे, IND")])
 def test_one_place_in_any_script_and_case_is_one_posting(_home, here, there):
     url = "https://careers.example.test/acme"
     js.upsert(listing("Software Engineer", url=url, location=here, source="feed-a", external_id="A-1",
                       closes_at=days(-1).isoformat()), days(-3))
     js.upsert(listing("Software Engineer", url=url, location=there, source="feed-b", external_id="B-2"), days(-2))
     assert len(stored(_home)) == 1 and js.list_recent(NOW) == []
+
+
+@pytest.mark.parametrize("company", ["", "Acme Robotics"])
+def test_two_titles_on_one_careers_url_are_two_postings_with_or_without_a_company(_home, company):
+    """Another title contradicts a shared URL whether or not either sighting names a company."""
+    url = "https://careers.example.test/acme"
+    js.upsert(listing("Software Engineer", company="", url=url, location="Austin, TX", source="feed-a",
+                      external_id="A-1", closes_at=days(-1).isoformat()), days(-3))
+    js.upsert(listing("Product Manager", company=company, url=url, location="Austin, TX", source="feed-a",
+                      external_id="A-2"), days(-2))
+    assert sorted(j["title"] for j in stored(_home).values()) == ["Product Manager", "Software Engineer"]
+    assert [j["title"] for j in js.list_recent(NOW)] == ["Product Manager"]
 
 
 def test_two_feeds_with_their_own_ids_are_one_record(_home):
@@ -190,7 +204,10 @@ PLACES = {
     "newcastle nsw": ("Australia, NSW, Newcastle",),
 }
 #: Two places that share an unknown region, a prefix, or nothing the tables know: always two records.
-TWO_PLACES = [("Mexico, Mexico", "Remote - Mexico"), ("TX 78701", "TX 75001"), ("東京, 日本", "大阪, 日本"), ("東京, Japan", "大阪, Japan"), ("Киев, Ukraine", "Львов, Ukraine"),
+TWO_PLACES = [("Mexico, Mexico", "Remote - Mexico"), ("TX 78701", "TX 75001"), ("Mexico 06600", "Mexico 64000"),
+              ("Germany 10115", "Germany 80331"), ("India 560001", "India 400001"), ("पुणे", "पेण"), ("दीव", "दिवा"),
+              ("เชียงใหม่", "เชียงราย"), ("東京, 日本", "大阪, 日本"), ("東京, Japan", "大阪, Japan"),
+              ("Киев, Ukraine", "Львов, Ukraine"),
               ("Москва", "Санкт-Петербург"), ("서울", "부산"), ("東京", "Austin, TX"), ("Remote - US", "東京"),
               ("תל אביב", "חיפה"), ("Zürich", "Zug"), ("New York", "Remote - US"), ("Washington", "Remote - US"), ("Quebec", "Remote - Canada"),
               ("Remote - US", "Remote - CA"), ("Remote (US)", "Remote (DE)"), ("Remote - US", "Remote - IN"),
@@ -222,7 +239,7 @@ def test_every_pair_of_place_spellings_on_one_url_is_one_posting_exactly_when_it
 
 #: FOLLOW-UPS (PR #1110 body): one job spelled two ways that the place rule keeps as two records. Each costs a
 #: duplicate in Career Ops, never a wrong merge; the rule fails apart on purpose. xfail(strict) so a fix shows.
-SAME_JOB_SPLITS = [("Toronto, CA", "Toronto, ON"), ("Paris, FR", "Paris, France"), ("Washington, D.C.", "Washington, DC"),
+SAME_JOB_SPLITS = [("Toronto, ON M5V 2T6", "Toronto, ON"), ("Toronto, CA", "Toronto, ON"), ("Paris, FR", "Paris, France"), ("Washington, D.C.", "Washington, DC"),
                    ("Remote in Austin, TX", "Austin, TX"), ("NYC", "New York, NY"), ("Bengaluru", "Bangalore"),
                    ("Zürich", "Zurich"), ("New York", "New York, NY"), ("Ft. Worth, TX", "Fort Worth, TX"),
                    ("Singapore, Singapore", "Singapore"), ("Bangalore, Karnataka, India", "Bangalore, India"),
