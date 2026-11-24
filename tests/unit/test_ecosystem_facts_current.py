@@ -121,6 +121,17 @@ def test_the_extractor_reads_identity_permissions_capabilities_and_pairing(world
     assert got["capabilities"]["talk"]["version"] == 2
     assert got["pairing"] == {"gateway": True, "relay": False, "discovery": False,
                               "declares_kind": "phone", "reports_app_version": False}
+    assert got["routes"] == {"gateway": ["pair"], "phone_link": []}
+
+
+def test_a_new_surface_in_the_apps_sources_changes_its_facts(world):
+    repos, source, snapshots = _checked_in(world)
+    assert facts.differences(repos, snapshots, apps=(source,)) == []
+    _write(repos / source.repo, "app/src/main/java/org/example/Chats.kt",
+           'val list = get("/tv/v1/chats"); val one = get("/tv/v1/chats/$id/messages"); link("/af/v1/item")')
+    assert facts.extract(source, repos)["facts"]["routes"] == {"gateway": ["chats", "pair"], "phone_link": ["item"]}
+    assert facts.differences(repos, snapshots, apps=(source,)) == [
+        "phone: facts changed (routes); run with --write and review ecosystem.json"]
 
 
 def test_groovy_build_files_and_debug_key_releases_are_read():
