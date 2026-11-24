@@ -103,7 +103,7 @@ RIGHT_NOTES = {
     "tv_brain": "have me propose actions on the device, which it still asks about on its own screen",
     "studio": "start Studio jobs on this PC's paid providers, outside the daily spend stop, each showing its cost first",
     "tv_channels": "share its channels with this PC",
-    "pc_read": "read your chats, workspaces and jobs on this PC",
+    "pc_read": "read your chats, workspaces, jobs and approval cards on this PC, and take app updates from it",
     "pc_act": "stop, resume or re-run a job on this PC",
     "pc_approve": "approve my requests, one at a time, signed on the unlocked device",
 }
@@ -116,16 +116,14 @@ HOUSEHOLD_TURN = ("Its questions are answered with none of your memory or files,
                   "is run for it. It also receives the household profile's settings and chats.")
 
 
-#: Ends every claim that rests on the pc_read right, which the pairing press does not grant.
-NEEDS_READ_PRESS = "once you allow it to read this PC, on this PC's screen"
 #: Said while the watch app still carries its pairing with a helper (facts: pairing.relay).
 WATCH_HELPER = ("It can also still pair, by a code typed on the watch, with an older helper program on this PC. "
                 "That helper is separate from me, a developer starts it by hand, and I cannot see or start it.")
 
 #: A watch holds no pairing with the device gateway: tv_gateway never sees it, the phone does the asking.
 PHONE_LINK_TURN = ("It does not connect to me directly and I grant it nothing. What you ask on it goes to the "
-                   "Agent Friday app on your phone, which asks me on the phone's own pairing; so it reaches "
-                   "what your phone reaches, and nothing when the phone is not paired.")
+                   "Agent Friday app on your phone, which asks me on the phone's own pairing; so it can reach "
+                   "no more than your phone can, and nothing when the phone is not paired.")
 
 
 class EcosystemError(ValueError):
