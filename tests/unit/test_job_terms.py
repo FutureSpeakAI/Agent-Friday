@@ -24,7 +24,7 @@ GOOD = {role: key(i + 1) for i, role in enumerate(jt.ROLES)}
 
 
 def good_terms():
-    return {"issuer": "test.one", "realm": "realm-1", "stage": "stage-1", "gross_units": 100,
+    return {"issuer": "test.one", "realm": "realm-1", "job": "j.example", "stage": "design", "gross_units": 100,
             "shares": [{"beneficiary": "editor", "role": "creator", "units": 99},
                        {"beneficiary": "operator", "role": "operator", "units": 1}]}
 
@@ -32,7 +32,7 @@ def good_terms():
 def world():
     schedule = copy.deepcopy(ECON["schedule"])
     return dict(terms=good_terms(), schedule=schedule, declared=es.schedule_hash(schedule),
-                reservation=jt.Reservation("test.one", "realm-1", "stage-1", 100), issuer_units=100)
+                reservation=jt.Reservation("test.one", "realm-1", "design", 100), issuer_units=100)
 
 
 def run(w):
@@ -97,13 +97,13 @@ def test_a_matching_job_reconciles_and_each_single_mismatch_is_named():
     edit("final allocation", lambda w: w["terms"].update(shares=[
         {"beneficiary": "editor", "role": "creator", "units": 98}, {"beneficiary": "operator", "role": "operator", "units": 2}]),
          M.SCHEDULE_SHARES)
-    edit("reservation issuer", lambda w: w.update(reservation=jt.Reservation("other", "realm-1", "stage-1", 100)),
+    edit("reservation issuer", lambda w: w.update(reservation=jt.Reservation("other", "realm-1", "design", 100)),
          M.RESERVATION_ISSUER)
-    edit("reservation realm", lambda w: w.update(reservation=jt.Reservation("test.one", "realm-2", "stage-1", 100)),
+    edit("reservation realm", lambda w: w.update(reservation=jt.Reservation("test.one", "realm-2", "design", 100)),
          M.RESERVATION_SCOPE)
     edit("reservation stage", lambda w: w.update(reservation=jt.Reservation("test.one", "realm-1", "stage-2", 100)),
          M.RESERVATION_SCOPE)
-    edit("reservation amount", lambda w: w.update(reservation=jt.Reservation("test.one", "realm-1", "stage-1", 99),
+    edit("reservation amount", lambda w: w.update(reservation=jt.Reservation("test.one", "realm-1", "design", 99),
                                                   issuer_units=99), M.RESERVATION_AMOUNT)
     edit("issuer state", lambda w: w.update(issuer_units=0), M.ISSUER_STATE)
     edit("issuer state over", lambda w: w.update(issuer_units=101), M.ISSUER_STATE)
@@ -120,9 +120,9 @@ MUTATIONS = [
     lambda w: w["schedule"]["awards"][0]["shares"][0].update(units=9),
     lambda w: w.update(declared="0" * 64),
     lambda w: w["terms"].update(gross_units=101),
-    lambda w: w.update(reservation=jt.Reservation("other", "realm-1", "stage-1", 100)),
-    lambda w: w.update(reservation=jt.Reservation("test.one", "realm-2", "stage-1", 100)),
-    lambda w: w.update(reservation=jt.Reservation("test.one", "realm-1", "stage-1", 99)),
+    lambda w: w.update(reservation=jt.Reservation("other", "realm-1", "design", 100)),
+    lambda w: w.update(reservation=jt.Reservation("test.one", "realm-2", "design", 100)),
+    lambda w: w.update(reservation=jt.Reservation("test.one", "realm-1", "design", 99)),
     lambda w: w.update(issuer_units=7),
 ]
 
@@ -151,5 +151,49 @@ def test_the_terms_module_never_reaches_the_network_or_a_journal():
     import ast
     tree = ast.parse(Path(jt.__file__).read_text(encoding="utf-8"))
     imported = {a.name for n in ast.walk(tree) if isinstance(n, ast.Import) for a in n.names}
-    imported |= {n.module for n in ast.walk(tree) if isinstance(n, ast.ImportFrom)}
-    assert imported <= {"__future__", "re", "dataclasses", "enum", "agent_friday.services"}, imported
+    imported |= {f"{n.module}.{a.name}" for n in ast.walk(tree) if isinstance(n, ast.ImportFrom) for a in n.names}
+    assert imported <= {"__future__.annotations", "re", "dataclasses.dataclass", "enum.Enum",
+                        "agent_friday.services.economic_schedule"}, imported
+
+
+def test_the_schedule_must_be_for_this_job_and_stage():
+    """The clean case pairs the schedule with terms for the same job and stage; another job or stage is named."""
+    w = world()
+    assert (w["terms"]["job"], w["terms"]["stage"]) == (w["schedule"]["job"], w["schedule"]["stage"])
+    for field in ("job", "stage"):
+        w = world()
+        w["schedule"][field] = "elsewhere"
+        w["declared"] = es.schedule_hash(w["schedule"])
+        assert jt.Mismatch.SCHEDULE_SCOPE in run(w), field
+    w = world()
+    w["terms"]["job"] = "j.other"
+    assert run(w) == [jt.Mismatch.SCHEDULE_SCOPE]
+
+
+@pytest.mark.parametrize("field,value", [("beneficiary", "someone-else"), ("role", "operator")])
+def test_a_share_paid_to_the_wrong_beneficiary_or_role_is_named(field, value):
+    w = world()
+    w["terms"]["shares"][0][field] = value
+    assert run(w) == [jt.Mismatch.SCHEDULE_SHARES]
+
+
+@pytest.mark.parametrize("edit", [
+    lambda w: w["terms"]["shares"][0].update(units=99.0),
+    lambda w: w["terms"]["shares"][1].update(units=True),
+    lambda w: w["terms"].update(gross_units=100.0),
+    lambda w: w.update(reservation=jt.Reservation("test.one", "realm-1", "design", 100.0)),
+    lambda w: w.update(issuer_units=100.0),
+    lambda w: w["terms"]["shares"][0].update(units="99"),
+], ids=["share-float", "share-bool", "gross-float", "reservation-float", "issuer-float", "share-text"])
+def test_an_amount_that_is_not_a_whole_number_of_units_is_named(edit):
+    w = world()
+    edit(w)
+    assert jt.Mismatch.UNITS_NOT_WHOLE in run(w)
+
+
+@pytest.mark.parametrize("schedule", [{}, {"awards": [{"gross_units": 1.5}]}, "not a schedule"])
+def test_a_schedule_with_no_hash_is_reported_not_raised(schedule):
+    w = world()
+    w["schedule"] = schedule
+    found = run(w)
+    assert jt.Mismatch.SCHEDULE_INVALID in found and jt.Mismatch.SCHEDULE_HASH in found
