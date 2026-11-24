@@ -44,8 +44,8 @@ ALL_DONE = "The {noun} is set up: it is paired and has signed in to this PC."
 TEST_STEP = ("On the {noun}, open Agent Friday and ask me something. Then ask me here whether your {noun} is "
              "connected, and I will tell you what this PC sees.")
 PHONE_FIRST = ("Set up the phone first: the watch reaches me through the Agent Friday app on your phone, "
-               "so there is nothing to pair between the watch and this PC.")
-WATCH_UNVERIFIED = ("The watch never signs in to this PC, so I cannot check it from here. "
+               "so there is nothing to pair between the watch and me.")
+WATCH_UNVERIFIED = ("The watch never signs in to me, so I cannot check it from here. "
                     "Its own home screen says whether the phone is connected and whether this PC can be reached.")
 STEP_TITLES = {
     "install": "Install the app", "enable": "This PC ready to pair", "open": "Open pairing on this PC",
