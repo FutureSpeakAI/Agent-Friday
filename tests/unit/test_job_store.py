@@ -111,6 +111,23 @@ def test_two_postings_on_one_careers_page_url_stay_two_records_with_their_own_ti
     assert len(stored(_home)) == 2
 
 
+def test_one_role_in_two_cities_on_one_careers_page_url_stays_two_records_and_one_closing_spares_the_other(_home):
+    page = "https://careers.example.test/acme"
+    js.upsert(listing("Software Engineer", url=page, location="New York", closes_at=days(-1).isoformat()), days(-3))
+    js.upsert(listing("Software Engineer", url=page, location="London"), days(-2))
+    assert sorted(j["location"] for j in stored(_home).values()) == ["London", "New York"]
+    js.upsert(listing("Software Engineer", url=page, location="London"), NOW)                  # seen again: no third
+    assert len(stored(_home)) == 2
+    assert [j["location"] for j in js.list_recent(NOW)] == ["London"]                         # New York has closed
+
+
+def test_a_sighting_that_names_no_location_is_still_the_posting_on_its_url(_home):
+    page = "https://careers.example.test/acme"
+    js.upsert(listing("Software Engineer", url=page, location="London"), days(-1))
+    js.upsert(listing("Software Engineer", url=page, location=""), NOW)
+    assert len(stored(_home)) == 1
+
+
 def test_every_small_combination_of_feed_id_and_url_spelling_of_one_posting_is_one_record(_home):
     sources, ids = ("feed-a", "feed-b"), (None, "", "A-1", "B-2")
     urls = ("https://jobs.example.test/42", "https://jobs.example.test/42?utm_medium=rss",
@@ -286,6 +303,22 @@ def test_a_damaged_file_is_an_error_and_is_never_replaced(_home):
     with pytest.raises(js.StoreUnreadable):
         js.upsert(listing("Another"), NOW)
     assert (_home / "job_store.json").read_text(encoding="utf-8") == "{not json"
+
+
+def test_a_file_that_is_not_text_or_cannot_be_opened_is_the_same_error(_home, monkeypatch):
+    (_home / "job_store.json").write_bytes(b'{"v": 1, "jobs": {"\xff\xfe": 1}}')
+    with pytest.raises(js.StoreUnreadable):
+        js.list_recent(NOW)
+    (_home / "job_store.json").write_text("{}", encoding="utf-8")
+    real = type(_home).read_text
+
+    def locked(self, *a, **k):
+        if self.name == "job_store.json":
+            raise PermissionError("in use by another process")
+        return real(self, *a, **k)
+    monkeypatch.setattr(type(_home), "read_text", locked)
+    with pytest.raises(js.StoreUnreadable):
+        js.list_recent(NOW)
 
 
 def test_a_failed_write_leaves_the_old_file_whole(_home, monkeypatch):
