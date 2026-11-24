@@ -142,8 +142,7 @@ def test_an_item_ref_must_name_the_project_exactly(client, desk):
     assert get(client, paired(), "/tv/v1/workspaces/futurespeak/item/project:alpha").status_code == 404
 
 
-@pytest.mark.parametrize("name", ["Gamma
-", "Gamma ", "www.example.test", "shop.example.test/home"])
+@pytest.mark.parametrize("name", ["Gamma\n", "Gamma ", "www.example.test", "shop.example.test/home"])
 def test_a_name_that_is_not_plain_or_looks_like_an_address_is_left_out_everywhere(client, desk, name):
     desk.projects.append(project(name))
     dev = paired()
