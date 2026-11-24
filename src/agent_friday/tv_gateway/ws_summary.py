@@ -8,7 +8,7 @@ the list route checks. Nothing here reads anything the phone could not already o
 row carries that row's taint (a headline is an outlet's words, not Friday's). A row holding a URL never becomes a
 line (the broker's rule), checked again after invisible characters are taken out; the text is one plain line of at
 most TEXT_MAX characters. A workspace with nothing to say, a section that can't be read or a manifest that can't be
-read gives no line, and the list still answers. Lines are read side by side within BUDGET_S; one still being read
+read gives no line, and the list still answers. Lines are read side by side, each on its own daemon thread, within BUDGET_S; one still being read
 when the budget runs out is left off this answer and kept for the next. Each is kept TTL_S seconds with the time it
 was true. tests/unit/test_tv_ws_summary.py holds the rules.
 """
@@ -18,7 +18,7 @@ import logging
 import threading
 import time
 import unicodedata
-from concurrent.futures import Future, ThreadPoolExecutor, wait
+from concurrent.futures import Future, wait
 from datetime import datetime, timezone
 from typing import Callable, Iterable, Optional
 
@@ -33,7 +33,6 @@ _clock = time.time
 _kept: dict[str, tuple[float, Optional[dict]]] = {}
 _reading: dict[str, Future] = {}
 _lock = threading.Lock()
-_pool = ThreadPoolExecutor(max_workers=3, thread_name_prefix="ws-line")
 
 
 def _plain(text) -> str:
@@ -105,13 +104,20 @@ def _compute(ws: str, now: float) -> Optional[dict]:
     return out
 
 
-def _read(ws: str) -> Optional[dict]:
+def _read(ws: str, fut: Future) -> None:
+    """One read, on its own daemon thread (a hung desk read never holds up the PC's shutdown). Whatever happens, the
+    workspace is free to be read again after it (test_a_read_that_breaks_never_wedges_its_workspace)."""
     now = _clock()
-    got = _compute(ws, now)
-    with _lock:
-        _kept[ws] = (now, got)
-        _reading.pop(ws, None)
-    return got
+    got = None
+    try:
+        got = _compute(ws, now)
+    except Exception as e:
+        _log.info("workspace line for %s broke: %s", ws, type(e).__name__)
+    finally:
+        with _lock:
+            _kept[ws] = (now, got)
+            _reading.pop(ws, None)
+        fut.set_result(got)
 
 
 def lines(ids: Iterable[str]) -> dict[str, dict]:
@@ -130,8 +136,9 @@ def lines(ids: Iterable[str]) -> dict[str, dict]:
                     out[ws] = hit[1]
                 continue
             fut = _reading.get(ws)
-            if fut is None:
-                fut = _reading[ws] = _pool.submit(_read, ws)
+            if fut is None:                                  # at most one read per workspace, and SAYS is short
+                fut = _reading[ws] = Future()
+                threading.Thread(target=_read, args=(ws, fut), name="ws-line-" + ws, daemon=True).start()
             waiting[ws] = fut
     if waiting:
         wait(list(waiting.values()), timeout=BUDGET_S)
@@ -156,3 +163,4 @@ def settle(timeout: float) -> None:
 def forget() -> None:
     with _lock:
         _kept.clear()
+        _reading.clear()
