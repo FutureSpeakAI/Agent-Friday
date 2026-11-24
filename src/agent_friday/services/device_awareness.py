@@ -32,7 +32,7 @@ _log = logging.getLogger(__name__)
 
 KINDS = ("phone", "tablet", "tv", "watch")
 NOUNS = {"phone": "phone", "tablet": "tablet", "tv": "TV", "watch": "watch"}
-#: Kinds whose app pairs with a helper this PC cannot see, so "none paired" proves nothing.
+#: Kinds whose app reaches this PC through the phone and never signs in here, so "none paired" proves nothing.
 UNSEEN_KINDS = ("watch",)
 #: Kinds that hold the event stream (tv_gateway/pc_events): the only ones seen as connected.
 STREAM_KINDS = ("phone", "tablet")
@@ -129,8 +129,8 @@ def describe(devices: tuple, *, gateway_on: bool, kind: Optional[str] = None,
         if rows:
             continue
         if k in UNSEEN_KINDS:
-            lines.append(f"No {noun} is paired with me. The {noun} app is a developer preview that connects "
-                         "through a separate helper I cannot see from here, so I cannot tell whether one is in use.")
+            lines.append(f"No {noun} is paired with me. The {noun} app is a developer preview that reaches me "
+                         "through your phone and never signs in to this PC, so I cannot tell whether one is in use.")
         else:
             lines.append(f"No {noun} is paired.")
     if any(d.kind in kinds for d in devices):
