@@ -132,6 +132,35 @@ def test_one_posting_whose_feeds_spell_its_location_differently_is_one_record_an
     assert js.list_recent(NOW) == []                       # closed once, on one record: no open copy left behind
 
 
+#: Each place as feeds really spell it. Spellings of one place are one posting on a shared URL; two places are two
+#: postings, also when they share a state, a country, a word of their name, or "Remote".
+PLACES = {
+    "new york": ("New York", "New York, NY", "New York, New York, United States", "New York City, NY"),
+    "york pa": ("York, PA", "York, Pennsylvania"),
+    "austin": ("Austin, TX", "Austin, Texas, US"),
+    "dallas": ("Dallas, TX", "Dallas"),
+    "london": ("London", "London, England, GB", "London, UK"),
+    "manchester": ("Manchester, UK",),
+    "san francisco": ("San Francisco, CA", "San Francisco"),
+    "san jose": ("San Jose, CA",),
+    "remote us": ("Remote - US", "Remote (US)", "US Remote", "Remote, US"),
+    "remote canada": ("Remote - Canada", "Remote, Canada"),
+}
+SPELLINGS = [(place, spelling) for place, spellings in PLACES.items() for spelling in spellings]
+
+
+@pytest.mark.parametrize("first, second", list(itertools.combinations(SPELLINGS, 2)),
+                         ids=lambda pair: pair[1])
+def test_every_pair_of_place_spellings_on_one_url_is_one_posting_exactly_when_it_is_one_place(_home, first, second):
+    url, same = "https://careers.example.test/acme", first[0] == second[0]
+    js.upsert(listing("Software Engineer", url=url, location=first[1], source="feed-a", external_id="A-1",
+                      closes_at=days(-1).isoformat()), days(-3))
+    js.upsert(listing("Software Engineer", url=url, location=second[1], source="feed-b", external_id="B-2"), days(-2))
+    assert len(stored(_home)) == (1 if same else 2)
+    # one place closes once; two places: the first closing never takes the other with it
+    assert [j["location"] for j in js.list_recent(NOW)] == ([] if same else [second[1]])
+
+
 def test_a_sighting_that_names_no_location_is_still_the_posting_on_its_url(_home):
     page = "https://careers.example.test/acme"
     js.upsert(listing("Software Engineer", url=page, location="London"), days(-1))
