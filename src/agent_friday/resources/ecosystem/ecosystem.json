@@ -25,7 +25,7 @@
         "You can talk or type to me from anywhere in the house, and I answer from this PC.",
         "Once you allow it on this PC's screen, the phone can approve what I ask.",
         "It can do things on the phone itself when you ask, such as timers, calendar entries and starting a call.",
-        "Your chats with me and your workspaces on this PC open on the phone."
+        "Once you allow it to read this PC, on this PC's screen, your chats with me and your workspaces here open on the phone."
       ],
       "capabilities": [
         {
@@ -40,7 +40,7 @@
         },
         {
           "id": "chats",
-          "text": "open the chats you have had with me on this PC and carry one on",
+          "text": "open the chats you have had with me on this PC and carry one on, once you allow it to read this PC, on this PC's screen",
           "status": "shipped",
           "evidence": [
             "route:gateway/chats"
@@ -48,7 +48,7 @@
         },
         {
           "id": "workspaces",
-          "text": "open workspaces from this PC, such as Knowledge",
+          "text": "open workspaces from this PC, such as Knowledge, once you allow it to read this PC, on this PC's screen",
           "status": "shipped",
           "evidence": [
             "route:gateway/workspaces"
@@ -108,7 +108,7 @@
         },
         {
           "id": "pc_voice",
-          "text": "A live spoken conversation in this PC's own voice",
+          "text": "A live, back-and-forth call with me in this PC's own voice",
           "status": "planned",
           "evidence": []
         },
@@ -209,7 +209,7 @@
         "Today's builds are test builds, not a store release.",
         "A phone I pair is signed in as you. I cannot yet give another person their own space on their own phone, so if it belongs to someone else in the house it is safer to wait.",
         "Pairing only works at home, on the same network as this PC. Using it away from home needs Tailscale on both, which you set up yourself.",
-        "Every 30 days I ask you on this PC whether to keep the phone paired. Until you answer, it is refused."
+        "A paired phone is kept for 30 days at a time. In the last week, when it next connects, I ask you on this PC whether to keep it. It goes on working until the 30 days are up; after that it is refused until you approve."
       ]
     },
     {
@@ -233,7 +233,7 @@
       "adds": [
         "The same app as the phone, laid out for a larger screen.",
         "You can talk or type to me from the sofa or the kitchen, and I answer from this PC.",
-        "Your chats with me and your workspaces on this PC open on the tablet."
+        "Once you allow it to read this PC, on this PC's screen, your chats with me and your workspaces here open on the tablet."
       ],
       "capabilities": [
         {
@@ -248,7 +248,7 @@
         },
         {
           "id": "chats",
-          "text": "open the chats you have had with me on this PC and carry one on",
+          "text": "open the chats you have had with me on this PC and carry one on, once you allow it to read this PC, on this PC's screen",
           "status": "shipped",
           "evidence": [
             "route:gateway/chats"
@@ -256,7 +256,7 @@
         },
         {
           "id": "workspaces",
-          "text": "open workspaces from this PC, such as Knowledge",
+          "text": "open workspaces from this PC, such as Knowledge, once you allow it to read this PC, on this PC's screen",
           "status": "shipped",
           "evidence": [
             "route:gateway/workspaces"
@@ -289,7 +289,7 @@
         },
         {
           "id": "pc_voice",
-          "text": "A live spoken conversation in this PC's own voice",
+          "text": "A live, back-and-forth call with me in this PC's own voice",
           "status": "planned",
           "evidence": []
         },
@@ -396,7 +396,7 @@
         "Today's builds are test builds, not a store release.",
         "A tablet I pair is signed in as you. I cannot yet give another person their own space on their own tablet, so if it belongs to someone else in the house it is safer to wait.",
         "Pairing only works at home, on the same network as this PC.",
-        "Every 30 days I ask you on this PC whether to keep the tablet paired. Until you answer, it is refused.",
+        "A paired tablet is kept for 30 days at a time. In the last week, when it next connects, I ask you on this PC whether to keep it. It goes on working until the 30 days are up; after that it is refused until you approve.",
         "In the build installed now, approving from a tablet needs a fingerprint enrolled on it. A build that accepts the tablet's own screen lock is written but not installed yet."
       ]
     },
@@ -536,7 +536,7 @@
         "A TV is a household device: it never signs in as you and gets none of your memory.",
         "Kids mode on the TV starts and ends only on the TV itself, with the remote and your grown-up PIN. I cannot change it from here, and neither can a voice.",
         "Pairing and use are home-network only.",
-        "Every 90 days I ask you on this PC whether to keep the TV paired. Until you answer, it is refused."
+        "A paired TV is kept for 90 days at a time. In the last week, when it next connects, I ask you on this PC whether to keep it. It goes on working until the 90 days are up; after that it is refused until you approve."
       ]
     },
     {
@@ -580,15 +580,14 @@
         },
         {
           "id": "buzz",
-          "text": "buzz when something finishes or needs you",
-          "status": "shipped",
-          "evidence": [
-            "permission:android.permission.VIBRATE"
-          ]
+          "text": "A buzz on the wrist when something finishes or needs you",
+          "status": "built_off",
+          "evidence": [],
+          "until": "its older helper program is running on this PC"
         },
         {
           "id": "gateway",
-          "text": "Pairing directly with this PC",
+          "text": "Pairing with me the way the phone does",
           "status": "planned",
           "evidence": []
         },
@@ -651,7 +650,7 @@
             "text": "With the link app on the phone and the watch app on the watch, open Agent Friday on the watch. Its home screen says whether the phone is connected and whether this PC can be reached."
           },
           {
-            "text": "Because the watch never signs in to this PC, I cannot tell you from here whether it is connected."
+            "text": "Because the watch never signs in to me, I cannot tell you from here whether it is connected."
           }
         ]
       },
@@ -659,6 +658,7 @@
         "It is a developer preview, not something I would set up for a new user yet.",
         "It only reaches me through your phone, so it needs the phone nearby or online, and the phone paired with this PC.",
         "It cannot approve anything through the phone.",
+        "It can also still pair, by a code typed on the watch, with an older helper program on this PC. That helper is separate from me, a developer starts it by hand, and I cannot see or start it.",
         "In the build on the watch now, listening may not stop on a second tap. A fix is written but not installed yet.",
         "It is not in the Play Store."
       ]
