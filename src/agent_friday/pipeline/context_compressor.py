@@ -4,7 +4,7 @@ Context compression powered by Headroom
 https://github.com/chopratejas/headroom
 Created by Tejas Chopra — Apache 2.0 License
 
-Headroom compresses tool outputs, logs, files, and RAG chunks before
+Headroom compresses tool outputs, logs and files before
 they reach the LLM. 60-95% fewer tokens, same answers.
 
 ────────────────────────────────────────────────────────────────────────────
@@ -15,7 +15,8 @@ Where this sits in Friday's pipeline:
                    → Anthropic API
 
 The pruner picks the semantically relevant turns; Headroom then squeezes the
-JSON tool outputs, code, and prose inside those turns. The savings compound.
+JSON tool outputs and code inside those turns; the person's and Friday's own words are never
+compressed (pipeline/conversation_text). The savings compound.
 
 Everything here is best-effort: if the Headroom import fails or a compression
 call errors, we fall back to the original, uncompressed messages so a chat is
@@ -23,6 +24,7 @@ never blocked on compression.
 """
 
 import os
+from agent_friday.pipeline.conversation_text import has_compressible, keep_conversation_text
 from agent_friday.user_errors import ExceptionText
 
 # Rough chars-per-token estimate used only to decide whether a payload is big
@@ -86,7 +88,7 @@ class ContextCompressor:
     Uses the Headroom library (https://github.com/chopratejas/headroom)
     by Tejas Chopra — Apache 2.0 license.
 
-    Compresses tool outputs, JSON, code, and prose in the message history
+    Compresses tool outputs, JSON and code in the message history (never the conversation text)
     before sending to the LLM. 60-95% fewer tokens, same answer quality.
     """
 
@@ -151,6 +153,11 @@ class ContextCompressor:
         """
         if not self._enabled or not messages:
             return messages
+        if not has_compressible(messages):
+            # Only the person's and Friday's words: nothing here may be compressed (pipeline/conversation_text), so
+            # Headroom is not asked and nothing is counted. Counting it would make a working Headroom read as one that
+            # compresses nothing after a few chat turns.
+            return messages
 
         compress_fn = self._load_headroom()
         if compress_fn is None:
@@ -170,15 +177,18 @@ class ContextCompressor:
             # this when its native core is missing). Not a compression.
             self._stats['passthrough'] += 1
             return messages
-        # Prefer Headroom's own (tiktoken-accurate) accounting; fall back to our
-        # cheap char-based estimate only when the result doesn't expose counts.
-        before_tokens = self._coerce_int(getattr(result, 'tokens_before', None), est_before)
-        after_tokens = self._coerce_int(
-            getattr(result, 'tokens_after', None),
-            self._estimate_tokens(compressed),
-        )
-        saved = self._coerce_int(getattr(result, 'tokens_saved', None),
-                                 max(0, before_tokens - after_tokens))
+        # Conversation text goes back to the model as written (pipeline/conversation_text): only tool output
+        # and other bulky content stays compressed. A result that does not line up with the input is not used.
+        kept = keep_conversation_text(messages, compressed)
+        if kept is None:
+            self._stats['passthrough'] += 1
+            return messages
+        compressed = kept
+        # The saving is counted on the list actually returned (Headroom's own counts describe the list before
+        # the conversation text was put back).
+        before_tokens = est_before
+        after_tokens = self._estimate_tokens(compressed)
+        saved = max(0, before_tokens - after_tokens)
         if saved <= 0:
             # Counts reported, nothing removed: still a pass-through, however
             # the result is shaped. Only a saving is a compression.
@@ -298,15 +308,6 @@ class ContextCompressor:
             return msgs
         return fallback
 
-    @staticmethod
-    def _coerce_int(value, fallback):
-        """Return value as a non-negative int, or fallback if it isn't a usable number."""
-        if isinstance(value, bool):
-            return fallback
-        if isinstance(value, (int, float)) and value >= 0:
-            return int(value)
-        return fallback
-
     @classmethod
     def _estimate_tokens(cls, messages):
         """Cheap char-based token estimate over the string content of a message list."""
@@ -316,8 +317,17 @@ class ContextCompressor:
             if isinstance(content, str):
                 chars += len(content)
             elif isinstance(content, list):
-                # Anthropic content blocks: sum any text fields.
+                # Anthropic content blocks: sum any text fields, and what a tool_result carries (the bulk that
+                # compression exists for).
                 for block in content:
-                    if isinstance(block, dict) and isinstance(block.get('text'), str):
+                    if not isinstance(block, dict):
+                        continue
+                    if isinstance(block.get('text'), str):
                         chars += len(block['text'])
+                    inner = block.get('content') if block.get('type') == 'tool_result' else None
+                    if isinstance(inner, str):
+                        chars += len(inner)
+                    elif isinstance(inner, list):
+                        chars += sum(len(b['text']) for b in inner
+                                     if isinstance(b, dict) and isinstance(b.get('text'), str))
         return chars // _CHARS_PER_TOKEN

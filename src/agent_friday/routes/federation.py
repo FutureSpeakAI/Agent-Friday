@@ -360,13 +360,23 @@ def _v2_trusted_keys() -> set:
     return keys
 
 
+def _own_recipient_id() -> str:
+    """This PC's own federation id: the key peers address v2 events to. An id that cannot be read, or that is not a key,
+    matches no event (every event names a 64-hex recipient), so the node then accepts none: it fails closed
+    (tests/api/test_federation_v2_ingest.py)."""
+    try:
+        return str(fed.get_identity().get("agent_id") or "")
+    except Exception:  # noqa: BLE001 - no readable identity: refuse every event, say nothing about why
+        return ""
+
+
 @federation_bp.route("/api/federation/v2/events", methods=["POST"])
 def federation_v2_events():
     """Authenticate and record ONE signed peer event (raw canonical JSON body).
 
     202 recorded, 200 a known retry (the recorded result), 409 a different event under an
     already-recorded (realm, actor, action_id), 413 over 65,536 bytes, 422 malformed,
-    unsupported or untrusted, 429 over budget. The answer acknowledges receipt of bytes only:
+    unsupported, untrusted or addressed to another node (code "recipient"), 429 over budget. The answer acknowledges receipt of bytes only:
     it authorizes nothing, runs nothing and moves no credits; any effect still passes the
     local approval path. Held by the invited_jobs switch and the kill switch."""
     from agent_friday.services import peer_wire_v2 as wire
@@ -382,7 +392,7 @@ def federation_v2_events():
     if named is not None and not _accepted_issuers().is_accepted_id(named):
         return jsonify({"ok": False, "error": "issuer_not_accepted"}), 422
     try:
-        disposition, event_id = wire.receive(raw, _v2_trusted_keys(), _v2_store())
+        disposition, event_id = wire.receive(raw, _v2_trusted_keys(), _v2_store(), recipient=_own_recipient_id())
     except wire.WireError as e:
         return jsonify({"ok": False, "error": e.code}), 422
     status = {"enqueued": 202, "replay": 200, "equivocation": 409}[disposition]

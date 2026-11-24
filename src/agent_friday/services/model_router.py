@@ -3654,7 +3654,7 @@ def _log_policy_failure():
 
 
 def memory_head_blocks(workspace='', freeze_key=None, *, provider='local',
-                       vault_control=None, vault_fallback='redact', model='') -> str:
+                       vault_control=None, vault_fallback='redact', model='', origin=None) -> str:
     """The memory section of the prompt head: KINDS OF INFORMATION (the
     standing instruction on how to speak about each kind, NS-3.4-1; always
     first, gate-exempt), then CORE MEMORY, USER MODEL and LEARNED HEURISTICS.
@@ -3687,22 +3687,34 @@ def memory_head_blocks(workspace='', freeze_key=None, *, provider='local',
         pass
     out = "\n\n" + _kk.KINDS_SECTION + "\n"
 
+    # ONE rule (core_memory.user_lines_visible) says whether this reader sees the lines about the owner; the
+    # update_core_memory tool asks the same function, so the prompt and the tool cannot disagree. Not visible: the lines
+    # are gated as TIER_2 when a vault control is at hand, and withheld outright when none is (never raw).
+    # The origin of the turn counts too: an answer that leaves by text message or a chat service is withheld from whichever
+    # model writes it. `origin` None reads the turn's (agent._generate_agent sets it before any prompt is built).
     gate_fn, gate_key = None, "ungated"
-    if vault_control is not None:
-        try:
-            if not vault_control.can_access(provider, model):
-                from agent_friday.privacy.vault_access import Tier as _Tier
+    try:
+        from agent_friday.services import core_memory as _cm
+        if origin is None:
+            from agent_friday.services import agent as _agent
+            origin = _agent._CURRENT_ORIGIN.get() or ""
+        _visible = _cm.user_lines_visible(provider, model, origin)
+    except Exception:
+        _visible = False
+    if not _visible:
+        gate_key = "cloud-gated"
 
-                def gate_fn(text):
-                    # Personal by default (fail closed, like the wiki).
-                    return vault_control.gate_content(
-                        text, provider, tier=_Tier.PRIVATE, fallback=vault_fallback,
-                        detail="core-memory", model=model)
-                gate_key = "cloud-gated"
-        except Exception:
-            def gate_fn(text):
+        def gate_fn(text):
+            # Personal by default (fail closed, like the wiki): the vault gate's redaction when there is one, else
+            # nothing. The gate decides by provider alone, so it hands a local provider the raw text; this reader may
+            # not see it, so raw text is never kept.
+            if vault_control is None:
                 return ""
-            gate_key = "cloud-gated"
+            from agent_friday.privacy.vault_access import Tier as _Tier
+            gated = vault_control.gate_content(
+                text, provider, tier=_Tier.PRIVATE, fallback=vault_fallback,
+                detail="core-memory", model=model)
+            return "" if gated == text else gated
 
     def _core():
         from agent_friday.services import core_memory
@@ -4026,43 +4038,19 @@ def _load_vault_summary():
     ctx = {}
 
     # Personality state
-    pfile = FRIDAY_DIR / "personality.json"
-    if pfile.exists():
-        try:
-            data = json.loads(pfile.read_text(encoding='utf-8'))
-            ctx['personality'] = {
-                'maturity': data.get('maturity', 0.5),
-                'session_count': data.get('session_count', 0),
-                'top_traits': {k: round(v, 2) for k, v in list(data.get('traits', {}).items())[:5]},
-                'temperature': data.get('temperature', 0.7),
-            }
-        except Exception:
-            pass
+    from agent_friday.services import personality_state
+    state = personality_state.summary(FRIDAY_DIR)
+    if state is not None:
+        ctx['personality'] = state
 
-    # Trust graph — names and scores only (lightweight)
-    tfile = FRIDAY_DIR / "trust_graph.json"
-    if tfile.exists():
-        try:
-            data = json.loads(tfile.read_text(encoding='utf-8'))
-            people = data.get('people', {})
-            if isinstance(people, dict):
-                ctx['trust_people'] = {
-                    name: {
-                        'overall': round(info.get('overall_score', info.get('score', 0.5)), 2),
-                        'relationship': info.get('relationship', ''),
-                    }
-                    for name, info in people.items()
-                }
-            elif isinstance(people, list):
-                ctx['trust_people'] = {
-                    p.get('name', 'unknown'): {
-                        'overall': round(p.get('overall_score', p.get('score', 0.5)), 2),
-                        'relationship': p.get('relationship', ''),
-                    }
-                    for p in people
-                }
-        except Exception:
-            pass
+    # Trust graph — names and scores only (lightweight). One loader (people_graph.circle), by display name.
+    try:
+        from agent_friday.people_graph import graph_at
+        circle = graph_at(FRIDAY_DIR).circle()
+        if circle:
+            ctx['trust_people'] = {p['name']: {'overall': p['overall'], 'relationship': p['relationship']} for p in circle}
+    except Exception:
+        pass
 
     # Memory stats
     mem_file = FRIDAY_DIR / "memory.json"
@@ -4109,7 +4097,8 @@ def _lookup_trust_person(name, trust_data):
 
     if isinstance(people, dict):
         for pname, pdata in people.items():
-            if name_lower in pname.lower():
+            shown = str(pdata.get('name') or '') if isinstance(pdata, dict) else ''
+            if name_lower in pname.lower() or (shown and name_lower in shown.lower()):
                 return {pname: pdata}
     elif isinstance(people, list):
         for p in people:
@@ -4494,12 +4483,11 @@ def _build_context_prompt(message, workspace='', vision_description=None, provid
     if 'trust' in needs and 'trust_people' in vault and _people_trust_allowed(provider):
         # Check if message references a specific person
         trust_data_raw = None
-        tfile = FRIDAY_DIR / "trust_graph.json"
-        if tfile.exists():
-            try:
-                trust_data_raw = json.loads(tfile.read_text(encoding='utf-8'))
-            except Exception:
-                pass
+        try:
+            from agent_friday.people_graph import graph_at
+            trust_data_raw = graph_at(FRIDAY_DIR).load()
+        except Exception:
+            pass
 
         # Try to find a specific person mentioned
         person_match = None
@@ -4866,17 +4854,24 @@ def _load_smart_context(user_message, workspace=None, include_people=True):
 
     # Person-name detection — pull the trust-graph entry for anyone named.
     # Never for a cloud model: people trust stays home (trust/people.py).
-    trust_path = FRIDAY_DIR / "trust_graph.json"
-    if include_people and trust_path.exists():
+    # One store and one naming rule (people_graph.graph_at().load(), as the trust circle and query_trust_graph): a
+    # person is found by display name, alias or key, and headed by the display name.
+    if include_people:
         try:
-            trust = json.loads(trust_path.read_text(encoding='utf-8'))
-            people = trust.get('people', {})
-            if isinstance(people, dict):
-                for name, entry in people.items():
-                    if name and name.lower() in msg_lower:
-                        context_parts.append(
-                            f"== TRUST GRAPH: {name} ==\n{json.dumps(entry, indent=2, default=str)[:1500]}"
-                        )
+            from agent_friday.people_graph import graph_at
+            people = graph_at(FRIDAY_DIR).load().get('people') or {}
+            entries = people.items() if isinstance(people, dict) else ((None, p) for p in people)
+            for key, entry in entries:
+                if not isinstance(entry, dict):
+                    continue
+                shown = str(entry.get('name') or key or '').strip()
+                names = [shown, str(key or '')] + [str(a) for a in (entry.get('aliases') or [])]
+                # whole words only: a short alias ("Mo") must not match inside "more"
+                if shown and any(n.strip() and re.search(r"(?<!\w)" + re.escape(n.strip().lower()) + r"(?!\w)", msg_lower)
+                                 for n in names):
+                    context_parts.append(
+                        f"== TRUST GRAPH: {shown} ==\n{json.dumps(entry, indent=2, default=str)[:1500]}"
+                    )
         except Exception:
             pass
 

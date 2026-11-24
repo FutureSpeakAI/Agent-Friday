@@ -59,8 +59,12 @@ def test_the_four_places_are_there_with_their_rules(page):
                    "Approve these ", "Decline these ", "Review each", "'Quiet until morning'", "'End quiet'",
                    "Nothing needs you.", "No new updates today.", "Nothing is running and nothing is waiting.",
                    "window.fridayOpenTrace(", "There is nothing to fix from here.",
-                   "!each && h('div', { className: 'place-readonly', 'data-testid': 'lane-batch-items' }, "
-                   "b.items.map(it => h(ApprovalCardBody, { key: it.approval_id, a: it,"):
+                   # A grouped card lists each action with everything its own card shows (why, the provenance
+                   # warning, facts and Inspect) and its own Reject (#1078; scripts/check_approval_decisions.cjs).
+                   "!each && h('div', { 'data-testid': 'lane-batch-items' }, "
+                   "b.items.map(it => h(LaneBatchItem, { key: it.approval_id, it: it,",
+                   "h(ApprovalProvenance, { p: it.provenance })", "h(ApprovalCardFacts, { a: it })",
+                   "'data-testid': 'lane-batch-reject-one'"):
         assert needle in b, needle
 
 
