@@ -354,6 +354,29 @@ def test_a_known_link_with_round_brackets_in_its_address_survives_every_pass_and
     assert bl.strip_unknown_links(final, known | {PAREN_NEWS}) == final
 
 
+KNOWN_SHAPES = ["https://calendar.example.test/event?eid=abc123", "https://calendar.example.test/e_(1)",
+                "https://en.wikipedia.example.test/wiki/Mercury_(planet)", "https://calendar.example.test/a/",
+                "https://www.calendar.example.test/e.html", "https://calendar.example.test/e?x=1&y=(2)"]
+PLACEMENTS = ["- Standup %s", "- Standup %s.", "- Standup (%s)", "- Standup (%s).", "- Standup %s, then lunch.",
+              "- Standup: %s; then lunch.", "- Standup [agenda](%s)", "- Standup [agenda](%s).",
+              "- Standup ([agenda](%s))", "- Standup [[draft] agenda](%s)!"]
+
+
+@pytest.mark.parametrize("url", KNOWN_SHAPES)
+@pytest.mark.parametrize("placement", PLACEMENTS)
+def test_every_known_address_shape_in_every_placement_survives_the_whole_pipeline_and_nothing_is_counted(url, placement):
+    """Rounds 8 and 9 were one class of mistake (a pass cut a known address at a ")" or a "."): this is the check.
+    validate, then attach_links, then the final pass, in the order news_engine._finish_briefing runs them."""
+    from agent_friday.services import news_links
+    src = bl.collect(calendar=[{"id": "C1", "title": "Standup", "url": url}])
+    line = placement % url
+    got = bl.validate("## Calendar\n%s\n" % line, src)
+    known = bl.known_links(src)
+    final = bl.strip_unknown_links(news_links.attach_links(got.text, [], keep=known), known)
+    assert got.dropped_total == 0 and line in final
+    assert bl.strip_unknown_links(final, known) == final
+
+
 def test_a_known_target_set_aside_is_never_swallowed_by_an_unknown_one_before_it():
     text = "[a](https://evil.example.test/x [b](%s) then)" % PAREN_CAL
     out = bl.strip_unknown_links(text, {PAREN_CAL})
