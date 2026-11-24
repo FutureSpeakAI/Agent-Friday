@@ -238,7 +238,8 @@ def test_workspaces_are_the_pcs_registry_without_the_held_ones(client, desk):
     ids = {w["id"] for w in got["workspaces"]}
     from agent_friday.services import workspace_registry as reg
     assert ids == set(reg.ids()) and {"calendar", "messages"} <= ids and got["count"] == len(ids)
-    assert all(set(w) <= set(pc_read._WS_FIELDS) | {"boundary"} for w in got["workspaces"])
+    # "renderer" (a2ui | legacy) tells the device which screen draws a workspace
+    assert all(set(w) <= set(pc_read._WS_FIELDS) | {"boundary", "renderer"} for w in got["workspaces"])
     assert desk.calls == []                                                    # served from the registry, not the desktop
 
 

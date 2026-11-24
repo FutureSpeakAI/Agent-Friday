@@ -96,6 +96,17 @@ def resolve(raw: str) -> Tuple[Optional[Path], Optional[str]]:
 
 # ── where ─────────────────────────────────────────────────────────────────────
 
+def _kept_tool_output() -> Optional[Path]:
+    """Friday's own folder of saved tool results, resolved; None when it cannot be named. Reading it back is the
+    only way to page a cut result, so it is the one part of the state folder a file tool may read
+    (tests/unit/test_tool_output_read_back.py)."""
+    try:
+        from agent_friday.services import tool_output
+        return tool_output.output_dir().resolve(strict=False)
+    except Exception:  # noqa: BLE001
+        return None
+
+
 def _profile() -> Path:
     return Path(os.path.expanduser("~")).resolve(strict=False)
 
@@ -287,6 +298,9 @@ def judge(raw: str, op: str) -> Tuple[Optional[Path], Optional[str]]:
     try:
         if any(_within(p, d) for d in output_dirs()):
             return p, None
+        kept = _kept_tool_output() if op == "read" else None
+        if kept is not None and _within(p, kept):
+            return p, None                   # p is resolved: a link inside the folder that leaves it is judged where it lands
         zone = off_limits_reason(p, op)
         if zone:
             g = _grant_for(p, op)

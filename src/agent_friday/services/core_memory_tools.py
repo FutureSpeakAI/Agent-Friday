@@ -137,6 +137,20 @@ def _read_outside_content(ctx: dict) -> bool:
         return True                                   # cannot tell: ask
 
 
+def _clear_of_content(ctx: dict, inp: dict, action: str) -> bool:
+    """An add or replace whose line is the owner's own and draws on nothing Friday read (taint.owner_authored):
+    reading a page earlier does not hold back a line the owner wrote about something else."""
+    if action not in ("add", "replace"):
+        return False
+    try:
+        from agent_friday.services import taint
+        key = taint.ledger_key(ctx)
+        return taint.owner_authored(key, inp.get("text") or "") and (
+            action == "add" or taint.owner_authored(key, inp.get("old") or ""))
+    except Exception:
+        return False
+
+
 def _owner_decided() -> bool:
     try:
         from agent_friday.governance import action_gate
@@ -146,10 +160,12 @@ def _owner_decided() -> bool:
 
 
 def _cloud_reader() -> bool:
-    """The result goes to a model that is not KNOWN to be on this PC."""
+    """The lines about the owner are withheld from the model reading this turn. Asks the ONE rule the prompt builder uses
+    (core_memory.user_lines_visible), with this turn's provider, model and origin."""
     try:
-        from agent_friday.services.library.tools import _loop_is_local
-        return not _loop_is_local()
+        from agent_friday.services import agent as _agent
+        return not core_memory.user_lines_visible(
+            _agent._CURRENT_PROVIDER.get(), _agent._CURRENT_MODEL.get() or "", _agent._CURRENT_ORIGIN.get() or "")
     except Exception:
         return True
 
@@ -210,6 +226,9 @@ def _tool_update_core_memory(inp=None) -> str:
         return "NOT DONE: action is add, replace, remove or show."
     if target not in core_memory.TARGETS:
         return "NOT DONE: target is user or friday."
+    if cloud and target == "user" and action in ("replace", "remove"):
+        # The line may well exist; this reader may not see it. Never "no entry contains that text".
+        return "NOT CHANGED: " + core_memory.WITHHELD_ERROR
     if (action in ("add", "replace") and not _owner_decided()
             and _off_record_turn(_ctx(), "update_core_memory")):
         # NS-15.8-2: an off-record turn teaches Friday nothing. Nothing is
@@ -261,7 +280,7 @@ def _tool_update_core_memory(inp=None) -> str:
                 inp["old"], words, OWNER_LINE_COVERAGE):
             return _ask_first(target, action, inp,
                               "The user did not name the line this changes in their own words.")
-        if _read_outside_content(ctx):
+        if _read_outside_content(ctx) and not _clear_of_content(ctx, inp, action):
             return _ask_first(target, action, inp,
                               "Friday read outside content in this conversation, so it may come from there.")
         if action in ("add", "replace"):

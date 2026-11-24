@@ -106,3 +106,14 @@ def test_show_lists_both_files():
     shown = json.loads(cmt._tool_update_core_memory({"action": "show"}))
     assert shown["friday"]["entries"] == ["Lead with the answer."]
     assert shown["user"]["cap"] == cm.CAPS["user"]
+
+
+@pytest.fixture(autouse=True)
+def _a_local_reader():
+    """These tests are about whose words may change a line, not about who may see it: the reader is a model KNOWN to be on
+    this PC. An unknown reader is not local, and under a gated posture it is told the lines are withheld (the visibility
+    rule is held by tests/unit/test_core_memory_one_visibility_rule.py)."""
+    from agent_friday.services import agent as _agent
+    tok = _agent._CURRENT_PROVIDER.set("local")
+    yield
+    _agent._CURRENT_PROVIDER.reset(tok)

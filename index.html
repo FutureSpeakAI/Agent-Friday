@@ -343,6 +343,7 @@ window.addEventListener('DOMContentLoaded',function(){
         body.fr-big .dock .items, body.fr-big .dock-items { gap: 10px; }
         body.fr-big .landing-cluster .landing-countdowns > * { font-size: 1.25em; padding: 10px 14px; }
         body.fr-big .landing-cluster button, body.fr-big .landing-cluster .btn { min-height: 72px; min-width: 96px; font-size: 1.15em; padding: 0 26px; }
+        body.fr-big .landing-cluster .cd-hide { min-width: 56px; min-height: 56px; padding: 0; font-size: 24px; }
         body.fr-big .landing-cluster input, body.fr-big .landing-cluster textarea { min-height: 72px; font-size: 1.25em; padding: 0 22px; border-radius: 36px; }
         body.fr-big .chat-panel .btn, body.fr-big .chat-panel button, body.fr-big .chat-win button { min-height: 72px; min-width: 72px; font-size: 1.1em; }
         body.fr-big .chat-panel textarea[data-chat-input], body.fr-big .chat-win textarea[data-chat-input] { min-height: 72px; font-size: 1.2em; line-height: 1.5; }
@@ -1204,6 +1205,15 @@ window.addEventListener('DOMContentLoaded',function(){
         }
         .greeting-ticker-item .cd-what { display: flex; flex-direction: column; align-items: flex-end; line-height: 1.25; }
         .cd-why { font-size: var(--fr-text-xs); color: var(--fr-label); letter-spacing: 0.02em; }
+        .cd-hide {
+            pointer-events: auto; align-self: center; margin-left: 2px; padding: 0 5px; min-width: 24px; min-height: 24px;
+            line-height: 1; font-size: 15px; color: rgba(255,255,255,0.55); background: transparent;
+            border: 1px solid transparent; border-radius: 50%; cursor: pointer;
+        }
+        .cd-hide:hover, .cd-hide:focus-visible { color: #fff; border-color: rgba(255,255,255,0.45); outline: none; }
+        .cd-unhide { pointer-events: auto; position: relative; z-index: 1; margin: -8px 0 12px; padding: 2px 10px; min-height: 24px;
+            font-size: var(--fr-text-xs); color: rgba(255,255,255,0.6); background: transparent; border: 0; cursor: pointer; text-decoration: underline; }
+        .cd-unhide:hover, .cd-unhide:focus-visible { color: #fff; }
         .greeting-ticker-sep {
             width: 3px; height: 3px; border-radius: 50%; background: rgba(255,255,255,0.45);
         }
@@ -13409,15 +13419,40 @@ window.fridayTitleName = fridayTitleName;
 /* fridayHerName:end */
 // The start screen's countdowns: each one's label, when, and why it is there.
 // The words for when move on each minute; the list comes every five.
+/* fridayCountdownHide:begin */
+// When a countdown passes, in epoch seconds: its time, else the end of its day. A hidden countdown stays hidden
+// until then; the entry is dropped after that, so a yearly one comes back next year.
+function fridayCountdownPasses(c) {
+  if (c.at) return c.at + 60;   // the list still shows a timed one for a minute after it starts
+  const end = c.date ? new Date(c.date + 'T23:59:59').getTime() / 1000 : 0;
+  return end > 0 ? end : Date.now() / 1000 + 86400;
+}
+function fridayCountdownHidden(c, hidden, nowMs) {
+  return !!(hidden && hidden[c.id] > nowMs / 1000);
+}
+function fridayCountdownsHiding(hidden, c, nowMs) {
+  const kept = {};
+  for (const k of Object.keys(hidden || {})) if (hidden[k] > nowMs / 1000) kept[k] = hidden[k];
+  kept[c.id] = fridayCountdownPasses(c);
+  return kept;
+}
+// The countdowns that are not hidden: what the list draws AND what the smart start-screen rule may act on,
+// so a hidden countdown never brings the start screen up (tests/ui/start_countdowns_hide.test.cjs).
+function fridayCountdownsShown(items, hidden, nowMs) {
+  return (items || []).filter(c => !fridayCountdownHidden(c, hidden, nowMs));
+}
+/* fridayCountdownHide:end */
 function FridayCountdowns({
-  items
+  items,
+  hidden,
+  onHide
 }) {
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
     const t = setInterval(() => setNow(Date.now()), 60000);
     return () => clearInterval(t);
   }, []);
-  const shown = (items || []).filter(c => !c.at || c.at * 1000 > now - 60000);
+  const shown = (items || []).filter(c => (!c.at || c.at * 1000 > now - 60000) && !fridayCountdownHidden(c, hidden, now));
   if (!shown.length) return null;
   return /*#__PURE__*/React.createElement("div", {
     className: "greeting-ticker",
@@ -13439,7 +13474,13 @@ function FridayCountdowns({
     className: "cd-why"
   }, c.why)), /*#__PURE__*/React.createElement("span", {
     className: "days"
-  }, fridayCountdownWhen(c, now) || (c.days ?? '?') + 'd')))));
+  }, fridayCountdownWhen(c, now) || (c.days ?? '?') + 'd'), onHide && c.id && /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    className: "cd-hide",
+    "aria-label": 'Hide ' + (c.label || c.name),
+    title: "Hide this countdown",
+    onClick: () => onHide(c)
+  }, "\xD7")))));
 }
 // The wordmark, AGENT FRIDAY™ by FutureSpeak.AI: one definition for the top
 // bar, the start screen and the About card. `size` is the cap size in px; the
@@ -16825,7 +16866,7 @@ function ChatSurface(props) {
       border: '1px solid rgba(255,154,107,0.3)'
     }
   }, (turnStatus && turnStatus.stopping) ? 'Stopping…' : '■ Stop')),
-  React.createElement(ChatApprovalCards, { convId: convId }),
+  React.createElement(ChatApprovalNote, { convId: convId }),
   /*#__PURE__*/React.createElement("div", {
     ref: chatEnd
   })), /*#__PURE__*/React.createElement("div", {
@@ -34150,17 +34191,11 @@ function SystemWS() {
   // surface: the notification's "Review" points at
   // {workspace:'system',tab:'approvals'}, and if nothing handles that tab every
   // gated action (Google connect, gated goal steps) waits until it expires. ──
-  const [approvals, setApprovals] = useState([]);
-  const [apBusy, setApBusy] = useState('');
+  const approvals = useApprovalFeed();               // the page's one list of waiting cards
   const apRef = useRef(null);
-  const refreshApprovals = () => fetch('/api/approvals?status=pending').then(r => r.json()).then(d => setApprovals(Array.isArray(d?.approvals) ? d.approvals : [])).catch(() => {});
-  // The list follows the page's approval feed, so a card decided anywhere leaves it at once.
-  useEffect(() => fridayApprovalFeed.subscribe(setApprovals), []);
+  const refreshApprovals = () => fridayApprovalFeed.reload();
   const decideApproval = async (id, decision) => {
-    if (apBusy) return;
-    setApBusy(id);
     await fridayDecideApproval(id, decision);
-    setApBusy('');
     refreshApprovals();
   };
   // Deep-link: notifications target {workspace:'system',tab:'self-improvement'|'approvals'} → scroll the card into view.
@@ -34525,12 +34560,11 @@ function SystemWS() {
       color: '#888',
       padding: '8px 2px'
     }
-  }, ("Nothing waiting on you. Actions " + fridayName() + " won't take on her own — connecting Google, gated goal steps, spend — show up here.")) : approvals.map(a => /*#__PURE__*/React.createElement(ApprovalCardBody, {
-    key: a.approval_id,
-    a: a,
-    busy: apBusy,
-    onDecide: decideApproval
-  })), /*#__PURE__*/React.createElement(PreApprovedSendsList, null)), /*#__PURE__*/React.createElement(GoalsCard, null), /*#__PURE__*/React.createElement(TaskRecordsCard, null), /*#__PURE__*/React.createElement(WhatFridayDidCard, null), /*#__PURE__*/React.createElement(FridayChangesCard, null), /*#__PURE__*/React.createElement("div", {
+  }, ("Nothing waiting on you. Actions " + fridayName() + " won't take on her own — connecting Google, gated goal steps, spend — show up here.")) : /*#__PURE__*/React.createElement(ApprovalTrayList, {
+    items: approvals,
+    onDecide: decideApproval,
+    onDecided: refreshApprovals
+  }), /*#__PURE__*/React.createElement(PreApprovedSendsList, null)), /*#__PURE__*/React.createElement(GoalsCard, null), /*#__PURE__*/React.createElement(TaskRecordsCard, null), /*#__PURE__*/React.createElement(WhatFridayDidCard, null), /*#__PURE__*/React.createElement(FridayChangesCard, null), /*#__PURE__*/React.createElement("div", {
     className: "card-title"
   }, "Disk Space"), disks.length === 0 ? /*#__PURE__*/React.createElement("div", {
     className: "card",
@@ -61788,6 +61822,7 @@ function FileGrantRequestCard({ a, busy, onDecide }) {
 function sendGrantWords(g, jobName) {
   const who = (g.recipients || []).join(', ');
   const where = g.scope === 'job' ? 'only for the scheduled job ' + jobName(g.schedule_id) : g.scope === 'skill' ? 'only while the skill ' + g.skill + ' is in use' : 'for any job or chat';
+  if ((g.browse_domains || []).length) return 'Read ' + g.browse_domains.join(', ') + ' (never a send) \xB7 ' + where;
   return 'Email to ' + who + ' \xB7 ' + where;
 }
 function SendGrantsPanel() {
@@ -61835,11 +61870,14 @@ function SendGrantsPanel() {
             'since ' + new Date(g.created_at * 1000).toLocaleString() + ' \xB7 used ' + (g.uses || 0) + ' time(s)' + (g.last_used_at ? ', last ' + new Date(g.last_used_at * 1000).toLocaleString() : '')),
           g.changed ? E('div', { 'data-testid': 'send-grant-changed', style: { fontSize: 11, color: '#ffb080' } }, 'Not in use: ' + g.changed + '. Sends ask until you approve it again.') : null),
         E('div', { style: { display: 'flex', gap: 6 } },
-          g.changed && g.in_force !== false && (g.scope === 'job' || skillFor(g.skill)) ? E('button', { className: 'settings-btn', style: { fontSize: 11 }, onClick: () => reapprove(g, g.scope === 'skill' ? skillRecipients(skillFor(g.skill)) : null) }, 'Approve again as it is now') : null,
+          g.changed && g.in_force !== false && !(g.browse_domains || []).length && (g.scope === 'job' || skillFor(g.skill)) ? E('button', { className: 'settings-btn', style: { fontSize: 11 }, onClick: () => reapprove(g, g.scope === 'skill' ? skillRecipients(skillFor(g.skill)) : null) }, 'Approve again as it is now') : null,
           E('button', { className: 'settings-btn', style: { fontSize: 11, color: '#ff8080' }, onClick: () => revoke(g.grant_id) }, 'Revoke')))),
-    d.skills.length > 0 && E('div', { style: { marginTop: 10, fontSize: 12, color: '#ccc' } }, 'Skills that need to send'),
+    d.skills.length > 0 && E('div', { style: { marginTop: 10, fontSize: 12, color: '#ccc' } }, 'Skills that need to send or to read the web'),
     d.skills.map(sk => E('div', { key: sk.name, 'data-testid': 'send-grant-skill', style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, marginTop: 6, fontSize: 11, color: '#bbb' } },
-      E('span', null, E('b', null, sk.name), ' needs: ', Object.keys(sk.needs).map(a => (a === 'send_email' ? 'send email to ' : a + ' to ') + sk.needs[a].join(', ')).join('; '), '. Declaring it grants nothing.',
+      E('span', null, E('b', null, sk.name), Object.keys(sk.needs || {}).length ? ' needs: ' + Object.keys(sk.needs).map(a => (a === 'send_email' ? 'send email to ' : a + ' to ') + sk.needs[a].join(', ')).join('; ') + '. Declaring it grants nothing.' : null,
+        (sk.browse || []).length ? E('span', { 'data-testid': 'send-grant-browse', style: { display: 'block' } }, 'This skill will browse: ' + sk.browse.join(', ') + '. Reading only; it never sends there. ',
+          (sk.browse_granted || []).length ? E('span', { style: { color: '#9fd' } }, 'Approved') :
+            E('button', { className: 'settings-btn', style: { fontSize: 11 }, onClick: () => post({ scope: 'skill', skill: sk.name, browse_domains: sk.browse }) }, (sk.browse_changed || []).length ? 'Changed since you approved: approve these sites' : 'Approve these sites')) : null,
         (sk.refused || []).length ? E('span', { 'data-testid': 'send-grant-refused', style: { display: 'block', color: '#ff8080' } }, 'Cannot be pre-approved: ' + sk.refused.map(x => x.recipient + ' (' + x.why + ')').join('; ') + '.') : null),
       (sk.granted || []).length ? E('span', { style: { color: '#9fd' } }, 'Approved') : (sk.changed || []).length ? E('span', { style: { color: '#ffb080' } }, 'Changed after you approved it') : !Object.keys(sk.needs || {}).length ? null :
         E('button', { className: 'settings-btn', style: { fontSize: 11 }, onClick: () => post({ scope: 'skill', skill: sk.name, recipients: skillRecipients(sk) }) }, 'Approve what it needs'))),
@@ -63969,6 +64007,17 @@ function TasksInboxPanel() {
   }, E('div', {
     className: 'sc-sub'
   }, msg || 'Reading…'));
+  // Retired: approvals live only in the tray. A machine that had the list on can turn it off; nothing turns it on.
+  if (d.retired) return E(StSection, {
+    title,
+    desc: fridayName() + ' no longer mirrors approvals to Google Tasks. They wait in the tray, which your phone, tablet and widget reach.'
+  }, d.enabled ? E('button', {
+    type: 'button',
+    className: 'btn',
+    'data-testid': 'tasks-inbox-off',
+    disabled: busy,
+    onClick: () => run('/api/tasks-inbox/disable', { remove_list: false }, 'Turned off. Nothing is posted or read.')
+  }, 'Turn it off') : null, msg ? E('div', { className: 'sc-sub' }, msg) : null);
   const levelButtons = (current, onPick) => E('div', {
     role: 'group',
     'aria-label': 'How much text goes to Google',
@@ -68759,42 +68808,130 @@ function LaneWhy({ id }) {
       !w ? 'One moment.' : w.ok ? w.sentence : 'There is no record of that item any more.',
       w && w.trace_id ? h('button', { type: 'button', className: 'ws-tab-link', onClick: () => window.fridayOpenTrace(w.trace_id) }, 'Open its trace') : null));
 }
-// A batch of approvals of one kind and source: one card, each action listed. Approving the batch
-// approves exactly the listed actions, one approval each; "Review each" shows the single cards.
+// One request that edits the wiki (or any other batch) is one tray card, each action listed. Approving the card
+// approves exactly the listed actions, one approval each (the ledger keeps one decision per card); "Reject this
+// one" declines that action alone and the rest stay on the card. Parts that came from web or wiki text are marked.
 function fridayDecideBatch(b, decision) {
-  return fetch('/api/approvals/batches/' + encodeURIComponent(b.batch_id) + '/decide', {
+  const running = fridayDeciding.get(b.batch_id);
+  if (running) { fridayToast('Already working on that one.'); return running; }
+  const sent = fetch('/api/approvals/batches/' + encodeURIComponent(b.batch_id) + '/decide', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ decision, approval_ids: b.approval_ids, decided_by: 'owner:ui' })
   }).then(r => r.json()).then(d => {
-    if (d && d.ok) (d.results || []).forEach(x => { if (x.won) fridayApprovalFeed.drop(x.approval_id); });
+    if (d && d.ok) {
+      // A card this decide did not win stays, and the owner is told: one still waiting is decided on its own card.
+      const all = d.results || [], left = all.filter(x => !x.won);
+      all.forEach(x => { if (x.won || (x.status && x.status !== 'pending')) fridayApprovalFeed.drop(x.approval_id); });
+      if (left.length) fridayToast(left.length + ' of ' + all.length + ' were not decided here: ' + (left.some(x => x.status === 'pending')
+        ? 'they are still waiting, each on its own card.' : 'they had already been decided.'));
+    }
     else if (d && d.error === 'changed') fridayToast('That batch changed while you looked. Here is the new list.');
+    else fridayToast((d && d.message) || 'That did not go through. The cards are still waiting.');
     return d;
-  }).catch(() => { fridayToast('Could not reach ' + fridayName() + ' to record that. The cards are still waiting.'); return null; });
+  }).catch(() => {
+    fridayToast('Could not reach ' + fridayName() + ' to record that. The cards are still waiting.');
+    return null;
+  }).finally(() => fridayDeciding.end(b.batch_id));
+  fridayDeciding.start(b.batch_id, sent);
+  return sent;
 }
-function LaneBatch({ b, items, busy, onBusy, onDecided }) {
+// The text with every detail that came from outside content marked, in order, never twice.
+function fridayMarkOutside(text, flags) {
+  const h = React.createElement, src = String(text || '');
+  const hits = [];
+  (flags || []).forEach(f => {
+    const v = String((f && f.value) || '');
+    const at = v.length > 1 ? src.indexOf(v) : -1;
+    if (at >= 0 && !hits.some(x => at < x.end && at + v.length > x.start)) hits.push({ start: at, end: at + v.length });
+  });
+  hits.sort((a, b) => a.start - b.start);
+  const out = [];
+  let at = 0;
+  hits.forEach((x, i) => {
+    if (x.start > at) out.push(src.slice(at, x.start));
+    out.push(h('mark', { key: 'm' + i, 'data-testid': 'outside-text' }, src.slice(x.start, x.end)));
+    at = x.end;
+  });
+  if (at < src.length) out.push(src.slice(at));
+  return out;
+}
+// One action inside a grouped card. It shows everything its own card would (what it is, why it asks, the warning for
+// what came from outside, class and expiry with Inspect) and its own Reject; only Approve and Decline are the group's.
+// The action's arguments are shown whole, and every argument that came from outside content is marked where it
+// stands, by name: a flag's value is a cut-off copy and the action line is escaped JSON, so matching text against
+// text misses most real values.
+function LaneBatchItem({ it, onRejected }) {
   const h = React.createElement;
+  const busy = useDeciding(it.approval_id);
+  const flags = ((it.provenance || {}).flags || []).filter(f => f && (f.value || f.arg));
+  const input = it.payload && it.payload.input && typeof it.payload.input === 'object' && !Array.isArray(it.payload.input) ? it.payload.input : null;
+  const outside = new Set(flags.map(f => f.arg).filter(Boolean));
+  const shown = input
+    ? Object.keys(input).map(k => {
+        const v = input[k], s = typeof v === 'string' ? v : JSON.stringify(v);
+        return h('div', { key: k, 'data-testid': 'lane-batch-arg', style: { whiteSpace: 'pre-wrap' } }, k + ': ',
+          outside.has(k) ? h('mark', { 'data-testid': 'outside-text' }, s) : s);
+      })
+    : fridayMarkOutside(it.action_description, flags);
+  return h('div', { className: 'place-readonly', 'data-testid': 'lane-batch-item', 'data-approval-id': it.approval_id, style: { margin: '6px 0' } },
+    h('div', { style: { fontSize: 12, color: '#ddd' } }, it.title),
+    it.description ? h('div', { style: { fontSize: 11, color: '#bbb', marginTop: 2 } }, it.description) : null,
+    (input || it.action_description) ? h('div', { 'data-testid': 'lane-batch-action', style: { fontSize: 11, color: '#999', marginTop: 2, overflowWrap: 'anywhere' } },
+      input && it.payload.tool ? h('div', null, it.payload.tool) : null, shown) : null,
+    flags.filter(f => f.value).map((f, i) => h('div', { key: i, 'data-testid': 'outside-source', style: { fontSize: 11, color: '#fde68a', marginTop: 2, overflowWrap: 'anywhere' } },
+      'From ' + (f.source || 'outside content') + (f.arg ? ' (' + f.arg + ')' : '') + ': ', h('mark', null, String(f.value)))),
+    h(ApprovalProvenance, { p: it.provenance }),
+    h(ApprovalCardFacts, { a: it }),
+    h('button', { type: 'button', className: 'btn', style: { fontSize: 11, padding: '2px 10px', color: 'var(--fr-deny)', marginTop: 4 }, disabled: busy,
+      'data-testid': 'lane-batch-reject-one', onClick: () => { fridayDecideApproval(it.approval_id, 'deny').then(() => onRejected && onRejected()); } }, 'Reject this one'));
+}
+function LaneBatch({ b, items, onDecided }) {
+  const h = React.createElement;
+  const busy = useDeciding(b.batch_id);
   const [each, setEach] = useState(false);
-  const run = decision => {
-    if (busy) return;
-    onBusy(b.batch_id);
-    fridayDecideBatch(b, decision).then(() => { onBusy(''); onDecided(); });
-  };
+  const run = decision => { fridayDecideBatch(b, decision).then(() => onDecided && onDecided()); };
   const cards = (items || []).filter(a => b.approval_ids.indexOf(a.approval_id) >= 0);
   return h('div', { className: 'place-card', 'data-testid': 'lane-batch', 'data-batch-id': b.batch_id },
     h('div', { className: 'place-card-title' }, b.sentence),
-    !each && h('div', { className: 'place-readonly', 'data-testid': 'lane-batch-items' }, b.items.map(it => h(ApprovalCardBody, { key: it.approval_id, a: it, busy: busy, onDecide: () => {} }))),
+    !each && h('div', { 'data-testid': 'lane-batch-items' }, b.items.map(it => h(LaneBatchItem, { key: it.approval_id, it: it, onRejected: onDecided }))),
     h('div', { className: 'place-note' }, 'Each action stays its own approval. Approving these approves exactly the ' + b.count + ' listed and nothing else.'),
     h('div', { className: 'place-actions' },
-      h('button', { type: 'button', className: 'btn', style: { color: 'var(--fr-ok)' }, disabled: !!busy, 'data-testid': 'lane-batch-approve', onClick: () => run('approve') }, 'Approve these ' + b.count),
-      h('button', { type: 'button', className: 'btn', style: { color: 'var(--fr-deny)' }, disabled: !!busy, 'data-testid': 'lane-batch-deny', onClick: () => run('deny') }, 'Decline these ' + b.count),
+      h('button', { type: 'button', className: 'btn', style: { color: 'var(--fr-ok)' }, disabled: busy, 'data-testid': 'lane-batch-approve', onClick: () => run('approve') }, 'Approve these ' + b.count),
+      h('button', { type: 'button', className: 'btn', style: { color: 'var(--fr-deny)' }, disabled: busy, 'data-testid': 'lane-batch-deny', onClick: () => run('deny') }, 'Decline these ' + b.count),
       h('button', { type: 'button', className: 'ws-tab-link', 'aria-expanded': each ? 'true' : 'false', onClick: () => setEach(v => !v) }, each ? 'Hide the cards' : 'Review each')),
-    each && cards.map(a => h(ApprovalCardBody, { key: a.approval_id, a: a, busy: busy, onDecide: (id, decision) => { onBusy(id); fridayDecideApproval(id, decision).then(() => { onBusy(''); onDecided(); }); } })));
+    each && cards.map(a => h(ApprovalCardBody, { key: a.approval_id, a: a, onDecide: (id, decision) => { fridayDecideApproval(id, decision).then(() => onDecided && onDecided()); } })));
+}
+// How the tray's pending cards group: the server's own plan, asked again whenever the set of waiting cards
+// changes. A late answer for an older set is ignored; a failed ask leaves every card single, never hidden.
+function useApprovalPlan(items) {
+  const key = items.map(a => a.approval_id).sort().join(',');
+  const [plan, setPlan] = useState({ key: '', batches: [] });
+  useEffect(() => {
+    let live = true;
+    if (items.length < 2) { setPlan({ key: key, batches: [] }); return undefined; }
+    apiFetch('/api/approvals/batches').then(r => r.json())
+      .then(d => { if (live) setPlan({ key: key, batches: d && Array.isArray(d.batches) ? d.batches : [] }); })
+      .catch(() => { if (live) setPlan({ key: key, batches: [] }); });
+    return () => { live = false; };
+  }, [key]);
+  return plan.key === key ? plan.batches : [];
+}
+// The tray's list: grouped cards first, then the single cards, every one decided on its own.
+function ApprovalTrayList({ items, onDecide, onDecided }) {
+  const h = React.createElement;
+  const have = new Set(items.map(a => a.approval_id));
+  const batches = useApprovalPlan(items).filter(b => b.approval_ids.every(id => have.has(id)));
+  const inBatch = new Set();
+  batches.forEach(b => b.approval_ids.forEach(id => inBatch.add(id)));
+  const decide = onDecide || ((id, decision) => { fridayDecideApproval(id, decision).then(() => onDecided && onDecided()); });
+  return h(React.Fragment, null,
+    batches.map(b => h(LaneBatch, { key: b.batch_id, b: b, items: items, onDecided: onDecided })),
+    items.filter(a => !inBatch.has(a.approval_id)).map(a => h(ApprovalCardBody, { key: a.approval_id, a: a, onDecide: decide })));
 }
 function LaneNeedsYou({ onChanged }) {
   const h = React.createElement;
   const [d, reload] = useLaneData('/api/lanes/needs-you');
   const feed = useApprovalFeed();
-  const [busy, setBusy] = useState('');
   useEffect(() => { reload(); }, [feed.length]);
   if (!d) return h('div', { className: 'place-empty' }, 'One moment.');
   const inBatch = new Set();
@@ -68811,8 +68948,8 @@ function LaneNeedsYou({ onChanged }) {
            q.why === 'until_morning' ? h('button', { key: 'b', type: 'button', className: 'ws-tab-link', onClick: () => setQuiet(false) }, 'End quiet') : null]
         : h('button', { type: 'button', className: 'ws-tab-link', 'data-testid': 'lane-quiet-on', onClick: () => setQuiet(true) }, 'Quiet until morning')),
     d.count === 0 && !singles.length ? h('div', { className: 'place-empty' }, 'Nothing needs you.') : h('div', { className: 'place-summary', role: 'status' }, d.summary ? d.summary.charAt(0).toUpperCase() + d.summary.slice(1) + '.' : ''),
-    d.batches.map(b => h(LaneBatch, { key: b.batch_id, b: b, items: feed, busy: busy, onBusy: setBusy, onDecided: done })),
-    singles.map(a => h(ApprovalCardBody, { key: a.approval_id, a: a, busy: busy, onDecide: (id, decision) => { setBusy(id); fridayDecideApproval(id, decision).then(() => { setBusy(''); done(); }); } })),
+    d.batches.map(b => h(LaneBatch, { key: b.batch_id, b: b, items: feed, onDecided: done })),
+    singles.map(a => h(ApprovalCardBody, { key: a.approval_id, a: a, onDecide: (id, decision) => { fridayDecideApproval(id, decision).then(done); } })),
     d.others.map(o => h('div', { key: o.id, className: 'place-card', 'data-testid': 'lane-need', 'data-kind': o.kind },
       h('div', { className: 'place-card-title' }, o.title + (o.count > 1 ? ' (' + o.count + ' times)' : '')),
       o.body ? h('div', { className: 'place-note' }, o.body) : null,
@@ -69218,6 +69355,8 @@ const fridayApprovalFeed = (() => {
     leader = false,
     heard = Date.now(),
     release = null;
+  // When each card was last decided or raised here: a reload's older answer must not undo either.
+  const settled = new Map(), raised = new Map();
   const listeners = new Set();
   // Cards judged "may not interrupt" (quiet hours, over budget, Focus Assist): listed, not popped open.
   const quiet = window.__fridayQuietApprovals = new Set();
@@ -69252,8 +69391,10 @@ const fridayApprovalFeed = (() => {
       emit();
     } else if (d.type === 'pending' && d.approval && d.approval.status === 'pending') {
       cards.set(d.approval.approval_id, d.approval);
+      raised.set(d.approval.approval_id, Date.now());
       emit();
     } else if (d.type === 'resolved') {
+      settled.set(d.approval_id, Date.now());
       if (cards.delete(d.approval_id)) emit();
     } else if (d.type === 'presence') {
       presenceListeners.forEach(fn => {
@@ -69381,7 +69522,22 @@ const fridayApprovalFeed = (() => {
       };
     },
     drop(id) {
+      settled.set(id, Date.now());
       if (cards.delete(id)) emit();
+    },
+    // Ask the server for the pending list again (a page that missed frames, or opened late). A card decided, or
+    // newly raised, after the request left is not undone by its older answer.
+    reload() {
+      const sent = Date.now();
+      return fetch('/api/approvals?status=pending').then(r => r.json()).then(d => {
+        const fresh = d && Array.isArray(d.approvals) ? d.approvals : null;
+        if (!fresh) return;
+        const next = new Map(fresh.filter(a => (settled.get(a.approval_id) || 0) < sent).map(a => [a.approval_id, a]));
+        cards.forEach((a, id) => { if (!next.has(id) && (raised.get(id) || 0) >= sent) next.set(id, a); });
+        cards = next;
+        settled.forEach((at, id) => { if (sent - at > 600000) settled.delete(id); });
+        emit();
+      }).catch(() => {});
     },
     onPresence(fn) {
       presenceListeners.add(fn);
@@ -69505,34 +69661,58 @@ function useApprovalFeed() {
   useEffect(() => fridayApprovalFeed.subscribe(setItems), []);
   return items;
 }
+// Which cards have a decision on its way, for the whole page. One flag per surface used to hold every card on it:
+// the decide request only returns once the approved action has run (seconds), so one slow approval froze every other
+// card on that surface and dropped their clicks. A card is busy, the others are not.
+const fridayDeciding = (() => {
+  const inflight = new Map(), listeners = new Set();
+  const tell = () => listeners.forEach(f => { try { f(); } catch (_) {} });
+  return {
+    get: id => inflight.get(id),
+    start: (id, sent) => { inflight.set(id, sent); tell(); },
+    end: id => { inflight.delete(id); tell(); },
+    subscribe: f => { listeners.add(f); return () => listeners.delete(f); }
+  };
+})();
+function useDeciding(id) {
+  const [, bump] = useState(0);
+  useEffect(() => fridayDeciding.subscribe(() => bump(n => n + 1)), []);
+  return !!fridayDeciding.get(id);
+}
 // Approve or decline from any page. Exactly one decision wins (the server
 // decides under one lock); a page that lost the race is told what happened.
+// A click that cannot apply says why: a refusal in the server's words, a card
+// that is gone (it leaves the list), no connection. Nothing is a silent no-op, and the same card
+// clicked twice sends one request.
 // decided_by 'owner:ui' marks a click on this page: some cards (file access)
 // can be approved by nothing else.
 function fridayDecideApproval(id, decision) {
-  return fetch('/api/approvals/' + encodeURIComponent(id) + '/decide', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json'
-    },
-    body: JSON.stringify({
-      decision,
-      decided_by: 'owner:ui'
-    })
+  const running = fridayDeciding.get(id);
+  if (running) { fridayToast('Already working on that one.'); return running; }
+  const sent = fetch('/api/approvals/' + encodeURIComponent(id) + '/decide', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ decision, decided_by: 'owner:ui' })
   }).then(r => r.json()).then(d => {
     if (d && d.ok) fridayApprovalFeed.drop(id);
     if (d && d.already_decided) {
-      const a = d.approval || {},
-        st = a.status;
+      const a = d.approval || {}, st = a.status;
       const what = st === 'approved' ? 'approved' : st === 'denied' ? 'declined' : st === 'expired' ? 'expired' : st || 'decided';
       const by = st === 'expired' ? '' : /sms/.test(a.decided_by || '') ? ' by text message' : /voice/.test(a.decided_by || '') ? ' by voice' : ' elsewhere';
       fridayToast('Already decided: this was ' + what + by + '.');
+    } else if (d && d.error === 'not found') {
+      // The server has no such card: it is not waiting, so it leaves the list and the toast says so.
+      fridayApprovalFeed.drop(id);
+      fridayToast('That card is no longer waiting, so nothing was decided. It has been taken off the list.');
+    } else if (!d || !d.ok) {
+      const why = d && (d.message || (/ /.test(String(d.error || '')) ? d.error : ''));
+      fridayToast(why || 'That did not go through. The card is still waiting.');
     }
     return d;
   }).catch(() => {
     fridayToast(('Could not reach ' + fridayName() + ' to record that. The card is still waiting.'));
     return null;
-  });
+  }).finally(() => fridayDeciding.end(id));
+  fridayDeciding.start(id, sent);
+  return sent;
 }
 // One approval card: what it will do, where its details came from, and the
 // two buttons. The System list and the popup render this same body.
@@ -69862,6 +70042,8 @@ function ApprovalCardBody({
   busy,
   onDecide
 }) {
+  // busy while THIS card's decision runs, not while another card's does (fridayDeciding)
+  busy = useDeciding(a.approval_id);
   // Every card, whatever its body, ends with its facts and Inspect (ApprovalCardFacts).
   const withFacts = el => /*#__PURE__*/React.createElement(React.Fragment, null, el, /*#__PURE__*/React.createElement(ApprovalCardFacts, {
     a: a
@@ -70022,7 +70204,6 @@ function ApprovalPopups() {
   const items = useApprovalFeed();
   const [later, setLater] = useState(false);
   const [peek, setPeek] = useState(false);
-  const [busy, setBusy] = useState('');
   const seen = useRef(new Set());
   useEffect(() => {
     const freshItems = items.filter(a => !seen.current.has(a.approval_id) && !fridayApprovalQuiet(a.approval_id));
@@ -70063,9 +70244,7 @@ function ApprovalPopups() {
   }, []);
   if (!items.length) return null;
   const decide = (id, decision) => {
-    if (busy) return;
-    setBusy(id);
-    fridayDecideApproval(id, decision).then(() => setBusy(''));
+    fridayDecideApproval(id, decision);
   };
   const pos = {
     position: 'fixed',
@@ -70123,12 +70302,10 @@ function ApprovalPopups() {
     },
     title: "Hide this until the next card. The card keeps waiting.",
     onClick: () => setLater(true)
-  }, "Later")), items.map(a => /*#__PURE__*/React.createElement(ApprovalCardBody, {
-    key: a.approval_id,
-    a: a,
-    busy: busy,
+  }, "Later")), /*#__PURE__*/React.createElement(ApprovalTrayList, {
+    items: items,
     onDecide: decide
-  })));
+  }));
 }
 
 // The context slot of the top bar in a workspace tab: which workspace this is,
@@ -70284,34 +70461,23 @@ function useFridayConversationDrafts(initialId) {
   }, []);
   return {convId,setConvId,chatIn,setChatIn,getConversationId,getConversationRevision,navigateWithDrafts};
 }
-// The cards this conversation raised, in the conversation itself. The chat's
-// yes/no question and the card are two ways to answer one request; the card
-// is shown here too so a question the model paraphrased, or an answer the
-// chat could not read, still leaves a button in front of the owner. Same feed
-// and same body as the System list and the popup, so one decision wins.
-function ChatApprovalCards({ convId }) {
+// What the chat says about cards: one line, no buttons. Approval cards belong in Friday's approval tray only
+// (Stephen, 2026-11-22: "we don't send cards into the chat, we send them into Friday's approval tray"); the chat
+// only notes that something this conversation raised is waiting there.
+function ChatApprovalNote({ convId }) {
   const items = useApprovalFeed();
-  const [busy, setBusy] = useState('');
-  const mine = convId ? items.filter(a => ((a && a.payload) || {}).conversation_id === convId) : [];
-  if (!mine.length) return null;
-  const decide = (id, decision) => {
-    if (busy) return;
-    setBusy(id);
-    fridayDecideApproval(id, decision).finally(() => setBusy(''));
-  };
-  return React.createElement('div', {className:'fx-chat-approvals', 'data-testid':'chat-approval-cards', role:'group', 'aria-label':'Waiting for your decision', style:{margin:'8px 0'}},
-    mine.map(a => React.createElement(ApprovalCardBody, {key:a.approval_id,a,busy,onDecide:decide})));
+  const n = convId ? items.filter(a => ((a && a.payload) || {}).conversation_id === convId).length : 0;
+  if (!n) return null;
+  return React.createElement('div', {className:'fx-chat-approvals', 'data-testid':'chat-approval-note', role:'status', style:{margin:'6px 0', fontSize:12, color:'var(--fr-dim)'}},
+    n === 1 ? 'Waiting on your approval in the tray.' : n + ' waiting on your approval in the tray.');
 }
 function ExperienceApprovals() {
   const items = useApprovalFeed();
   const [busy, setBusy] = useState('');
   const [error, setError] = useState('');
   const decide = async (id, decision) => {
-    if (busy) return;
-    setBusy(id); setError('');
-    try { await fridayDecideApproval(id, decision); }
-    catch (e) { setError('Could not record the decision. Try again.'); }
-    finally { setBusy(''); }
+    setError('');
+    if ((await fridayDecideApproval(id, decision)) === null) setError('Could not record the decision. Try again.');
   };
   return React.createElement('div', {className:'fx-approvals'},
     error && React.createElement('p', {role:'alert'}, error),
@@ -70342,9 +70508,7 @@ function ApprovalSlot({ subject, kind }) {
   const mine = Array.isArray(ids) ? ids.map(id => items.find(a => a.approval_id === id)).filter(Boolean) : [];
   if (Array.isArray(ids) && ids.length && !mine.length) return null;
   const decide = (id, decision) => {
-    if (busy) return;
-    setBusy(id);
-    fridayDecideApproval(id, decision).finally(() => setBusy(''));
+    fridayDecideApproval(id, decision);
   };
   return React.createElement('div', {
     'data-testid': 'approval-slot', role: 'group', 'aria-label': 'Waiting for your decision',
@@ -75132,6 +75296,14 @@ function App() {
   // least once a minute. A change is one line in the console and, through the
   // state this page reports, one line in the server's log.
   const landingMode = FRIDAY_LANDING_MODES.indexOf(agentSettings.landing_mode) >= 0 ? agentSettings.landing_mode : 'smart';
+  const hideCountdown = c => saveAgentSettings({
+    dismissed_countdowns: fridayCountdownsHiding(agentSettings.dismissed_countdowns, c, Date.now())
+  });
+  const visibleCountdowns = fridayCountdownsShown(countdowns, agentSettings.dismissed_countdowns, Date.now());
+  const hiddenCountdowns = countdowns.length - visibleCountdowns.length;
+  const unhideCountdowns = () => saveAgentSettings({
+    dismissed_countdowns: {}
+  });
   const landingClock = useRef(null);
   if (!landingClock.current) landingClock.current = fridayLandingClock(Date.now());
   const landingSees = useRef({});
@@ -75141,12 +75313,12 @@ function App() {
     front: !experienceDesktop && focusWin && openWins.has(focusWin) ? (WS.find(w => w.id === focusWin) || {}).label || '' : '',
     voice: !!voiceOn,
     chat: !!chatOpen,
-    items: countdowns
+    items: visibleCountdowns
   };
   const landingJudge = useRef(() => {});
   useEffect(() => {
     landingJudge.current();
-  }, [landingMode, openWins, experienceDesktop, focusWin, voiceOn, chatOpen, countdowns]);
+  }, [landingMode, openWins, experienceDesktop, focusWin, voiceOn, chatOpen, visibleCountdowns.length, countdowns, agentSettings.dismissed_countdowns]);
   // Hidden, the cluster takes no focus and no screen reader's attention.
   useEffect(() => {
     const el = landingElRef.current;
@@ -76901,8 +77073,8 @@ function App() {
     "data-testid": "landing-cluster",
     style: {
       position: 'fixed',
-      left: 0,
-      right: 0,
+      left: 'var(--fr-chat-dock-left,0px)',
+      right: 'var(--fr-chat-dock,0px)',
       bottom: 116,
       zIndex: 5,
       display: 'flex',
@@ -76945,8 +77117,15 @@ function App() {
   }, /*#__PURE__*/React.createElement(FridayLockup, {
     size: 11
   })), /*#__PURE__*/React.createElement(FridayCountdowns, {
-    items: countdowns
-  }), countdowns.length === 0 && /*#__PURE__*/React.createElement("div", {
+    items: countdowns,
+    hidden: agentSettings.dismissed_countdowns,
+    onHide: hideCountdown
+  }), hiddenCountdowns > 0 && /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    className: "cd-unhide",
+    "data-testid": "countdowns-unhide",
+    onClick: unhideCountdowns
+  }, "Show ", hiddenCountdowns, " hidden ", hiddenCountdowns === 1 ? 'countdown' : 'countdowns'), countdowns.length === 0 && /*#__PURE__*/React.createElement("div", {
     style: {
       position: 'relative',
       zIndex: 1,
