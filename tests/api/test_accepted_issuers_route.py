@@ -42,6 +42,8 @@ def _isolated(tmp_path, monkeypatch):
     monkeypatch.setattr(approvals, "_notify_pending", lambda rec: None)
     monkeypatch.setattr(core, "_load_settings", lambda: {"held_features": {"federation": True, "fed_invited_jobs": True}})
     monkeypatch.setattr(fed, "get_peers", lambda: [{"agent_id": k, "fed_pref": "allow"} for k in KEYS])
+    # this PC is the node the offer is addressed to (the route checks the recipient, NS-40.2-13)
+    monkeypatch.setattr(fed, "get_identity", lambda: {"agent_id": json.loads(_offer())["body"]["recipient"]})
     accepted = acc.AcceptedIssuers(tmp_path / "accepted.json", lambda data: OWNER.sign(data).hex(), PUBLIC)
     monkeypatch.setattr(routes, "_ACCEPTED", accepted)
     registry = reg.IssuerRegistry(tmp_path / "federation")

@@ -287,7 +287,11 @@ stream and relays to others):
 
 `static/friday_responsive_topbar.js` keeps the Activity button in the top bar
 while anything waits. `services/approval_batches.py` groups a few
-low-risk kinds into one decision; it is a view, not a separate gate.
+low-risk kinds into one decision; it is a view, not a separate gate. Several wiki edits that used details
+from outside content (`correct_wiki`, `propose_wiki_update`, one conversation and task) are one tray card
+(`ApprovalTrayList`, `LaneBatch`): Approve applies each edit through its own approval, "Reject this one" declines
+one edit and leaves the rest, and the parts that came from outside text are marked. Any other taint card
+stays a single card.
 
 **Other card kinds.**
 - `cloud_release`: money paragraphs (section 2).

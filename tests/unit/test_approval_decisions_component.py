@@ -56,3 +56,28 @@ def test_a_tray_popup_that_swallows_a_click_again_fails_the_check(tmp_path):
     run = _run(pages)
     assert run.returncode != 0 and "ApprovalPopups still swallows a click" in run.stderr, run.stdout + run.stderr
     assert _run().returncode == 0, "the real tree is untouched and still holds"
+
+
+def _mutated_copy(tmp_path, old, new):
+    """Both page files with `old` replaced by `new` once each, in tmp_path (the tracked files are never rewritten)."""
+    pages = _copy_of_the_pages(tmp_path)
+    for rel in ("index.html", "ui_parts/app.html"):
+        path = pages / rel
+        page = path.read_text(encoding="utf-8")
+        assert page.count(old) == 1, rel + ": the line to break was not found"
+        path.write_text(page.replace(old, new), encoding="utf-8")
+    return pages
+
+
+def test_a_grouped_card_whose_reject_does_nothing_fails_the_check(tmp_path):
+    line = "fridayDecideApproval(it.approval_id, 'deny').then(() => onRejected && onRejected());"
+    pages = _mutated_copy(tmp_path, line, "onRejected && onRejected();")
+    run = _run(pages)
+    assert run.returncode != 0 and "its own Reject" in run.stderr, run.stdout + run.stderr
+
+
+def test_edits_drawn_one_card_each_again_fails_the_check(tmp_path):
+    line = "batches.map(b => h(LaneBatch, { key: b.batch_id, b: b, items: items, onDecided: onDecided })),"
+    pages = _mutated_copy(tmp_path, line, "[],")
+    run = _run(pages)
+    assert run.returncode != 0 and "a planned group is one tray card" in run.stderr, run.stdout + run.stderr

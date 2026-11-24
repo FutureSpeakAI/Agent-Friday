@@ -46,6 +46,7 @@ import queue
 import re
 import threading
 import time
+import unicodedata
 import uuid
 
 log = logging.getLogger("friday.voice_session")
@@ -81,6 +82,15 @@ STATES = ("idle", "proving", "ready", "refused", "listening", "hearing",
 _CLAUSE_END = ".!?;:"
 _MARKUP_OPEN = "<|"
 _MARKUP_CLOSE = "|>"
+#: The opening phrase of a fence around untrusted content, matched on normalised text (compatibility forms and
+#: invisible characters removed) at the start of a "[" candidate.
+_FENCE_OPEN = re.compile(
+    r"\[\s*(?:(?:document|web[\s_\-]*page)[\s_\-]*content[\s_\-]*below"
+    r"|end[\s_\-]*of[\s_\-]*(?:(?:document|web[\s_\-]*page)[\s_\-]*)?content)", re.I)
+#: A "[" candidate that is still only letters and spaces and could yet become an opener.
+_FENCE_PREFIX = re.compile(r"\[[a-z\s_\-]*", re.I)
+_FENCE_PROBE = 48
+_FENCE_INVISIBLE = re.compile("[\u00ad\u200b-\u200f\u202a-\u202e\u2060-\u2064\ufeff]")
 
 
 class DeltaFilter:
@@ -97,8 +107,54 @@ class DeltaFilter:
     def __init__(self):
         self._hold = ""
         self._in_markup = False
+        self._fence_hold = ""
+        self._in_fence = False
+        self._fence_depth = 0
 
     def feed(self, delta: str) -> str:
+        return self._fence(self._markup(delta))
+
+    def _fence(self, s: str) -> str:
+        """Mute the fence wording around untrusted content ("[document content below ... ]", "[web page content
+        below ... ]", "[end of ... content ...]") from its opening phrase to its matching closing bracket, whatever
+        the delta split. The clause chunker would cut that wording into clauses that each look innocent; here it is
+        withheld whole. Linear in the input (indices, no re-slicing). Held by
+        tests/unit/test_voice_wrapper_text_is_never_spoken.py."""
+        s = self._fence_hold + s
+        self._fence_hold = ""
+        out = []
+        n, p = len(s), 0
+        while p < n:
+            if self._in_fence:
+                while p < n and self._fence_depth > 0:       # nested brackets inside the fence close in pairs
+                    if s[p] == "[":
+                        self._fence_depth += 1
+                    elif s[p] == "]":
+                        self._fence_depth -= 1
+                    p += 1
+                if self._fence_depth > 0:
+                    break
+                self._in_fence = False
+                continue
+            i = s.find("[", p)
+            if i < 0:
+                out.append(s[p:])
+                break
+            out.append(s[p:i])
+            probe = _FENCE_INVISIBLE.sub("", unicodedata.normalize("NFKC", s[i:i + _FENCE_PROBE]))
+            if _FENCE_OPEN.match(probe):
+                self._in_fence = True
+                self._fence_depth = 1
+                p = i + 1
+                continue
+            if n - i < _FENCE_PROBE and "]" not in s[i:] and _FENCE_PREFIX.fullmatch(probe):
+                self._fence_hold = s[i:]         # may still become an opener: wait for more text
+                break
+            out.append("[")
+            p = i + 1
+        return "".join(out)
+
+    def _markup(self, delta: str) -> str:
         s = self._hold + (delta or "")
         self._hold = ""
         out = []
@@ -128,7 +184,9 @@ class DeltaFilter:
     def flush(self) -> str:
         h = self._hold
         self._hold = ""
-        return "" if self._in_markup else h
+        tail = self._fence("" if self._in_markup else h)
+        held, self._fence_hold = self._fence_hold, ""
+        return tail if self._in_fence else tail + held
 
 
 class ClauseChunker:
@@ -902,11 +960,14 @@ class VoiceSession:
                 reply = (mind["reply"] or "").strip()
                 tail = dfilter.flush()
                 if tail:
+                    streamed["chars"] += len(tail)
                     for clause in chunker.feed(tail):
                         self._enqueue_clause(turn, clause, receipt)
                 if streamed["chars"] == 0 and reply:
-                    # Non-streaming leg: speak the whole reply through the chunker.
-                    for clause in chunker.feed(reply):
+                    # Non-streaming leg (or a reply the streaming filter withheld whole): speak the reply through a
+                    # fresh filter and the chunker. The reply is never fed to the chunker raw.
+                    refilter = DeltaFilter()
+                    for clause in chunker.feed(refilter.feed(reply) + refilter.flush()):
                         self._enqueue_clause(turn, clause, receipt)
                 rest = chunker.flush()
                 if rest:

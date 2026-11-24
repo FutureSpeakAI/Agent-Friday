@@ -705,8 +705,17 @@ def _generate_agent(*args, **kwargs):
     """
     from agent_friday.services import reasoning_trace as _rt_scope
     _label = kwargs.get("orb_label") or kwargs.get("workspace") or "Background model call"
-    with _cloud_intent.preserve_scope(), _rt_scope.scope("background", str(_label)):
-        return _generate_agent_untraced(*args, **kwargs)
+    # Where this turn came from (a text message, a chat service) is known for the WHOLE turn, not only inside each tool
+    # call: the prompt each leg's `system_builder` builds asks it too (core_memory.user_lines_visible), so the lines a
+    # tool withholds from this turn never reach its prompt.
+    _origin = str((kwargs.get("session_ctx") or {}).get("origin") or "")
+    _origin_tok = _CURRENT_ORIGIN.set(_origin) if _origin else None
+    try:
+        with _cloud_intent.preserve_scope(), _rt_scope.scope("background", str(_label)):
+            return _generate_agent_untraced(*args, **kwargs)
+    finally:
+        if _origin_tok is not None:
+            _CURRENT_ORIGIN.reset(_origin_tok)
 
 
 # ── Claude Tool-Use Agent ─────────────────────────────────────
@@ -1961,17 +1970,18 @@ def _tool_query_trust_graph(inp):
         from agent_friday.trust import people as _tp
         graph = _load_trust_graph()
         people = graph.get('people') or {}
-        items = people.values() if isinstance(people, dict) else people
+        items = people.items() if isinstance(people, dict) else ((None, p) for p in people)
         # People trust stays home: the full record (dimensions, evidence, saved
         # intelligence, notes) goes only to a loop that is KNOWN local. A cloud
         # loop, or one whose provider is unknown, gets role, confirmed
         # relationship and contact channel.
         _local = _tp.loop_is_local(_CURRENT_PROVIDER.get())
-        for p in items:
+        for key, p in items:
             if not isinstance(p, dict):
                 continue
             aliases = [str(a).lower() for a in (p.get('aliases') or [])]
-            if not ((p.get('name') or '').strip().lower() == name or name in aliases):
+            by_key = key is not None and str(key).strip().lower() == name      # the key the context may have shown
+            if not ((p.get('name') or '').strip().lower() == name or name in aliases or by_key):
                 continue
             is_org = str(p.get('entity_type') or '').strip().lower() in _ORG_ENTITY_TYPES
             if is_org and kind in ('any', 'organisation'):
@@ -14267,7 +14277,12 @@ def _action_fingerprint(name, tool_input) -> str:
     while `x.md` and `~/Friday Creations/x.md` stay two - they are two
     different files, and the user has approved only the one they were shown.
     """
-    inp = dict(tool_input or {})
+    # An argument that says nothing (missing, None, "", [] or {}) is not part of the question: a model that
+    # re-issues the call with `tab: ""` added is asking the same thing the owner just answered.
+    # Only the identifiers below are trimmed: a body that differs by a newline is a different action.
+    inp = {k: v for k, v in dict(tool_input or {}).items()
+           if not (v is None or (isinstance(v, (str, list, dict, tuple)) and len(v) == 0)
+                   or (isinstance(v, str) and not v.strip()))}
     for key in ("path", "target", "url", "workspace"):
         v = inp.get(key)
         if not isinstance(v, str) or not v.strip():
@@ -14314,9 +14329,20 @@ def _record_pending_confirmation(session_id, name, tool_input, *, turn=None):
             entry["ts"] = _time.time()
             entry["seq"] = next(_PENDING_SEQ)
             entry["awaiting_reply"] = True
+            entry.pop("set_aside", None)
             if turn is None or entry.get("turn") != turn:
                 entry["asks"] = int(entry.get("asks") or 0) + 1
                 entry["turn"] = turn
+            if entry.get("which_asked") and (turn is None or entry.get("which_turn") != turn):
+                # After "which one?", the question asked again on a later turn is the one the owner named: the
+                # others are set aside (their cards stay in the tray), so the owner's next yes binds this one.
+                for other_fp, other in bucket.items():
+                    if other.get("which_asked"):
+                        other.pop("which_asked", None)
+                        if other_fp != fp:
+                            other["set_aside"] = True
+                            other["awaiting_reply"] = False
+                            other["granted"] = False
         return dict(entry, fingerprint=fp)
 
 
@@ -14336,6 +14362,18 @@ def _clear_pending(session_id, fingerprint=None):
             bucket.pop(fingerprint, None)
         if not bucket:
             _PENDING_CONFIRMATIONS.pop(session_id, None)
+
+
+def _card_still_waiting(approval_id) -> bool:
+    """True when this approval card exists and is still pending. Cannot tell: True (a yes then asks which)."""
+    if not approval_id:
+        return False
+    try:
+        from agent_friday.services import approvals as _appr
+        rec = _appr.get_approval(approval_id)
+    except Exception:
+        return True
+    return bool(rec) and rec.get("status") == "pending"
 
 
 def _deny_awaiting_card(session_id):
@@ -14466,16 +14504,34 @@ def prepare_confirmation_ctx(session_id, message, base_ctx=None):
         return ctx
 
     if _is_affirmative(message):
-        # A yes answers the question most recently ASKED, and only that one.
+        # A yes answers the one question waiting, and only that one (more than one: ask which).
         # It is not a session-wide permission slip: the gate below re-derives
         # the fingerprint of whatever the model actually tries next and will
         # refuse to spend this grant on a different action.
         eligible = [(fp, entry) for fp, entry in bucket.items()
                     if entry.get("awaiting_reply")]
+        # Every question in this conversation still waiting for the owner: the one just asked, and any older one
+        # whose card is still waiting in the tray (a new request disarms the chat question, not its card).
+        # A question the owner set aside by naming another one after "which one?" no longer counts here; its card
+        # still waits in the tray.
+        waiting = [(fp, entry) for fp, entry in bucket.items()
+                   if entry.get("awaiting_reply")
+                   or (not entry.get("set_aside") and _card_still_waiting(entry.get("approval_id")))]
+        if len(waiting) > 1:
+            # More than one question is waiting and a bare yes does not say which. Never guess and never
+            # approve them all: nothing is granted, and the gate tells the model to ask the owner which.
+            # The next question the model asks again from this set is the owner's answer (_record_pending_confirmation).
+            ctx["confirm_which"] = sorted(fp for fp, _entry in waiting)
+            with _PENDING_LOCK:
+                for fp, _entry in waiting:
+                    live = (_PENDING_CONFIRMATIONS.get(session_id) or {}).get(fp)
+                    if live is not None:
+                        live["which_asked"] = True
+                        live["which_turn"] = ctx.get("confirm_turn")
+            return ctx
         if not eligible:
             return ctx
-        newest = max(eligible, key=lambda kv: kv[1].get("seq") or 0)
-        fp, entry = newest
+        fp, entry = eligible[0]
         if entry.get("approval_id") and ctx.get("owner_surface") is not True:
             # The question has a card, and this yes did not come from the
             # owner's own page on this PC (a phone, a relay, voice, a script,
@@ -15580,6 +15636,13 @@ def _hook_confirmation_gate(ctx):
             if isinstance(getattr(ctx, "meta", None), dict):
                 ctx.meta["owner_decided"] = f"chat:{_fp}"
             return _hooks.ALLOW
+
+        if _fp in ((session_ctx or {}).get("confirm_which") or ()):
+            return _hooks.DENY(
+                f"[CONFIRMATION WHICH ONE] '{name}' was NOT executed and nothing was approved: the owner "
+                "said yes, but more than one action is waiting for a decision and a bare yes does not say "
+                "which. Do not retry any of them. Ask the owner which one they mean, naming each in plain "
+                "words, or tell them each can be decided on its own card in the tray.")
 
         if _off_page:
             return _hooks.DENY(
