@@ -114,9 +114,94 @@ def test_a_verb_button_is_refused_in_a_document_he_approves(client):
     _refused(r)
 
 
-def test_a_reserved_card_phrase_in_body_text_is_refused(client):
+def test_a_reserved_word_in_a_heading_is_refused(client):
     r, _ = propose(Enrolled(client), _doc_change(doc_with_title("Approve this payment now")))
     _refused(r)
+
+
+def _with(component):
+    d = doc_with_title()
+    comps = d[0]["createSurface"]["components"]
+    comps.append(component)
+    comps[0]["children"].append(component["id"])
+    return d
+
+
+@pytest.mark.parametrize("component", [
+    {"id": "x", "component": "text_block", "text": "Approve"},
+    {"id": "x", "component": "text_block", "style": "caption", "text": "Deny"},
+    {"id": "x", "component": "record_table", "rows": {"@path": "/knowledge/sections"}, "columns": ["Not now"]},
+], ids=["body", "caption", "column"])
+def test_a_card_word_anywhere_in_the_document_is_refused(client, component):
+    r, _ = propose(Enrolled(client), _doc_change(_with(component)))
+    _refused(r, "V11")
+
+
+def test_plain_words_in_body_text_are_fine(client):
+    r, _ = propose(Enrolled(client), _doc_change(_with({"id": "x", "component": "text_block", "text": "My notes"})))
+    assert r.status_code == 200, r.get_json()
+
+
+@pytest.mark.parametrize("component", [
+    {"id": "x", "component": "key_values", "rows": [{"label": "Balance", "value": "$0.00"}]},
+    {"id": "x", "component": "record_table", "rows": [{"name": "planted", "count": 9}], "columns": ["name", "count"]},
+    {"id": "x", "component": "timeline", "events": [{"title": "planted", "when": "2026-11-24"}]},
+], ids=["key_values", "record_table", "timeline"])
+def test_data_in_a_document_he_approves_only_ever_comes_from_a_binding(client, component):
+    r, _ = propose(Enrolled(client), _doc_change(_with(component)))
+    _refused(r, "V7")
+
+
+def test_every_builtin_passes_the_strict_check_so_reset_and_restore_always_work():
+    for ws in aws.BUILTINS:
+        aws.check_document(ws, aws.builtin(ws))
+
+
+def test_a_deeply_nested_body_is_refused_not_a_crash(client):
+    deep = "[" * 2000 + "]" * 2000
+    r = _raw(Enrolled(client), VIEW + "/proposals/challenge",
+             '{"base_rev": "r", "change": {"document": %s, "label": "a"}}' % deep)
+    assert r.status_code == 400, r.status_code
+
+
+@pytest.mark.parametrize("bad", ["1.5", "9007199254740993", r'"é"', "NaN", r'"\ud800"'],
+                         ids=["float", "big-int", "not-nfc", "nan", "surrogate"])
+def test_a_value_without_one_canonical_form_is_refused_before_a_nonce(client, bad):
+    r = _raw(Enrolled(client), VIEW + "/proposals/challenge",
+             '{"base_rev": "r", "change": {"customization": {"note": %s}}}' % bad)
+    assert r.status_code == 400 and r.get_json()["code"] == "bad_request", (bad, r.status_code)
+
+
+def test_a_stale_first_document_and_a_stale_reset_are_409(client):
+    dev = Enrolled(client)
+    r, _ = propose(dev, _doc_change(doc_with_title()), base_rev="builtin-0000")
+    assert r.status_code == 409 and store.load(WS) is None
+    propose(dev, _doc_change(doc_with_title()))
+    r, _ = propose(dev, {"reset": True}, base_rev="not-the-rev")
+    assert r.status_code == 409
+
+
+def test_a_restore_that_reads_what_the_workspace_does_not_serve_is_refused(client):
+    dev = Enrolled(client)
+    propose(dev, _doc_change(doc_with_title()))
+    rec = store.load(WS)
+    bindings = rec["versions"][-1]["doc"][0]["createSurface"]["metadata"]["friday"]["bindings"]
+    bindings["sections"]["query"] = "futurespeak.projects"
+    store._write_atomic(store._path(WS), json.dumps(rec).encode("utf-8"))
+    r, _ = propose(dev, {"restore": rec["versions"][-1]["id"]})
+    assert r.status_code == 400 and r.get_json()["rule"] == "bindings", r.get_json()
+
+
+def test_a_restored_version_keeps_who_wrote_and_approved_it(client):
+    dev = Enrolled(client)
+    propose(dev, _doc_change(doc_with_title()))
+    propose(dev, {"reset": True})
+    owner = next(v for v in store.load(WS)["versions"] if v.get("model_authored"))
+    r, _ = propose(dev, {"restore": owner["id"]})
+    assert r.status_code == 200, r.get_json()
+    rec = store.load(WS)
+    assert rec["authorship"] == "composer" and rec["model_authored"] is True
+    assert rec["approved_by"] == av.device_label(dev.id)
 
 
 def test_a_label_must_be_short_plain_text(client):
