@@ -174,7 +174,9 @@ PLACES = {
     "newcastle nsw": ("Australia, NSW, Newcastle",),
 }
 #: Two places that share an unknown region, a prefix, or nothing the tables know: always two records.
-TWO_PLACES = [("Remote - WA", "Washington, DC"), ("Washington, United States",
+TWO_PLACES = [("New York", "Remote - US"), ("Washington", "Remote - US"), ("Quebec", "Remote - Canada"),
+              ("Remote - US", "Remote - CA"), ("Remote (US)", "Remote (DE)"), ("Remote - US", "Remote - IN"),
+              ("Remote - WA", "Washington, DC"), ("Washington, United States",
               "Washington, District of Columbia, United States"), ("Ontario, Canada", "Ontario, CA"),
               ("Remote - Netherlands", "Holland, MI"), ("Remote, CA", "Toronto, CA"), ("Tbilisi, Georgia",
               "Georgia, United States"), ("Bangalore, IN", "Remote, IN"), ("Store 12, Dallas, TX", "Store 40, Dallas, TX"),
@@ -236,6 +238,41 @@ def _namesakes():
     for country in sorted(set(jp._COUNTRY_NAMES) - {"united states"}):     # "United States, MO" is Missouri
         pairs.append(("Remote - %s" % country.title(), "%s, MO" % country.title()))
     return pairs
+
+
+def _regions_at_two_levels():
+    """From the tables: a state or province (by name, by code, alone and as Remote - X) against its whole country
+    named every way, and two-letter codes that are also countries against Remote - US. A country is not one of its
+    states, and no state is another country."""
+    from agent_friday.services import job_places as jp
+    pairs = []
+    for country, table in (("US", jp._US_STATES), ("Canada", jp._CA_PROVINCES)):
+        wholes = (["Remote - US", "Remote (US)", "United States", "US"] if country == "US"
+                  else ["Remote - Canada", "Canada"])
+        for code, name in table.items():
+            for one in (name.title(), code, "Remote - %s" % name.title(), "Remote - %s" % code):
+                pairs += [(one, whole) for whole in wholes]
+    return pairs
+
+
+@pytest.mark.parametrize("first, second", _regions_at_two_levels() + [(b, a) for a, b in _regions_at_two_levels()])
+def test_a_state_is_never_its_whole_country(_home, first, second):
+    url = "https://careers.example.test/acme"
+    js.upsert(listing("Software Engineer", url=url, location=first, source="feed-a", external_id="A-1",
+                      closes_at=days(-1).isoformat()), days(-3))
+    js.upsert(listing("Software Engineer", url=url, location=second, source="feed-b", external_id="B-2"), days(-2))
+    assert len(stored(_home)) == 2
+    assert [j["location"] for j in js.list_recent(NOW)] == [second]
+
+
+@pytest.mark.parametrize("here, there", [("Remote - TX", "Remote - Texas"), ("Remote - US", "Remote, United States"),
+                                         ("Texas", "TX"), ("Remote - Canada", "Canada")])
+def test_one_region_spelled_two_ways_is_one_posting(_home, here, there):
+    url = "https://careers.example.test/acme"
+    js.upsert(listing("Software Engineer", url=url, location=here, source="feed-a", external_id="A-1",
+                      closes_at=days(-1).isoformat()), days(-3))
+    js.upsert(listing("Software Engineer", url=url, location=there, source="feed-b", external_id="B-2"), days(-2))
+    assert len(stored(_home)) == 1 and js.list_recent(NOW) == []
 
 
 @pytest.mark.parametrize("first, second", _namesakes() + [(b, a) for a, b in _namesakes()])
