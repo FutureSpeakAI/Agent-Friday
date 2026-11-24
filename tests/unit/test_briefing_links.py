@@ -573,12 +573,19 @@ def test_a_known_address_left_after_a_backslash_by_a_removal_renders_only_known_
     assert bl.strip_unknown_links(final, known) == final
 
 
-@pytest.mark.parametrize("url", ["https://a.example.test/a)(b", "https://a.example.test/a)", "https://a.example.test/(a",
-                                 "https://a.example.test/a b", "https://a.example.test/a>b",
-                                 "https://a.example.test/x?eid=1|2"])
+#: Every printable ASCII character that is not a plain URL character, a few beyond ASCII, and entity-like runs.
+URL_ALLOWED = set("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~:/?#[]@!$&'()*+,;=%")
+UNFIT_SOURCES = sorted({"https://a.example.test/a%sb" % c for c in map(chr, range(32, 127)) if c not in URL_ALLOWED}
+                       | {"https://a.example.test/a%sb" % c for c in ("\u00e9", "\u00a0", "\u200b", "\uff5c", "\t")}
+                       | {"https://a.example.test/?a=1%sb=2" % e for e in ("&amp;", "&#38;", "&#x26;", "&lt;", "&quot;")}
+                       | {"https://a.example.test/a)(b", "https://a.example.test/a)", "https://a.example.test/(a"})
+
+
+@pytest.mark.parametrize("url", UNFIT_SOURCES)
 def test_a_source_address_marked_would_not_link_whole_is_no_link(url):
-    """A link target marked would end early (brackets out of order, a space, an angle bracket) is never written:
-    the item has no working link, so it is dropped and counted."""
+    """A source address marked would not link whole and as written (any character but plain URL ones, anything
+    entity-like, brackets out of order) is never written: the item has no working link, so it is dropped and
+    counted."""
     src = bl.collect(calendar=[{"id": "C1", "title": "Standup", "url": url}])
     got, known, final = _pipeline("## Calendar\n- Standup [C1]\n", src)
     assert known == set() and got.dropped_total == 1 and not _live_links(final, known), final
@@ -629,9 +636,11 @@ def test_a_known_address_holding_a_pipe_never_renders_a_cut_link_in_a_table(row)
     assert not _live_links(final, known), final
 
 
-@pytest.mark.xfail(strict=True, reason="follow-up: a source address holding '|' is no link (a table would cut it)")
-def test_follow_up_a_source_address_holding_a_pipe_is_still_linked():
-    src = bl.collect(calendar=[{"id": "C1", "title": "Standup", "url": "https://calendar.example.test/x?eid=1|2"}])
+@pytest.mark.xfail(strict=True, reason="follow-up: a source address with a character beyond plain URL ones is no link")
+@pytest.mark.parametrize("url", ["https://calendar.example.test/x?eid=1|2", "https://calendar.example.test/a\\_b",
+                                 "https://calendar.example.test/caf\u00e9", "https://news.example.test/?a=1&amp;b=2"])
+def test_follow_up_a_source_address_beyond_plain_url_characters_is_still_linked(url):
+    src = bl.collect(calendar=[{"id": "C1", "title": "Standup", "url": url}])
     got, known, final = _pipeline("## Calendar\n- Standup [C1]\n", src)
     assert got.dropped_total == 0
 
