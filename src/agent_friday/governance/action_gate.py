@@ -1685,14 +1685,15 @@ def _live_view(g: dict, events: Optional[dict] = None,
     return dict(_ledger_row(g, events), uses_left=left)
 
 
-def ledger_grant_rows() -> list:
+def ledger_grant_rows(usage: bool = True) -> list:
     """Every signed grant (live or not) as the ledger has it (`_ledger_row`): its
     uses, revocation and counters. For the grant record view
     (governance/grant_record.all_records). Raises when the key or the ledger
-    cannot be read."""
+    cannot be read. `usage=False` lists the grants without reading their uses (no strict
+    ledger read), for a reader that must still work when the ledger has a break."""
     key = _governance_key()
     gs = _read_grants(key)
-    events = _grant_events() if gs else {}
+    events = _grant_events() if (gs and usage) else {}
     return [_ledger_row(g, events) for g in gs]
 
 
@@ -2054,7 +2055,7 @@ def _use_grant(tool_name: str, ctx: dict, args=None) -> Optional[dict]:
 #: the time and the ids that link it to a card, grant or task. No reason text,
 #: target, or hash of the arguments (a hash of a short message can be guessed).
 _OFF_RECORD_RECEIPT_KEYS = ("tool", "class", "decision", "surface", "approval",
-                            "grant", "task_id", "tainted", "chosen_by",
+                            "grant", "task_id", "tainted", "untrusted_input", "chosen_by",
                             "plan_version", "action_id", "policy_version", "envelope",
                             "outcome")
 
@@ -3116,6 +3117,8 @@ def authorize(tool_name: str, args: Optional[dict], session_ctx: Optional[dict] 
             _out = _receipt({"tool": tool_name, "class": v.klass, "decision": v.action,
                   "action_class": _six,
                   "reason": v.reason, "tainted": tainted, "clean": clean,
+                  # the turn carried text from an app on the owner's phone (services/phone_outside_text)
+                  **({"untrusted_input": True} if ctx.get("untrusted_turn") else {}),
                   # what became of it as the checkpoint sees it (OUTCOMES); a
                   # deny is its own terminal receipt
                   "outcome": v.outcome,

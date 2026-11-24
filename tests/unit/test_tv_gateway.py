@@ -37,6 +37,7 @@ def _clean(monkeypatch):
     device_pairing._path().unlink(missing_ok=True)   # each test starts with no devices
     device_pairing._reset_for_tests()
     monkeypatch.setattr(gateway, "_BUCKET", gateway._Bucket())
+    device_pairing.open_pairing_window(900)          # the owner has opened pairing at the PC
     yield
     device_pairing._reset_for_tests()
     gateway.stop()

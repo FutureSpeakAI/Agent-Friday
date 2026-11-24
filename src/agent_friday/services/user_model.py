@@ -25,6 +25,7 @@ never raises to the caller).
 """
 from __future__ import annotations
 
+import math
 import re
 import sqlite3
 import threading
@@ -157,6 +158,10 @@ def set_trait(key: str, value, confidence: float = 0.6, evidence: int = 1) -> Di
                     "VALUES(?,?,?,?,?)", (_OWNER_MARK + key, "1", 1.0, time.time(), 0))
             conn.commit()
             conn.close()
+            if key.startswith(_STYLE_PREFIXES):
+                # What this session inferred for the key is read before the store (get_trait): drop it, or the
+                # inference would be shown as the owner's own setting.
+                _SESSION_TRAITS.pop(key, None)
             return {"ok": True, "key": key, "value": value}
         except Exception as e:
             return {"ok": False, "error": exception_text(e)}
@@ -185,11 +190,11 @@ def _nudge_trait(key: str, target: float, weight: float = 0.15) -> None:
     """
     try:
         with _LOCK:
+            if owner_set(key):
+                return
             if key in _SESSION_TRAITS:
                 cur, ev = _SESSION_TRAITS[key]
             else:
-                if owner_set(key):
-                    return
                 durable = _durable_trait(key)
                 cur, ev = (float(durable) if _isfloat(durable) else 0.5), 0
             new = round(cur + (target - cur) * weight, 4)
@@ -407,7 +412,64 @@ def note_fact(category: str, text: str, *, confidence: float = 0.6,
             return {"ok": False, "error": exception_text(e)}
 
 
-# ── Rendering ─────────────────────────────────────────────────────────────────
+#: What an explicit style setting rules out of an INFERRED style reading: (setting, its value) -> {axis: readings}.
+#: An explicit setting always wins over what is inferred from how the owner writes
+#: (tests/unit/test_user_model_explicit_style_wins.py holds every case).
+_EXPLICIT_RULES_OUT = {
+    ("communication_style", "casual"): {"formality": {"formal"}},
+    ("communication_style", "professional"): {"formality": {"casual"}},
+    ("communication_style", "technical"): {"formality": {"casual"}},
+    ("response_length", "detailed"): {"verbosity": {"terse"}},
+    ("response_length", "concise"): {"verbosity": {"detail"}},
+}
+#: The same rule for the stated 0-100 sliders of the first-run chat: (axis, low edge, high edge, reading ruled out
+#: below the low edge, reading ruled out at or above the high edge). setup_profile uses these edges for its two settings.
+_STATED_EDGES = (("formality", 40, 60, "formal", "casual"), ("verbosity", 34, 67, "detail", "terse"))
+
+
+def _is_number(value) -> bool:
+    return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
+
+
+def rules_out_inference(explicit: dict, axis: str, reading: str) -> bool:
+    """True when something the owner STATED contradicts the inferred `reading` on `axis` ("formality" or
+    "verbosity"): an enum setting, or a 0-100 first-run slider (an `explicit` key named for the axis)."""
+    if any(reading in _EXPLICIT_RULES_OUT.get((key, value), {}).get(axis, ())
+           for key, value in explicit.items() if isinstance(value, str)):
+        return True
+    for name, low, high, low_rules_out, high_rules_out in _STATED_EDGES:
+        stated = explicit.get(name)
+        if name == axis and _is_number(stated):
+            return reading == (low_rules_out if stated < low else high_rules_out if stated >= high else None)
+    return False
+
+
+def _explicit_style() -> dict:
+    """What the owner stated: the two enum settings when changed from their defaults, and the first-run sliders when
+    there are any. An unreadable source counts as nothing stated.
+
+    A default is not a statement: settings.json is seeded with every default, so "professional" sits there on an
+    install whose owner never chose a style, and treating it as stated would hide every inferred reading. (An owner
+    who picks the default on purpose is not told apart from one who never chose; the sliders still speak for them.)"""
+    out = {}
+    try:
+        from agent_friday.core import DEFAULT_SETTINGS, _load_settings
+        settings = _load_settings() or {}
+        out.update({key: settings[key] for key in ("communication_style", "response_length")
+                    if isinstance(settings.get(key), str) and settings[key] != DEFAULT_SETTINGS.get(key)})
+    except Exception:
+        pass
+    try:
+        from agent_friday.services import setup_profile
+        sliders = ((setup_profile.load_profile().get("style") or {}).get("sliders") or {})
+        for axis in ("formality", "verbosity"):
+            if _is_number(sliders.get(axis)):
+                out[axis] = sliders[axis]
+    except Exception:
+        pass
+    return out
+
+
 def render_user_model_prompt(max_facts: int = 8) -> str:
     """Compact `== USER MODEL ==` block for the system prompt. Empty if nothing learned."""
     if not _enabled():
@@ -432,14 +494,21 @@ def render_user_model_prompt(max_facts: int = 8) -> str:
             # Said apart from what the owner set (§34.9-8).
             return not owner_set(key)
         mark = " (inferred from how they write, not stated by them)"
+        explicit = _explicit_style()
         if formality is not None:
-            parts = [("formal/professional" if formality > 0.6 else
-                      "casual/relaxed" if formality < 0.4 else "balanced")
-                     + (mark if _inferred("comm.formality") else "")]
+            parts = []
+            reading = "formal" if formality > 0.6 else "casual" if formality < 0.4 else "balanced"
+            if not (_inferred("comm.formality") and rules_out_inference(explicit, "formality", reading)):
+                parts.append({"formal": "formal/professional", "casual": "casual/relaxed",
+                              "balanced": "balanced"}[reading]
+                             + (mark if _inferred("comm.formality") else ""))
             if verbosity is not None and not 0.4 <= verbosity <= 0.6:
-                parts.append(("prefers detail" if verbosity > 0.6 else "prefers terse answers")
-                             + (mark if _inferred("comm.verbosity") else ""))
-            lines.append("Communication style: " + ", ".join(parts))
+                reading = "detail" if verbosity > 0.6 else "terse"
+                if not (_inferred("comm.verbosity") and rules_out_inference(explicit, "verbosity", reading)):
+                    parts.append(("prefers detail" if reading == "detail" else "prefers terse answers")
+                                 + (mark if _inferred("comm.verbosity") else ""))
+            if parts:
+                lines.append("Communication style: " + ", ".join(parts))
         experts = []
         novices = []
         for key, val in _all_traits().items():

@@ -499,3 +499,14 @@ def test_a_discarded_suggestion_stays_off_the_card_when_the_pass_that_found_it_r
     assert cm.entries("user") == [], "a discarded suggestion came back as a card line"
     assert DREAMED not in _head()
     assert _fact(DREAMED) is None
+
+
+@pytest.fixture(autouse=True)
+def _a_local_reader():
+    """These tests are about whose words may change a line, not about who may see it: the reader is a model KNOWN to be on
+    this PC. An unknown reader is not local, and under a gated posture it is told the lines are withheld (the visibility
+    rule is held by tests/unit/test_core_memory_one_visibility_rule.py)."""
+    from agent_friday.services import agent as _agent
+    tok = _agent._CURRENT_PROVIDER.set("local")
+    yield
+    _agent._CURRENT_PROVIDER.reset(tok)

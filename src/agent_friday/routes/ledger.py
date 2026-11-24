@@ -52,6 +52,7 @@ and change receipts name what Friday did to the owner's things.
 from __future__ import annotations
 
 import json
+import math
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -508,7 +509,7 @@ def api_ledger_export():
             args["limit"] = "500"
             kinds, where, _limit, archive = _filters(args)
             rows, archive_error = _read(kinds, newest_first=False, where=where, archive=archive,
-                                        limit=EXPORT_MAX)
+                                        limit=EXPORT_MAX, resolve_text=False)   # whole lines, so they check elsewhere
             if archive_error:
                 return jsonify({"status": "error", "code": "archive_unreadable",
                                 "error": "The archive could not be read (%s); nothing was exported." % archive_error}), 409
@@ -520,6 +521,36 @@ def api_ledger_export():
         return resp
     except Exception as e:  # noqa: BLE001
         return api_error(e, "The ledger could not be exported.")
+
+
+@ledger_bp.route("/api/ledger/evidence-pack", methods=["POST"])
+@login_required
+def api_ledger_evidence_pack():
+    """The owner's evidence pack for a date range, as a zip to keep (brief K6). A press on
+    Friday's own page on this PC; never streamed to a paired device (an owner device triggers a save on the PC through /tv/v1/evidence/pack). Local file only."""
+    from agent_friday.core import _is_local_request
+    from agent_friday.services import evidence_pack, evidence_pack_export, screen_click
+    if not (_is_local_request() and screen_click.screen_session(request)):
+        return jsonify({"status": "error", "code": "press_required",
+                        "error": "Export the evidence pack on Friday's own page, on this PC."}), 403
+    body = request.get_json(silent=True)
+    body = body if isinstance(body, dict) else {}
+    days = (body.get("since"), body.get("until"))
+    start, end = ((_when(v, end=i == 1) if isinstance(v, str) else None) for i, v in enumerate(days))
+    if start is None or end is None or not (math.isfinite(start) and math.isfinite(end)):
+        return jsonify({"status": "error", "error": "Say the first and last day to include."}), 400
+    try:
+        rng = evidence_pack.Range(int(start), int(end))
+        done = evidence_pack_export.export(rng, evidence_pack_export.app_version())
+    except evidence_pack.PackRefused as refused:
+        return jsonify({"status": "error", "code": "pack_refused", "error": str(refused)}), 409
+    except Exception as e:  # noqa: BLE001
+        return api_error(e, "The evidence pack could not be made; nothing was exported.")
+    resp = Response(done.zip_bytes, content_type="application/zip")
+    resp.headers["Content-Disposition"] = 'attachment; filename="%s"' % done.filename
+    resp.headers["Cache-Control"] = "no-store"
+    resp.headers["X-Friday-Export-Recorded"] = "yes" if done.recorded else "no"
+    return resp
 
 
 @ledger_bp.route("/api/ledger/retention", methods=["GET"])

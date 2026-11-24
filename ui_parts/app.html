@@ -1702,10 +1702,33 @@ window.fridayTitleName = fridayTitleName;
 /* fridayHerName:end */
 // The start screen's countdowns: each one's label, when, and why it is there.
 // The words for when move on each minute; the list comes every five.
-function FridayCountdowns({items}){
+/* fridayCountdownHide:begin */
+// When a countdown passes, in epoch seconds: its time, else the end of its day. A hidden countdown stays hidden
+// until then; the entry is dropped after that, so a yearly one comes back next year.
+function fridayCountdownPasses(c) {
+  if (c.at) return c.at + 60;   // the list still shows a timed one for a minute after it starts
+  const end = c.date ? new Date(c.date + 'T23:59:59').getTime() / 1000 : 0;
+  return end > 0 ? end : Date.now() / 1000 + 86400;
+}
+function fridayCountdownHidden(c, hidden, nowMs) {
+  return !!(hidden && hidden[c.id] > nowMs / 1000);
+}
+function fridayCountdownsHiding(hidden, c, nowMs) {
+  const kept = {};
+  for (const k of Object.keys(hidden || {})) if (hidden[k] > nowMs / 1000) kept[k] = hidden[k];
+  kept[c.id] = fridayCountdownPasses(c);
+  return kept;
+}
+// The countdowns that are not hidden: what the list draws AND what the smart start-screen rule may act on,
+// so a hidden countdown never brings the start screen up (tests/ui/start_countdowns_hide.test.cjs).
+function fridayCountdownsShown(items, hidden, nowMs) {
+  return (items || []).filter(c => !fridayCountdownHidden(c, hidden, nowMs));
+}
+/* fridayCountdownHide:end */
+function FridayCountdowns({items,hidden,onHide}){
   const[now,setNow]=useState(()=>Date.now());
   useEffect(()=>{const t=setInterval(()=>setNow(Date.now()),60000);return()=>clearInterval(t)},[]);
-  const shown=(items||[]).filter(c=>!c.at||c.at*1000>now-60000);
+  const shown=(items||[]).filter(c=>(!c.at||c.at*1000>now-60000)&&!fridayCountdownHidden(c,hidden,now));
   if(!shown.length)return null;
   return(<div className="greeting-ticker" data-testid="countdowns" style={{marginBottom:16,position:'relative',zIndex:1}}>
     {shown.map((c,i)=><React.Fragment key={c.id||i}>
@@ -1713,6 +1736,7 @@ function FridayCountdowns({items}){
       <span className="greeting-ticker-item">
         <span className="cd-what"><span>{c.emoji||''} {c.label||c.name}</span>{c.why&&<span className="cd-why">{c.why}</span>}</span>
         <span className="days">{fridayCountdownWhen(c,now)||(c.days??'?')+'d'}</span>
+        {onHide&&c.id&&<button type="button" className="cd-hide" aria-label={'Hide '+(c.label||c.name)} title="Hide this countdown" onClick={()=>onHide(c)}>&times;</button>}
       </span>
     </React.Fragment>)}
   </div>);
@@ -2716,7 +2740,7 @@ function ChatSurface({mode,convId,chatEpoch,openConversation,refreshConvs,traySi
           </div>
         </div>)}
         {chatLoad&&<div className="typing-indicator"><span className="label">{fridayName()} is thinking</span><span className="dot"/><span className="dot"/><span className="dot"/></div>}
-        <ChatApprovalCards convId={convId}/>
+        <ChatApprovalNote convId={convId}/>
         <div ref={chatEnd}/>
       </div>
       <div className="fx-chat-footer" style={{padding:10,borderTop:'1px solid rgba(255,255,255,0.04)'}}>
@@ -11103,16 +11127,12 @@ function SystemWS(){
   // surface: the notification's "Review" points at
   // {workspace:'system',tab:'approvals'}, and if nothing handles that tab every
   // gated action (Google connect, gated goal steps) waits until it expires. ──
-  const [approvals,setApprovals]=useState([]);
-  const [apBusy,setApBusy]=useState('');
+  const approvals=useApprovalFeed();               // the page's one list of waiting cards
   const apRef=useRef(null);
-  const refreshApprovals=()=>fetch('/api/approvals?status=pending').then(r=>r.json()).then(d=>setApprovals(Array.isArray(d?.approvals)?d.approvals:[])).catch(()=>{});
-  // The list follows the page's approval feed, so a card decided anywhere leaves it at once.
-  useEffect(()=>fridayApprovalFeed.subscribe(setApprovals),[]);
+  const refreshApprovals=()=>fridayApprovalFeed.reload();
   const decideApproval=async(id,decision)=>{
-    if(apBusy)return;setApBusy(id);
     await fridayDecideApproval(id,decision);
-    setApBusy('');refreshApprovals();
+    refreshApprovals();
   };
   // Deep-link: notifications target {workspace:'system',tab:'self-improvement'|'approvals'} → scroll the card into view.
   useNavTarget('system',t=>{
@@ -11237,7 +11257,7 @@ function SystemWS(){
       </div>
       {approvals.length===0
         ?<div style={{fontSize:11,color:'#888',padding:'8px 2px'}}>Nothing waiting on you. Actions {fridayName()} won't take on her own — connecting Google, gated goal steps, spend — show up here.</div>
-        :approvals.map(a=><ApprovalCardBody key={a.approval_id} a={a} busy={apBusy} onDecide={decideApproval}/>)}
+        :<ApprovalTrayList items={approvals} onDecide={decideApproval} onDecided={refreshApprovals}/>}
       <PreApprovedSendsList/>
     </div>
 
@@ -21944,6 +21964,7 @@ function FileGrantRequestCard({ a, busy, onDecide }) {
 function sendGrantWords(g, jobName) {
   const who = (g.recipients || []).join(', ');
   const where = g.scope === 'job' ? 'only for the scheduled job ' + jobName(g.schedule_id) : g.scope === 'skill' ? 'only while the skill ' + g.skill + ' is in use' : 'for any job or chat';
+  if ((g.browse_domains || []).length) return 'Read ' + g.browse_domains.join(', ') + ' (never a send) \xB7 ' + where;
   return 'Email to ' + who + ' \xB7 ' + where;
 }
 function SendGrantsPanel() {
@@ -21991,11 +22012,14 @@ function SendGrantsPanel() {
             'since ' + new Date(g.created_at * 1000).toLocaleString() + ' \xB7 used ' + (g.uses || 0) + ' time(s)' + (g.last_used_at ? ', last ' + new Date(g.last_used_at * 1000).toLocaleString() : '')),
           g.changed ? E('div', { 'data-testid': 'send-grant-changed', style: { fontSize: 11, color: '#ffb080' } }, 'Not in use: ' + g.changed + '. Sends ask until you approve it again.') : null),
         E('div', { style: { display: 'flex', gap: 6 } },
-          g.changed && g.in_force !== false && (g.scope === 'job' || skillFor(g.skill)) ? E('button', { className: 'settings-btn', style: { fontSize: 11 }, onClick: () => reapprove(g, g.scope === 'skill' ? skillRecipients(skillFor(g.skill)) : null) }, 'Approve again as it is now') : null,
+          g.changed && g.in_force !== false && !(g.browse_domains || []).length && (g.scope === 'job' || skillFor(g.skill)) ? E('button', { className: 'settings-btn', style: { fontSize: 11 }, onClick: () => reapprove(g, g.scope === 'skill' ? skillRecipients(skillFor(g.skill)) : null) }, 'Approve again as it is now') : null,
           E('button', { className: 'settings-btn', style: { fontSize: 11, color: '#ff8080' }, onClick: () => revoke(g.grant_id) }, 'Revoke')))),
-    d.skills.length > 0 && E('div', { style: { marginTop: 10, fontSize: 12, color: '#ccc' } }, 'Skills that need to send'),
+    d.skills.length > 0 && E('div', { style: { marginTop: 10, fontSize: 12, color: '#ccc' } }, 'Skills that need to send or to read the web'),
     d.skills.map(sk => E('div', { key: sk.name, 'data-testid': 'send-grant-skill', style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, marginTop: 6, fontSize: 11, color: '#bbb' } },
-      E('span', null, E('b', null, sk.name), ' needs: ', Object.keys(sk.needs).map(a => (a === 'send_email' ? 'send email to ' : a + ' to ') + sk.needs[a].join(', ')).join('; '), '. Declaring it grants nothing.',
+      E('span', null, E('b', null, sk.name), Object.keys(sk.needs || {}).length ? ' needs: ' + Object.keys(sk.needs).map(a => (a === 'send_email' ? 'send email to ' : a + ' to ') + sk.needs[a].join(', ')).join('; ') + '. Declaring it grants nothing.' : null,
+        (sk.browse || []).length ? E('span', { 'data-testid': 'send-grant-browse', style: { display: 'block' } }, 'This skill will browse: ' + sk.browse.join(', ') + '. Reading only; it never sends there. ',
+          (sk.browse_granted || []).length ? E('span', { style: { color: '#9fd' } }, 'Approved') :
+            E('button', { className: 'settings-btn', style: { fontSize: 11 }, onClick: () => post({ scope: 'skill', skill: sk.name, browse_domains: sk.browse }) }, (sk.browse_changed || []).length ? 'Changed since you approved: approve these sites' : 'Approve these sites')) : null,
         (sk.refused || []).length ? E('span', { 'data-testid': 'send-grant-refused', style: { display: 'block', color: '#ff8080' } }, 'Cannot be pre-approved: ' + sk.refused.map(x => x.recipient + ' (' + x.why + ')').join('; ') + '.') : null),
       (sk.granted || []).length ? E('span', { style: { color: '#9fd' } }, 'Approved') : (sk.changed || []).length ? E('span', { style: { color: '#ffb080' } }, 'Changed after you approved it') : !Object.keys(sk.needs || {}).length ? null :
         E('button', { className: 'settings-btn', style: { fontSize: 11 }, onClick: () => post({ scope: 'skill', skill: sk.name, recipients: skillRecipients(sk) }) }, 'Approve what it needs'))),
@@ -23670,10 +23694,64 @@ function TrackingPanel({
     }
   }, calib));
 }
+// Accepted issuers (NS-49.1-1): which issuers this PC accepts credits from. TEST CREDITS ONLY. The list starts empty; accepting is a click on
+// this PC's own screen (the server checks the press), withdrawing is not. Held by tests/unit/test_accepted_issuers_ui.py.
+function AcceptedIssuersPanel() {
+  const [issuers, setIssuers] = React.useState(null);
+  const [candidate, setCandidate] = React.useState('');
+  const [msg, setMsg] = React.useState('');
+  const [busy, setBusy] = React.useState(false);
+  const [stopped, setStopped] = React.useState([]);
+  const loadReports = () => apiFetch('/api/federation/issuer-reports').then(r => r.ok ? r.json() : null).then(d => setStopped(d && Array.isArray(d.reports) ? d.reports : [])).catch(() => setStopped([]));
+  const load = () => apiFetch('/api/federation/accepted-issuers').then(r => r.ok ? r.json() : null).then(d => setIssuers(d && Array.isArray(d.issuers) ? d.issuers : null)).catch(() => setIssuers(null));
+  React.useEffect(() => { load(); loadReports(); }, []);
+  const WORDS = { accepted: 'Accepted. Offers that name this issuer are now read.', already: 'That issuer was already accepted.', 'other-charter': 'This PC holds a different charter under that id, so it was not accepted.', 'cannot-sign': 'The list could not be signed, so nothing was changed.', 'press-required': 'Accepting needs a click on this PC itself.' };
+  const accept = async () => {
+    const id = candidate.trim();
+    if (!id) { setMsg('Type the issuer id first.'); return; }
+    setBusy(true); setMsg('');
+    try {
+      const r = await apiFetch('/api/federation/accepted-issuers', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ issuer_id: id }) });
+      const d = await r.json().catch(() => ({}));
+      if (r.status === 404) setMsg('This PC holds no charter for that issuer.');
+      else if (r.status === 400) setMsg('That is not a valid issuer id.');
+      else if (r.status === 403) setMsg(WORDS['press-required']);
+      else setMsg(WORDS[d.outcome] || (d.error ? 'That did not work: ' + d.error : 'That did not work.'));
+      if (r.ok) setCandidate('');
+      await load();
+    } catch (e) { setMsg('That did not work: ' + e.message); }
+    setBusy(false);
+  };
+  const withdraw = async id => {
+    setBusy(true); setMsg('');
+    try {
+      const r = await apiFetch('/api/federation/accepted-issuers/' + encodeURIComponent(id), { method: 'DELETE' });
+      setMsg(r.ok ? 'Withdrawn. Offers that name ' + id + ' are declined again.' : r.status === 404 ? id + ' was not in the list (it may already have been withdrawn).' : 'That did not work.');
+      await load();
+    } catch (e) { setMsg('That did not work: ' + e.message); }
+    setBusy(false);
+  };
+  const dim = { fontSize: 11, color: 'rgba(255,255,255,0.45)', lineHeight: 1.6, marginBottom: 10 };
+  const rows = issuers === null ? React.createElement('div', { style: dim }, 'Could not read the accepted issuers.')
+    : issuers.length === 0 ? React.createElement('div', { style: dim, 'data-accepted-issuers-empty': '1' }, 'No issuer is accepted. This is the default.')
+    : issuers.map(i => React.createElement('div', { key: i.issuer_id, 'data-accepted-issuer': i.issuer_id, style: { display: 'flex', alignItems: 'center', gap: 10, marginBottom: 6, fontSize: 12 } },
+        React.createElement('span', { style: { flex: 1 } }, i.issuer_id + ' (' + i.unit_code + ')'),
+        React.createElement('button', { className: 'btn', disabled: busy, 'aria-label': 'Withdraw ' + i.issuer_id, onClick: () => withdraw(i.issuer_id) }, 'Withdraw')));
+  const stoppedRows = stopped.map((s, n) => React.createElement('div', { key: 'stopped' + n, role: 'alert', 'data-stopped-issuer': s.issuer_id, style: { fontSize: 12, color: '#ff8c42', marginBottom: 6 } }, 'Recorded: this PC saw a problem with the history of issuer ' + s.issuer_id + ' (sequence ' + s.seq + ': ' + s.why + '). This is a record for you to read; it does not by itself change what is accepted.'));
+  return React.createElement('div', null,
+    ...stoppedRows,
+    React.createElement('div', { style: dim }, 'Test credits only. An offer that names an issuer you have not accepted is declined before it is read. Accepting needs a click on this PC; withdrawing does not.'),
+    rows,
+    React.createElement('div', { style: { display: 'flex', gap: 6, marginTop: 8 } },
+      React.createElement('input', { className: 'input', style: { fontSize: 12, flex: 1 }, value: candidate, placeholder: 'Issuer id this PC holds a charter for', 'aria-label': 'Issuer id', onChange: e => setCandidate(e.target.value), onKeyDown: e => { if (e.key === 'Enter' && candidate.trim() && !busy) accept(); } }),
+      React.createElement('button', { className: 'btn', disabled: busy || !candidate.trim(), onClick: accept }, 'Accept this issuer')),
+    React.createElement('div', { role: 'status', 'aria-live': 'polite', style: { fontSize: 11, color: 'rgba(255,255,255,0.7)', marginTop: 8, minHeight: 14 } }, msg));
+}
 function SettingsTabFederation(){
   return <div>
     <div style={{fontSize:11,color:'rgba(255,255,255,0.4)',marginBottom:20,lineHeight:1.6}}>Connect with other {FRIDAY_BRAND.name} instances. Each instance has its own signed identity, and messages between them are encrypted end to end.</div>
     <FederationPanel/>
+    <div style={{marginTop:24}}><StSection title="Accepted issuers"><AcceptedIssuersPanel/></StSection></div>
     <div style={{marginTop:24}}><StSection title="Blocking instances"><DefederationPanel/></StSection></div>
   </div>;
 }
@@ -23911,6 +23989,17 @@ function TasksInboxPanel() {
   }, E('div', {
     className: 'sc-sub'
   }, msg || 'Reading…'));
+  // Retired: approvals live only in the tray. A machine that had the list on can turn it off; nothing turns it on.
+  if (d.retired) return E(StSection, {
+    title,
+    desc: fridayName() + ' no longer mirrors approvals to Google Tasks. They wait in the tray, which your phone, tablet and widget reach.'
+  }, d.enabled ? E('button', {
+    type: 'button',
+    className: 'btn',
+    'data-testid': 'tasks-inbox-off',
+    disabled: busy,
+    onClick: () => run('/api/tasks-inbox/disable', { remove_list: false }, 'Turned off. Nothing is posted or read.')
+  }, 'Turn it off') : null, msg ? E('div', { className: 'sc-sub' }, msg) : null);
   const levelButtons = (current, onPick) => E('div', {
     role: 'group',
     'aria-label': 'How much text goes to Google',
@@ -27313,42 +27402,130 @@ function LaneWhy({ id }) {
       !w ? 'One moment.' : w.ok ? w.sentence : 'There is no record of that item any more.',
       w && w.trace_id ? h('button', { type: 'button', className: 'ws-tab-link', onClick: () => window.fridayOpenTrace(w.trace_id) }, 'Open its trace') : null));
 }
-// A batch of approvals of one kind and source: one card, each action listed. Approving the batch
-// approves exactly the listed actions, one approval each; "Review each" shows the single cards.
+// One request that edits the wiki (or any other batch) is one tray card, each action listed. Approving the card
+// approves exactly the listed actions, one approval each (the ledger keeps one decision per card); "Reject this
+// one" declines that action alone and the rest stay on the card. Parts that came from web or wiki text are marked.
 function fridayDecideBatch(b, decision) {
-  return fetch('/api/approvals/batches/' + encodeURIComponent(b.batch_id) + '/decide', {
+  const running = fridayDeciding.get(b.batch_id);
+  if (running) { fridayToast('Already working on that one.'); return running; }
+  const sent = fetch('/api/approvals/batches/' + encodeURIComponent(b.batch_id) + '/decide', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ decision, approval_ids: b.approval_ids, decided_by: 'owner:ui' })
   }).then(r => r.json()).then(d => {
-    if (d && d.ok) (d.results || []).forEach(x => { if (x.won) fridayApprovalFeed.drop(x.approval_id); });
+    if (d && d.ok) {
+      // A card this decide did not win stays, and the owner is told: one still waiting is decided on its own card.
+      const all = d.results || [], left = all.filter(x => !x.won);
+      all.forEach(x => { if (x.won || (x.status && x.status !== 'pending')) fridayApprovalFeed.drop(x.approval_id); });
+      if (left.length) fridayToast(left.length + ' of ' + all.length + ' were not decided here: ' + (left.some(x => x.status === 'pending')
+        ? 'they are still waiting, each on its own card.' : 'they had already been decided.'));
+    }
     else if (d && d.error === 'changed') fridayToast('That batch changed while you looked. Here is the new list.');
+    else fridayToast((d && d.message) || 'That did not go through. The cards are still waiting.');
     return d;
-  }).catch(() => { fridayToast('Could not reach ' + fridayName() + ' to record that. The cards are still waiting.'); return null; });
+  }).catch(() => {
+    fridayToast('Could not reach ' + fridayName() + ' to record that. The cards are still waiting.');
+    return null;
+  }).finally(() => fridayDeciding.end(b.batch_id));
+  fridayDeciding.start(b.batch_id, sent);
+  return sent;
 }
-function LaneBatch({ b, items, busy, onBusy, onDecided }) {
+// The text with every detail that came from outside content marked, in order, never twice.
+function fridayMarkOutside(text, flags) {
+  const h = React.createElement, src = String(text || '');
+  const hits = [];
+  (flags || []).forEach(f => {
+    const v = String((f && f.value) || '');
+    const at = v.length > 1 ? src.indexOf(v) : -1;
+    if (at >= 0 && !hits.some(x => at < x.end && at + v.length > x.start)) hits.push({ start: at, end: at + v.length });
+  });
+  hits.sort((a, b) => a.start - b.start);
+  const out = [];
+  let at = 0;
+  hits.forEach((x, i) => {
+    if (x.start > at) out.push(src.slice(at, x.start));
+    out.push(h('mark', { key: 'm' + i, 'data-testid': 'outside-text' }, src.slice(x.start, x.end)));
+    at = x.end;
+  });
+  if (at < src.length) out.push(src.slice(at));
+  return out;
+}
+// One action inside a grouped card. It shows everything its own card would (what it is, why it asks, the warning for
+// what came from outside, class and expiry with Inspect) and its own Reject; only Approve and Decline are the group's.
+// The action's arguments are shown whole, and every argument that came from outside content is marked where it
+// stands, by name: a flag's value is a cut-off copy and the action line is escaped JSON, so matching text against
+// text misses most real values.
+function LaneBatchItem({ it, onRejected }) {
   const h = React.createElement;
+  const busy = useDeciding(it.approval_id);
+  const flags = ((it.provenance || {}).flags || []).filter(f => f && (f.value || f.arg));
+  const input = it.payload && it.payload.input && typeof it.payload.input === 'object' && !Array.isArray(it.payload.input) ? it.payload.input : null;
+  const outside = new Set(flags.map(f => f.arg).filter(Boolean));
+  const shown = input
+    ? Object.keys(input).map(k => {
+        const v = input[k], s = typeof v === 'string' ? v : JSON.stringify(v);
+        return h('div', { key: k, 'data-testid': 'lane-batch-arg', style: { whiteSpace: 'pre-wrap' } }, k + ': ',
+          outside.has(k) ? h('mark', { 'data-testid': 'outside-text' }, s) : s);
+      })
+    : fridayMarkOutside(it.action_description, flags);
+  return h('div', { className: 'place-readonly', 'data-testid': 'lane-batch-item', 'data-approval-id': it.approval_id, style: { margin: '6px 0' } },
+    h('div', { style: { fontSize: 12, color: '#ddd' } }, it.title),
+    it.description ? h('div', { style: { fontSize: 11, color: '#bbb', marginTop: 2 } }, it.description) : null,
+    (input || it.action_description) ? h('div', { 'data-testid': 'lane-batch-action', style: { fontSize: 11, color: '#999', marginTop: 2, overflowWrap: 'anywhere' } },
+      input && it.payload.tool ? h('div', null, it.payload.tool) : null, shown) : null,
+    flags.filter(f => f.value).map((f, i) => h('div', { key: i, 'data-testid': 'outside-source', style: { fontSize: 11, color: '#fde68a', marginTop: 2, overflowWrap: 'anywhere' } },
+      'From ' + (f.source || 'outside content') + (f.arg ? ' (' + f.arg + ')' : '') + ': ', h('mark', null, String(f.value)))),
+    h(ApprovalProvenance, { p: it.provenance }),
+    h(ApprovalCardFacts, { a: it }),
+    h('button', { type: 'button', className: 'btn', style: { fontSize: 11, padding: '2px 10px', color: 'var(--fr-deny)', marginTop: 4 }, disabled: busy,
+      'data-testid': 'lane-batch-reject-one', onClick: () => { fridayDecideApproval(it.approval_id, 'deny').then(() => onRejected && onRejected()); } }, 'Reject this one'));
+}
+function LaneBatch({ b, items, onDecided }) {
+  const h = React.createElement;
+  const busy = useDeciding(b.batch_id);
   const [each, setEach] = useState(false);
-  const run = decision => {
-    if (busy) return;
-    onBusy(b.batch_id);
-    fridayDecideBatch(b, decision).then(() => { onBusy(''); onDecided(); });
-  };
+  const run = decision => { fridayDecideBatch(b, decision).then(() => onDecided && onDecided()); };
   const cards = (items || []).filter(a => b.approval_ids.indexOf(a.approval_id) >= 0);
   return h('div', { className: 'place-card', 'data-testid': 'lane-batch', 'data-batch-id': b.batch_id },
     h('div', { className: 'place-card-title' }, b.sentence),
-    !each && h('div', { className: 'place-readonly', 'data-testid': 'lane-batch-items' }, b.items.map(it => h(ApprovalCardBody, { key: it.approval_id, a: it, busy: busy, onDecide: () => {} }))),
+    !each && h('div', { 'data-testid': 'lane-batch-items' }, b.items.map(it => h(LaneBatchItem, { key: it.approval_id, it: it, onRejected: onDecided }))),
     h('div', { className: 'place-note' }, 'Each action stays its own approval. Approving these approves exactly the ' + b.count + ' listed and nothing else.'),
     h('div', { className: 'place-actions' },
-      h('button', { type: 'button', className: 'btn', style: { color: 'var(--fr-ok)' }, disabled: !!busy, 'data-testid': 'lane-batch-approve', onClick: () => run('approve') }, 'Approve these ' + b.count),
-      h('button', { type: 'button', className: 'btn', style: { color: 'var(--fr-deny)' }, disabled: !!busy, 'data-testid': 'lane-batch-deny', onClick: () => run('deny') }, 'Decline these ' + b.count),
+      h('button', { type: 'button', className: 'btn', style: { color: 'var(--fr-ok)' }, disabled: busy, 'data-testid': 'lane-batch-approve', onClick: () => run('approve') }, 'Approve these ' + b.count),
+      h('button', { type: 'button', className: 'btn', style: { color: 'var(--fr-deny)' }, disabled: busy, 'data-testid': 'lane-batch-deny', onClick: () => run('deny') }, 'Decline these ' + b.count),
       h('button', { type: 'button', className: 'ws-tab-link', 'aria-expanded': each ? 'true' : 'false', onClick: () => setEach(v => !v) }, each ? 'Hide the cards' : 'Review each')),
-    each && cards.map(a => h(ApprovalCardBody, { key: a.approval_id, a: a, busy: busy, onDecide: (id, decision) => { onBusy(id); fridayDecideApproval(id, decision).then(() => { onBusy(''); onDecided(); }); } })));
+    each && cards.map(a => h(ApprovalCardBody, { key: a.approval_id, a: a, onDecide: (id, decision) => { fridayDecideApproval(id, decision).then(() => onDecided && onDecided()); } })));
+}
+// How the tray's pending cards group: the server's own plan, asked again whenever the set of waiting cards
+// changes. A late answer for an older set is ignored; a failed ask leaves every card single, never hidden.
+function useApprovalPlan(items) {
+  const key = items.map(a => a.approval_id).sort().join(',');
+  const [plan, setPlan] = useState({ key: '', batches: [] });
+  useEffect(() => {
+    let live = true;
+    if (items.length < 2) { setPlan({ key: key, batches: [] }); return undefined; }
+    apiFetch('/api/approvals/batches').then(r => r.json())
+      .then(d => { if (live) setPlan({ key: key, batches: d && Array.isArray(d.batches) ? d.batches : [] }); })
+      .catch(() => { if (live) setPlan({ key: key, batches: [] }); });
+    return () => { live = false; };
+  }, [key]);
+  return plan.key === key ? plan.batches : [];
+}
+// The tray's list: grouped cards first, then the single cards, every one decided on its own.
+function ApprovalTrayList({ items, onDecide, onDecided }) {
+  const h = React.createElement;
+  const have = new Set(items.map(a => a.approval_id));
+  const batches = useApprovalPlan(items).filter(b => b.approval_ids.every(id => have.has(id)));
+  const inBatch = new Set();
+  batches.forEach(b => b.approval_ids.forEach(id => inBatch.add(id)));
+  const decide = onDecide || ((id, decision) => { fridayDecideApproval(id, decision).then(() => onDecided && onDecided()); });
+  return h(React.Fragment, null,
+    batches.map(b => h(LaneBatch, { key: b.batch_id, b: b, items: items, onDecided: onDecided })),
+    items.filter(a => !inBatch.has(a.approval_id)).map(a => h(ApprovalCardBody, { key: a.approval_id, a: a, onDecide: decide })));
 }
 function LaneNeedsYou({ onChanged }) {
   const h = React.createElement;
   const [d, reload] = useLaneData('/api/lanes/needs-you');
   const feed = useApprovalFeed();
-  const [busy, setBusy] = useState('');
   useEffect(() => { reload(); }, [feed.length]);
   if (!d) return h('div', { className: 'place-empty' }, 'One moment.');
   const inBatch = new Set();
@@ -27365,8 +27542,8 @@ function LaneNeedsYou({ onChanged }) {
            q.why === 'until_morning' ? h('button', { key: 'b', type: 'button', className: 'ws-tab-link', onClick: () => setQuiet(false) }, 'End quiet') : null]
         : h('button', { type: 'button', className: 'ws-tab-link', 'data-testid': 'lane-quiet-on', onClick: () => setQuiet(true) }, 'Quiet until morning')),
     d.count === 0 && !singles.length ? h('div', { className: 'place-empty' }, 'Nothing needs you.') : h('div', { className: 'place-summary', role: 'status' }, d.summary ? d.summary.charAt(0).toUpperCase() + d.summary.slice(1) + '.' : ''),
-    d.batches.map(b => h(LaneBatch, { key: b.batch_id, b: b, items: feed, busy: busy, onBusy: setBusy, onDecided: done })),
-    singles.map(a => h(ApprovalCardBody, { key: a.approval_id, a: a, busy: busy, onDecide: (id, decision) => { setBusy(id); fridayDecideApproval(id, decision).then(() => { setBusy(''); done(); }); } })),
+    d.batches.map(b => h(LaneBatch, { key: b.batch_id, b: b, items: feed, onDecided: done })),
+    singles.map(a => h(ApprovalCardBody, { key: a.approval_id, a: a, onDecide: (id, decision) => { fridayDecideApproval(id, decision).then(done); } })),
     d.others.map(o => h('div', { key: o.id, className: 'place-card', 'data-testid': 'lane-need', 'data-kind': o.kind },
       h('div', { className: 'place-card-title' }, o.title + (o.count > 1 ? ' (' + o.count + ' times)' : '')),
       o.body ? h('div', { className: 'place-note' }, o.body) : null,
@@ -27734,6 +27911,8 @@ function StandaloneApprovals(){
 const FEED_SILENT_MS = 60000;
 const fridayApprovalFeed = (() => {
   let cards = new Map(), es = null, started = false, leader = false, heard = Date.now(), release = null;
+  // When each card was last decided or raised here: a reload's older answer must not undo either.
+  const settled = new Map(), raised = new Map();
   const listeners = new Set();
   // Cards judged "may not interrupt" (quiet hours, over budget, Focus Assist): listed, not popped open.
   const quiet = window.__fridayQuietApprovals = new Set();
@@ -27758,8 +27937,8 @@ const fridayApprovalFeed = (() => {
       if (d.interrupt === false) quiet.add(d.approval.approval_id);else quiet.delete(d.approval.approval_id);
     }
     if (d.type === 'snapshot') { cards = new Map((d.pending || []).map(a => [a.approval_id, a])); emit(); }
-    else if (d.type === 'pending' && d.approval && d.approval.status === 'pending') { cards.set(d.approval.approval_id, d.approval); emit(); }
-    else if (d.type === 'resolved') { if (cards.delete(d.approval_id)) emit(); }
+    else if (d.type === 'pending' && d.approval && d.approval.status === 'pending') { cards.set(d.approval.approval_id, d.approval); raised.set(d.approval.approval_id, Date.now()); emit(); }
+    else if (d.type === 'resolved') { settled.set(d.approval_id, Date.now()); if (cards.delete(d.approval_id)) emit(); }
     else if (d.type === 'presence') { presenceListeners.forEach(fn => { try { fn(d); } catch (_) {} }); }
   };
   const onServer = e => {
@@ -27822,7 +28001,21 @@ const fridayApprovalFeed = (() => {
       fn(list());
       return () => { listeners.delete(fn); };
     },
-    drop(id) { if (cards.delete(id)) emit(); },
+    drop(id) { settled.set(id, Date.now()); if (cards.delete(id)) emit(); },
+    // Ask the server for the pending list again (a page that missed frames, or opened late). A card decided, or
+    // newly raised, after the request left is not undone by its older answer.
+    reload() {
+      const sent = Date.now();
+      return fetch('/api/approvals?status=pending').then(r => r.json()).then(d => {
+        const fresh = d && Array.isArray(d.approvals) ? d.approvals : null;
+        if (!fresh) return;
+        const next = new Map(fresh.filter(a => (settled.get(a.approval_id) || 0) < sent).map(a => [a.approval_id, a]));
+        cards.forEach((a, id) => { if (!next.has(id) && (raised.get(id) || 0) >= sent) next.set(id, a); });
+        cards = next;
+        settled.forEach((at, id) => { if (sent - at > 600000) settled.delete(id); });
+        emit();
+      }).catch(() => {});
+    },
     onPresence(fn) {
       presenceListeners.add(fn);
       if (!started) { started = true; start(); }
@@ -27938,12 +28131,35 @@ function useApprovalFeed() {
   useEffect(() => fridayApprovalFeed.subscribe(setItems), []);
   return items;
 }
+// Which cards have a decision on its way, for the whole page. One flag per surface used to hold every card on it:
+// the decide request only returns once the approved action has run (seconds), so one slow approval froze every other
+// card on that surface and dropped their clicks. A card is busy, the others are not.
+const fridayDeciding = (() => {
+  const inflight = new Map(), listeners = new Set();
+  const tell = () => listeners.forEach(f => { try { f(); } catch (_) {} });
+  return {
+    get: id => inflight.get(id),
+    start: (id, sent) => { inflight.set(id, sent); tell(); },
+    end: id => { inflight.delete(id); tell(); },
+    subscribe: f => { listeners.add(f); return () => listeners.delete(f); }
+  };
+})();
+function useDeciding(id) {
+  const [, bump] = useState(0);
+  useEffect(() => fridayDeciding.subscribe(() => bump(n => n + 1)), []);
+  return !!fridayDeciding.get(id);
+}
 // Approve or decline from any page. Exactly one decision wins (the server
 // decides under one lock); a page that lost the race is told what happened.
+// A click that cannot apply says why: a refusal in the server's words, a card
+// that is gone (it leaves the list), no connection. Nothing is a silent no-op, and the same card
+// clicked twice sends one request.
 // decided_by 'owner:ui' marks a click on this page: some cards (file access)
 // can be approved by nothing else.
 function fridayDecideApproval(id, decision) {
-  return fetch('/api/approvals/' + encodeURIComponent(id) + '/decide', {
+  const running = fridayDeciding.get(id);
+  if (running) { fridayToast('Already working on that one.'); return running; }
+  const sent = fetch('/api/approvals/' + encodeURIComponent(id) + '/decide', {
     method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ decision, decided_by: 'owner:ui' })
   }).then(r => r.json()).then(d => {
     if (d && d.ok) fridayApprovalFeed.drop(id);
@@ -27952,9 +28168,21 @@ function fridayDecideApproval(id, decision) {
       const what = st === 'approved' ? 'approved' : st === 'denied' ? 'declined' : st === 'expired' ? 'expired' : st || 'decided';
       const by = st === 'expired' ? '' : /sms/.test(a.decided_by || '') ? ' by text message' : /voice/.test(a.decided_by || '') ? ' by voice' : ' elsewhere';
       fridayToast('Already decided: this was ' + what + by + '.');
+    } else if (d && d.error === 'not found') {
+      // The server has no such card: it is not waiting, so it leaves the list and the toast says so.
+      fridayApprovalFeed.drop(id);
+      fridayToast('That card is no longer waiting, so nothing was decided. It has been taken off the list.');
+    } else if (!d || !d.ok) {
+      const why = d && (d.message || (/ /.test(String(d.error || '')) ? d.error : ''));
+      fridayToast(why || 'That did not go through. The card is still waiting.');
     }
     return d;
-  }).catch(() => { fridayToast(('Could not reach ' + fridayName() + ' to record that. The card is still waiting.')); return null; });
+  }).catch(() => {
+    fridayToast(('Could not reach ' + fridayName() + ' to record that. The card is still waiting.'));
+    return null;
+  }).finally(() => fridayDeciding.end(id));
+  fridayDeciding.start(id, sent);
+  return sent;
 }
 // One approval card: what it will do, where its details came from, and the
 // two buttons. The System list and the popup render this same body.
@@ -28076,6 +28304,8 @@ function ApprovalCardFacts({ a }) {
   </div>;
 }
 function ApprovalCardBody({ a, busy, onDecide }) {
+  // busy while THIS card's decision runs, not while another card's does (fridayDeciding)
+  busy = useDeciding(a.approval_id);
   // Every card, whatever its body, ends with its facts and Inspect (ApprovalCardFacts).
   const withFacts = el => <React.Fragment>{el}<ApprovalCardFacts a={a} /></React.Fragment>;
   // The share card has its own body: the exact payload, edit, and four choices.
@@ -28120,7 +28350,6 @@ function ApprovalPopups() {
   const items = useApprovalFeed();
   const [later, setLater] = useState(false);
   const [peek, setPeek] = useState(false);
-  const [busy, setBusy] = useState('');
   const seen = useRef(new Set());
   useEffect(() => {
     const freshItems = items.filter(a => !seen.current.has(a.approval_id) && !fridayApprovalQuiet(a.approval_id));
@@ -28161,9 +28390,7 @@ function ApprovalPopups() {
   }, []);
   if (!items.length) return null;
   const decide = (id, decision) => {
-    if (busy) return;
-    setBusy(id);
-    fridayDecideApproval(id, decision).then(() => setBusy(''));
+    fridayDecideApproval(id, decision);
   };
   const pos = { position: 'fixed', top: 48, right: 16, zIndex: 9800 };
   const folded = later || !peek && items.every(a => fridayApprovalQuiet(a.approval_id));
@@ -28180,7 +28407,7 @@ function ApprovalPopups() {
       <span>✋ Approvals<span style={{ color: '#f59e0b', fontSize: 11, marginLeft: 6 }}>({items.length} pending)</span></span>
       <button type="button" className="btn" style={{ fontSize: 11, padding: '2px 8px' }} title="Hide this until the next card. The card keeps waiting." onClick={() => setLater(true)}>Later</button>
     </div>
-    {items.map(a => <ApprovalCardBody key={a.approval_id} a={a} busy={busy} onDecide={decide} />)}
+    <ApprovalTrayList items={items} onDecide={decide} />
   </div>);
 }
 // The context slot of the top bar in a workspace tab: which workspace this is,
@@ -28279,39 +28506,63 @@ function useFridayConversationDrafts(initialId) {
   }, []);
   return {convId,setConvId,chatIn,setChatIn,getConversationId,getConversationRevision,navigateWithDrafts};
 }
-// The cards this conversation raised, in the conversation itself. The chat's
-// yes/no question and the card are two ways to answer one request; the card
-// is shown here too so a question the model paraphrased, or an answer the
-// chat could not read, still leaves a button in front of the owner. Same feed
-// and same body as the System list and the popup, so one decision wins.
-function ChatApprovalCards({ convId }) {
+// What the chat says about cards: one line, no buttons. Approval cards belong in Friday's approval tray only
+// (Stephen, 2026-11-22: "we don't send cards into the chat, we send them into Friday's approval tray"); the chat
+// only notes that something this conversation raised is waiting there.
+function ChatApprovalNote({ convId }) {
   const items = useApprovalFeed();
-  const [busy, setBusy] = useState('');
-  const mine = convId ? items.filter(a => ((a && a.payload) || {}).conversation_id === convId) : [];
-  if (!mine.length) return null;
-  const decide = (id, decision) => {
-    if (busy) return;
-    setBusy(id);
-    fridayDecideApproval(id, decision).finally(() => setBusy(''));
-  };
-  return React.createElement('div', {className:'fx-chat-approvals', 'data-testid':'chat-approval-cards', role:'group', 'aria-label':'Waiting for your decision', style:{margin:'8px 0'}},
-    mine.map(a => React.createElement(ApprovalCardBody, {key:a.approval_id,a,busy,onDecide:decide})));
+  const n = convId ? items.filter(a => ((a && a.payload) || {}).conversation_id === convId).length : 0;
+  if (!n) return null;
+  return React.createElement('div', {className:'fx-chat-approvals', 'data-testid':'chat-approval-note', role:'status', style:{margin:'6px 0', fontSize:12, color:'var(--fr-dim)'}},
+    n === 1 ? 'Waiting on your approval in the tray.' : n + ' waiting on your approval in the tray.');
 }
 function ExperienceApprovals() {
   const items = useApprovalFeed();
   const [busy, setBusy] = useState('');
   const [error, setError] = useState('');
   const decide = async (id, decision) => {
-    if (busy) return;
-    setBusy(id); setError('');
-    try { await fridayDecideApproval(id, decision); }
-    catch (e) { setError('Could not record the decision. Try again.'); }
-    finally { setBusy(''); }
+    setError('');
+    if ((await fridayDecideApproval(id, decision)) === null) setError('Could not record the decision. Try again.');
   };
   return React.createElement('div', {className:'fx-approvals'},
     error && React.createElement('p', {role:'alert'}, error),
     items.map(a => React.createElement(ApprovalCardBody, {key:a.approval_id,a,busy,onDecide:decide})));
 }
+// The shell-owned approval slot (NS-41.3-1, SC D5.0 P5 and V12). A Liquid UI document names a
+// subject and nothing else: no id, text, style, children or label of its own. The slot asks the
+// server which pending cards belong to that subject (GET /api/liquid/approval-slot, ids only),
+// then draws THE SHELL'S OWN card body for each, from the same feed as the System list. A decision
+// is made with the card's own buttons (fridayDecideApproval). The frame
+// uses shell tokens only. Held by scripts/check_approval_slot.cjs (which cards, order, failure, V12, tokens, a changed subject) and tests/app/specs/approval_slot.spec.ts (the page).
+function ApprovalSlot({ subject, kind }) {
+  const items = useApprovalFeed();
+  const [got, setGot] = useState(null);
+  const [busy, setBusy] = useState('');
+  const asked = (subject || '') + '|' + (kind || '');
+  const ids = got && got.asked === asked ? got.ids : null;
+  const waiting = items.map(a => a.approval_id).join(',');
+  useEffect(() => {
+    let live = true;
+    const q = 'subject=' + encodeURIComponent(subject || '') + (kind ? '&kind=' + encodeURIComponent(kind) : '');
+    fetch('/api/liquid/approval-slot?' + q).then(r => r.json())
+      .then(d => { if (live) setGot({ asked, ids: d && d.ok && Array.isArray(d.ids) ? d.ids : 'unavailable' }); })
+      .catch(() => { if (live) setGot({ asked, ids: 'unavailable' }); });
+    return () => { live = false; };
+  }, [subject, kind, waiting]);
+  if (ids === null) return null;
+  const mine = Array.isArray(ids) ? ids.map(id => items.find(a => a.approval_id === id)).filter(Boolean) : [];
+  if (Array.isArray(ids) && ids.length && !mine.length) return null;
+  const decide = (id, decision) => {
+    fridayDecideApproval(id, decision);
+  };
+  return React.createElement('div', {
+    'data-testid': 'approval-slot', role: 'group', 'aria-label': 'Waiting for your decision',
+    style: { margin: '8px 0', padding: 8, border: '1px solid var(--fr-glass-edge)', borderRadius: 8, background: 'var(--fr-glass)', color: 'var(--fr-text)' }
+  }, mine.length ? mine.map(a => React.createElement(ApprovalCardBody, { key: a.approval_id, a, busy, onDecide: decide }))
+    : React.createElement('div', { 'data-testid': 'approval-slot-empty', role: 'status', style: { fontSize: 11, color: 'var(--fr-dim)' } },
+        ids === 'unavailable' ? 'Could not check what is waiting.' : 'Nothing is waiting here.'));
+}
+window.FridayApprovalSlot = ApprovalSlot;
 function App(){
   const[openWins,setOpenWins]=useState(new Set());
   const [focusWin, setFocusWin] = useState(null);
@@ -31183,6 +31434,10 @@ const fridayBundleBody=id=>(window.FridayBundleFrame&&WS_BY_ID[id]&&WS_BY_ID[id]
   // least once a minute. A change is one line in the console and, through the
   // state this page reports, one line in the server's log.
   const landingMode = FRIDAY_LANDING_MODES.indexOf(agentSettings.landing_mode) >= 0 ? agentSettings.landing_mode : 'smart';
+  const hideCountdown = c => saveAgentSettings({dismissed_countdowns: fridayCountdownsHiding(agentSettings.dismissed_countdowns, c, Date.now())});
+  const visibleCountdowns = fridayCountdownsShown(countdowns, agentSettings.dismissed_countdowns, Date.now());
+  const hiddenCountdowns = countdowns.length - visibleCountdowns.length;
+  const unhideCountdowns = () => saveAgentSettings({dismissed_countdowns: {}});
   const landingClock = useRef(null);
   if (!landingClock.current) landingClock.current = fridayLandingClock(Date.now());
   const landingSees = useRef({});
@@ -31192,12 +31447,12 @@ const fridayBundleBody=id=>(window.FridayBundleFrame&&WS_BY_ID[id]&&WS_BY_ID[id]
     front: !experienceDesktop && focusWin && openWins.has(focusWin) ? (WS.find(w => w.id === focusWin) || {}).label || '' : '',
     voice: !!voiceOn,
     chat: !!chatOpen,
-    items: countdowns
+    items: visibleCountdowns
   };
   const landingJudge = useRef(() => {});
   useEffect(() => {
     landingJudge.current();
-  }, [landingMode, openWins, experienceDesktop, focusWin, voiceOn, chatOpen, countdowns]);
+  }, [landingMode, openWins, experienceDesktop, focusWin, voiceOn, chatOpen, visibleCountdowns.length, countdowns, agentSettings.dismissed_countdowns]);
   // Hidden, the cluster takes no focus and no screen reader's attention.
   useEffect(() => {
     const el = landingElRef.current;
@@ -32075,11 +32330,12 @@ const fridayBundleBody=id=>(window.FridayBundleFrame&&WS_BY_ID[id]&&WS_BY_ID[id]
       onDraftChat: experienceDraft, apiFetch,
       renderApprovals: () => React.createElement(ExperienceApprovals)
 })}
-    {!experienceEnabled&&!STANDALONE_WS&&<div ref={landingElRef} className={'landing-cluster'+(landing.show?'':' hidden')} aria-hidden={landing.show?undefined:'true'} data-landing={landing.show?'shown':'hidden'} data-testid="landing-cluster" style={{position:'fixed',left:0,right:0,bottom:116,zIndex:5,display:'flex',flexDirection:'column',alignItems:'center',pointerEvents:'none'}}>
+    {!experienceEnabled&&!STANDALONE_WS&&<div ref={landingElRef} className={'landing-cluster'+(landing.show?'':' hidden')} aria-hidden={landing.show?undefined:'true'} data-landing={landing.show?'shown':'hidden'} data-testid="landing-cluster" style={{position:'fixed',left:'var(--fr-chat-dock-left,0px)',right:'var(--fr-chat-dock,0px)',bottom:116,zIndex:5,display:'flex',flexDirection:'column',alignItems:'center',pointerEvents:'none'}}>
       <div ref={landingAreaRef} style={{position:'absolute',bottom:0,left:'50%',transform:'translateX(-50%)',width:720,height:280,borderRadius:'50%',background:'radial-gradient(ellipse at center, rgba(0,0,0,0.85) 0%, rgba(0,0,0,0.65) 40%, rgba(0,0,0,0.28) 65%, transparent 100%)',pointerEvents:'none',zIndex:0}}/>
       <div style={{position:'relative',zIndex:1,fontFamily:'Orbitron, sans-serif',fontSize:26,color:'rgba(0,212,255,0.98)',marginBottom:12,animation:'fadeIn 1s ease',letterSpacing:'0.06em',textShadow:'0 0 12px rgba(0,0,0,0.95), 0 0 32px rgba(0,212,255,0.35), 0 2px 4px rgba(0,0,0,0.85)'}}>{getGreeting()}, boss.</div>
       <div style={{position:'relative',zIndex:1,marginBottom:10}}><FridayLockup size={11}/></div>
-      <FridayCountdowns items={countdowns}/>
+      <FridayCountdowns items={countdowns} hidden={agentSettings.dismissed_countdowns} onHide={hideCountdown}/>
+      {hiddenCountdowns>0&&<button type="button" className="cd-unhide" data-testid="countdowns-unhide" onClick={unhideCountdowns}>Show {hiddenCountdowns} hidden {hiddenCountdowns===1?'countdown':'countdowns'}</button>}
       {countdowns.length===0&&<div style={{position:'relative',zIndex:1,fontFamily:'JetBrains Mono',fontSize:12,color:'rgba(255,255,255,0.78)',marginBottom:16,textShadow:'0 1px 3px rgba(0,0,0,0.85)'}}>All systems nominal.</div>}
       <div style={{position:'relative',zIndex:1,pointerEvents:'auto',display:'flex',gap:8,alignItems:'center'}}>
         <FridayChatInput value={promptText} onChange={setPromptText} onSend={sendPrompt} maxHeight={120}

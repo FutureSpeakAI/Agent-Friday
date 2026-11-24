@@ -189,7 +189,8 @@ def briefing_status():
         news_ok = True
     except Exception:
         news_ok = False
-    brave_on = bool((os.environ.get("BRAVE_SEARCH_API_KEY") or "").strip())
+    from agent_friday.services import key_gateway
+    brave_on = key_gateway.available("brave")
     connectors = [
         _svc("gmail", "Gmail", "📧"),
         _svc("calendar", "Calendar", "📅"),

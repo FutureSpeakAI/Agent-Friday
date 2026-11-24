@@ -37,7 +37,7 @@ def wire(monkeypatch):
         sent.append({"url": url, "body": json})
         return _Resp()
 
-    monkeypatch.setattr(fc, "api_key", lambda: "fake-firecrawl-key")  # pragma: allowlist secret
+    monkeypatch.setattr(fc, "key_stand_in", lambda: "fake-firecrawl-key")  # pragma: allowlist secret
     monkeypatch.setattr(requests, "post", fake_post)
     monkeypatch.setattr(fc, "_meter", lambda *a, **k: None)
     return sent

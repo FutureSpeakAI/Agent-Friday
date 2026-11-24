@@ -538,6 +538,9 @@
    "type": "string"
   },
   "demo_mode": {},
+  "dismissed_countdowns": {
+   "type": "object"
+  },
   "display_reserve_mode": {
    "type": "string"
   },
