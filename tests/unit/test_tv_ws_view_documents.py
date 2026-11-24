@@ -13,6 +13,7 @@ version. Synthetic data only.
 """
 import base64
 import copy
+import io
 import json
 import time
 
@@ -144,12 +145,10 @@ def test_a_body_over_the_cap_is_413_before_it_is_parsed(client):
 def test_a_chunked_body_with_no_length_is_held_to_the_same_cap(client):
     dev = Enrolled(client)
     big = ('{"base_rev": "r", "change": {"document": [], "label": "%s"}}' % ("x" * CAP)).encode()
-
-    def chunks():
-        for i in range(0, len(big), 4096):
-            yield big[i:i + 4096]
-    r = dev.client.post(VIEW + "/proposals/challenge", input_stream=chunks(), content_type="application/json",
-                        headers={**dev.session(), "Transfer-Encoding": "chunked"})
+    r = dev.client.post(VIEW + "/proposals/challenge", input_stream=io.BytesIO(big), content_type="application/json",
+                        headers={**dev.session(), "Transfer-Encoding": "chunked"},
+                        environ_overrides={"wsgi.input_terminated": True})    # the server hands over a de-chunked body
+    assert r.request.content_length is None, "sent with no length, as a chunked body is"
     assert r.status_code == 413, r.status_code
 
 
