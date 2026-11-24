@@ -65,6 +65,22 @@ def test_the_same_posting_is_one_record_however_it_is_spelled(_home):
     assert len(stored(_home)) == 1
 
 
+@pytest.mark.parametrize("here, there", [("東京", "大阪"), ("Москва", "Киев"), ("서울", "부산"), ("Zürich", "Zug")])
+def test_a_place_in_any_script_is_part_of_the_posting_key(_home, here, there):
+    js.upsert(listing(location=here, url="https://a.example.test/1"), days(-2))
+    js.upsert(listing(location=there, url="https://b.example.test/2"), NOW)
+    assert len(stored(_home)) == 2
+
+
+@pytest.mark.parametrize("here, there", [("Москва", "МОСКВА"), ("東京, Japan", "東京, JPN"), ("Straße 5", "STRASSE 5")])
+def test_one_place_in_any_script_and_case_is_one_posting(_home, here, there):
+    url = "https://careers.example.test/acme"
+    js.upsert(listing("Software Engineer", url=url, location=here, source="feed-a", external_id="A-1",
+                      closes_at=days(-1).isoformat()), days(-3))
+    js.upsert(listing("Software Engineer", url=url, location=there, source="feed-b", external_id="B-2"), days(-2))
+    assert len(stored(_home)) == 1 and js.list_recent(NOW) == []
+
+
 def test_two_feeds_with_their_own_ids_are_one_record(_home):
     js.upsert(listing(source="feed-a", external_id="A-1"), days(-2))
     js.upsert(listing(source="feed-b", external_id="B-77", url="https://b.example.test/77"), NOW)
@@ -174,7 +190,9 @@ PLACES = {
     "newcastle nsw": ("Australia, NSW, Newcastle",),
 }
 #: Two places that share an unknown region, a prefix, or nothing the tables know: always two records.
-TWO_PLACES = [("New York", "Remote - US"), ("Washington", "Remote - US"), ("Quebec", "Remote - Canada"),
+TWO_PLACES = [("東京, 日本", "大阪, 日本"), ("東京, Japan", "大阪, Japan"), ("Киев, Ukraine", "Львов, Ukraine"),
+              ("Москва", "Санкт-Петербург"), ("서울", "부산"), ("東京", "Austin, TX"), ("Remote - US", "東京"),
+              ("תל אביב", "חיפה"), ("Zürich", "Zug"), ("New York", "Remote - US"), ("Washington", "Remote - US"), ("Quebec", "Remote - Canada"),
               ("Remote - US", "Remote - CA"), ("Remote (US)", "Remote (DE)"), ("Remote - US", "Remote - IN"),
               ("Remote - WA", "Washington, DC"), ("Washington, United States",
               "Washington, District of Columbia, United States"), ("Ontario, Canada", "Ontario, CA"),
