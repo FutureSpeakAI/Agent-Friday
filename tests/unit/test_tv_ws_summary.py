@@ -1,4 +1,4 @@
-"""A live line on each workspace row (UI-CRITIC Q6, Stephen's answer; contract draft 3, section 4 addition).
+"""A live line on each workspace row (contract draft 3, section 4: the workspace list).
 
     GET /tv/v1/workspaces?live=1   each row may carry live: {text, as_of}
 
@@ -115,7 +115,7 @@ def test_the_line_is_dated_and_kept_for_a_while(client, monkeypatch):
     assert len(calls) == 2
 
 
-# ── after the security critic (CHANGES): taint, a failed manifest, held and undeclared, text, time ─────────────────
+# ── taint, a manifest that can't be read, undeclared sections, hidden links, time, budget ──
 
 def test_an_outside_headline_keeps_its_taint(client, monkeypatch):
     monkeypatch.setattr(ws_news, "pages", lambda sensitivity: [dict(r, taint="outside:news") for r in NEWS])
@@ -162,9 +162,11 @@ def test_the_next_event_reads_the_pcs_own_clock(client, monkeypatch):
     # calendar times are the PC's local time with no offset; a past one is never "next", whatever the zone
     from datetime import datetime, timedelta
     now = datetime.now()
-    rows = [{"ref": "event:a", "title": "Earlier today", "line": "a", "when": (now - timedelta(hours=1)).strftime("%Y-%m-%dT%H:%M:%S")},
+    def at(h):
+        return (now + timedelta(hours=h)).strftime("%Y-%m-%dT%H:%M:%S")
+    rows = [{"ref": "event:a", "title": "Earlier today", "line": "a", "when": at(-1)},
             {"ref": "event:c", "title": "Odd", "line": "c", "when": "not a time"},
-            {"ref": "event:b", "title": "Soon", "line": "b", "when": (now + timedelta(hours=1)).strftime("%Y-%m-%dT%H:%M:%S")}]
+            {"ref": "event:b", "title": "Soon", "line": "b", "when": at(1)}]
     monkeypatch.setattr(ws_calendar, "pages", lambda sensitivity: [dict(r) for r in rows])
     assert _live(Enrolled(client))["calendar"]["text"] == "Soon · b"
 
@@ -215,3 +217,28 @@ def test_an_event_time_with_an_offset_is_that_instant(client, monkeypatch):
             {"ref": "event:b", "title": "Ahead", "line": "b", "when": "2999-01-01T09:00:00-08:00"}]
     monkeypatch.setattr(ws_calendar, "pages", lambda sensitivity: [dict(r) for r in rows])
     assert _live(Enrolled(client))["calendar"]["text"] == "Ahead · b"
+
+
+def test_a_hung_read_costs_one_list_its_budget_and_no_more(client, monkeypatch):
+    import threading
+    import time
+    gate, calls = threading.Event(), []
+
+    def hangs(sensitivity):
+        calls.append(1)
+        gate.wait(5)
+        return [dict(r) for r in NEWS]
+    monkeypatch.setattr(ws_news, "pages", hangs)
+    monkeypatch.setattr(ws_summary, "BUDGET_S", 0.3)
+    dev = Enrolled(client)
+    _live(dev)                                       # starts the read and waits its budget once
+    t0 = time.monotonic()
+    live = [_live(dev) for _ in range(3)]
+    assert time.monotonic() - t0 < 0.3, "a read already under way is not waited for again"
+    assert all(v["news"] is None and v["knowledge"]["text"] == "3 pages" for v in live)
+    assert len(calls) == 1, "one read per workspace at a time"
+    monkeypatch.setattr(ws_summary, "_clock", lambda: ws_summary._clock_real() + ws_summary.HUNG_S + 1)
+    _live(dev)
+    assert len(calls) == 2, "a read stuck past HUNG_S no longer blocks a fresh one"
+    gate.set()
+    ws_summary.settle(2.0)
