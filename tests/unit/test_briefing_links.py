@@ -415,7 +415,7 @@ GLUED_TAILS = sorted({c + rest for c in string.punctuation for rest in ("", "x",
                                                                         "@evil.example.test/x")})
 #: An item that cites, sourced prose, an item kept as it is, and a heading: the last two meet only the final pass.
 GLUED_PLACEMENTS = ["## Calendar\n- Standup [C1] %s\n", "## Calendar\nNothing today: %s\n", "## Tasks\n- See %s\n",
-                    "## Tasks %s\n- Renew\n"]
+                    "## Tasks %s\n- Renew\n", "## Tasks\n| Item | When |\n| --- | --- |\n| See %s | 9am |\n"]
 
 
 #: A known link target with everything that can follow it, with a label that opens it and with none.
@@ -544,6 +544,10 @@ def _live_links(text, known):
         opened = re.search(r"(?<!\\)\[(?:[^\[\]\n\\]|\\.|\[[^\[\]\n]*\])*\Z", text[line_start:m.start()])
         if opened and j < len(text) and text[j] == ")":
             scanned = scanned[:i] + " " * (j - i) + scanned[j:]
+    # In a table (a delimiter row under a header), every unescaped "|" on a row ends the cell, and the link in it.
+    if re.search(r"(?m)^\s*\|?\s*:?-{3,}:?\s*\|", scanned):
+        scanned = "\n".join(re.sub(r"(?<!\\)\|", " ", row) if row.lstrip().startswith("|") else row
+                            for row in scanned.split("\n"))
     links += [_marked_autolink(m.group(0)) for m in re.finditer(r"(?i)(?:https?://|www\.)[^\s<]*", scanned)]
     outside = text
     for url in known:
@@ -570,7 +574,8 @@ def test_a_known_address_left_after_a_backslash_by_a_removal_renders_only_known_
 
 
 @pytest.mark.parametrize("url", ["https://a.example.test/a)(b", "https://a.example.test/a)", "https://a.example.test/(a",
-                                 "https://a.example.test/a b", "https://a.example.test/a>b"])
+                                 "https://a.example.test/a b", "https://a.example.test/a>b",
+                                 "https://a.example.test/x?eid=1|2"])
 def test_a_source_address_marked_would_not_link_whole_is_no_link(url):
     """A link target marked would end early (brackets out of order, a space, an angle bracket) is never written:
     the item has no working link, so it is dropped and counted."""
@@ -613,6 +618,22 @@ def test_follow_up_a_link_labelled_with_its_own_address_keeps_the_label():
 def test_follow_up_a_known_address_in_a_code_span_is_shown_as_typed():
     url = CAL[0]["url"]
     assert bl.strip_unknown_links("`%s`" % url, {url}) == "`%s`" % url
+
+
+@pytest.mark.parametrize("row", ["| Standup [C1] | 9am |", "| Standup [C1] %s | 9am |", "| Standup <%s> | 9am |"])
+def test_a_known_address_holding_a_pipe_never_renders_a_cut_link_in_a_table(row):
+    url = "https://calendar.example.test/x?eid=1|2"
+    src = bl.collect(calendar=[{"id": "C1", "title": "Standup", "url": url}])
+    line = row % url if "%s" in row else row
+    got, known, final = _pipeline("## Calendar\n| Item | When |\n| --- | --- |\n%s\n" % line, src)
+    assert not _live_links(final, known), final
+
+
+@pytest.mark.xfail(strict=True, reason="follow-up: a source address holding '|' is no link (a table would cut it)")
+def test_follow_up_a_source_address_holding_a_pipe_is_still_linked():
+    src = bl.collect(calendar=[{"id": "C1", "title": "Standup", "url": "https://calendar.example.test/x?eid=1|2"}])
+    got, known, final = _pipeline("## Calendar\n- Standup [C1]\n", src)
+    assert got.dropped_total == 0
 
 
 @pytest.mark.xfail(strict=True, reason="follow-up: speakable leaves ')>' of <address_(x)> in spoken text")
