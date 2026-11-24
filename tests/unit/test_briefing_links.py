@@ -269,7 +269,7 @@ def test_a_known_link_with_a_www_host_survives_validation_and_the_final_pass():
     got = bl.validate("## Calendar\n- Standup at nine. [C1]\n## Sources\n- [Budget](%s)\n" % WWW_NEWS, src)
     final = bl.strip_unknown_links(got.text, bl.known_links(src))
     assert "(%s)" % GCAL in final and "(%s)" % WWW_NEWS in final and "(https://)" not in final
-    assert bl.strip_unknown_links("see %s now" % GCAL, {GCAL}) == "see %s now" % GCAL
+    assert bl.strip_unknown_links("see %s now" % GCAL, {GCAL}) == "see <%s> now" % GCAL    # an autolink nothing can bend
 
 
 HTML_AND_REF_LINKS = ['<a href="https&#58;//evil.example.test/x">open</a>',
@@ -383,7 +383,7 @@ def test_every_known_address_shape_in_every_placement_survives_the_whole_pipelin
     line = placement % url
     got, known, final = _pipeline("## Calendar\n%s\n" % line, bl.collect(calendar=[{"id": "C1", "title": "Standup",
                                                                                       "url": url}]))
-    assert got.dropped_total == 0 and line in final
+    assert got.dropped_total == 0 and url in _live_links(final, known), final   # a bare one comes back as <url>
     assert set(_live_links(final, known)) <= known, final
     assert bl.strip_unknown_links(final, known) == final
 
@@ -418,6 +418,36 @@ GLUED_PLACEMENTS = ["## Calendar\n- Standup [C1] %s\n", "## Calendar\nNothing to
                     "## Tasks %s\n- Renew\n"]
 
 
+#: A known link target with everything that can follow it, with a label that opens it and with none.
+SPAN_SHAPES = ["[agenda](%s)", "](%s)", "\\[agenda](%s)", "[agenda]](%s)", "[C1] see ](%s)"]
+
+
+@pytest.mark.parametrize("tail", GLUED_TAILS)
+@pytest.mark.parametrize("shape", SPAN_SHAPES)
+@pytest.mark.parametrize("placement", GLUED_PLACEMENTS)
+def test_a_known_link_target_with_anything_glued_after_it_renders_only_known_links(tail, shape, placement):
+    url = CAL[0]["url"]
+    got, known, final = _pipeline(placement % (shape % url + tail), bl.collect(calendar=CAL))
+    assert set(_live_links(final, known)) <= known, final
+    assert bl.strip_unknown_links(final, known) == final
+
+
+#: What can open emphasis before a known address that holds the same character: marked would end the link there.
+EMPHASIS_OPENERS = ["_", "__", "*", "**", "~", "~~", "x _", "_x ", "*x ", "_[x](https://calendar.example.test/a/) "]
+
+
+@pytest.mark.parametrize("opener", EMPHASIS_OPENERS)
+@pytest.mark.parametrize("url", [u for u in KNOWN_SHAPES if "_" in u] + ["https://calendar.example.test/e*1*x"])
+@pytest.mark.parametrize("placement", GLUED_PLACEMENTS)
+def test_a_known_address_holding_an_emphasis_mark_is_never_cut_by_emphasis_opened_before_it(opener, url, placement):
+    """A known address standing in the text comes back as <url>: an autolink marked parses before emphasis."""
+    src = bl.collect(calendar=[{"id": "C1", "title": "Standup", "url": url},
+                               {"id": "C2", "title": "Review", "url": "https://calendar.example.test/a/"}])
+    got, known, final = _pipeline(placement % (opener + url), src)
+    assert "<%s>" % url in final, final
+    assert bl.strip_unknown_links(final, known) == final
+
+
 @pytest.mark.parametrize("tail", GLUED_TAILS)
 @pytest.mark.parametrize("placement", GLUED_PLACEMENTS)
 def test_an_unknown_tail_glued_to_a_known_address_never_renders_as_a_link(tail, placement):
@@ -434,7 +464,7 @@ def test_a_known_address_with_only_what_a_renderer_trims_after_it_stands():
     url = CAL[0]["url"]
     for tail in (".", ",", ":", ";", "!", "?", "*", "_", "~", "'", '"', ")", ").", "**", "...", "?!"):
         got, known, final = _pipeline("## Tasks\n- See %s%s\n" % (url, tail), bl.collect(calendar=CAL))
-        assert "%s%s" % (url, tail) in final, tail
+        assert "<%s>%s" % (url, tail) in final, tail
 
 
 #: marked 9.1.6's inline._backpedal, copied from static/vendor/marked-9.1.6.min.js: where an extended autolink ends.
@@ -473,8 +503,11 @@ def _live_links(text, known):
     to the next space, ended by marked's own rule, MARKED_BACKPEDAL), and email autolinks (outside the known links).
     Code spans are not left out: no address may stand in one either."""
     links = [m.group(1) for m in re.finditer(r"\[web:([^\]\s]+)\]", text)]
-    scanned = text                      # the text marked scans for autolinks: a real link's target is not in it
-    for m in re.finditer(r"\]\(", text):
+    # Angle autolinks first, as marked parses them: each is its address, ended at the ">", and no other autolink
+    # runs inside one.
+    links += [m.group(1) for m in re.finditer(r"<((?:https?|ftp)://[^\s<>]*)>", text)]
+    scanned = re.sub(r"<(?:https?|ftp)://[^\s<>]*>", lambda m: " " * len(m.group(0)), text)
+    for m in re.finditer(r"\]\(", scanned):
         i = j = m.end()
         depth = 0
         while j < len(text) and not text[j].isspace():
@@ -486,10 +519,13 @@ def _live_links(text, known):
                 depth -= 1
             j += 1
         links.append(text[i:j])
+        # A real link (an unescaped "[" opens a label of no brackets but one balanced pair) is parsed before
+        # autolinks, so none runs inside its target; "](" with nothing to open it is text, and one may.
         line_start = text.rfind("\n", 0, m.start()) + 1
-        if "[" in text[line_start:m.start()] and j < len(text) and text[j] == ")":
+        opened = re.search(r"(?<!\\)\[(?:[^\[\]\n\\]|\\.|\[[^\[\]\n]*\])*\Z", text[line_start:m.start()])
+        if opened and j < len(text) and text[j] == ")":
             scanned = scanned[:i] + " " * (j - i) + scanned[j:]
-    links += [_marked_autolink(m.group(0)) for m in re.finditer(r"(?i)(?:https?://|www\.)\S*", scanned)]
+    links += [_marked_autolink(m.group(0)) for m in re.finditer(r"(?i)(?:https?://|www\.)[^\s<]*", scanned)]
     outside = text
     for url in known:
         outside = outside.replace(url, " ")
