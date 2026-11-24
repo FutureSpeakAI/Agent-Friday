@@ -43,28 +43,41 @@ def _linked(run: str) -> str:
 _MARK = re.compile("\x00(\\d+)\x00")
 
 
+#: A known address that cannot stand in angle brackets or as a link's target is never set aside (it goes).
+_UNFIT = re.compile("[\\s<>\x00-\x1f\x7f]")
+#: What opens a markdown link before its "](": an unescaped "[", then a label holding no bracket but one balanced
+#: "[...]" pair at most ("[[draft] plan]").
+_LABEL = r"(?<!\\)\[(?:[^\[\]\n\\]|\\.|\[[^\[\]\n]*\])*"
+
+
 def set_aside_known(text: str, known, kept: list) -> str:
-    """The text with every known link replaced by a mark, its spelling saved in `kept`: first each exact "](known)"
-    target, then each known address standing on its own up to a natural end. Every pass that removes links runs
-    on the marked text, so no pattern of its own can cut a known address short (a ")" or a "." in it, or after it)
-    and take it for an unknown one; put_back restores them. The one place both link passes decide what is known
-    (services/briefing_links.strip_unknown_links and attach_links); tests/unit/test_briefing_links.py runs every
-    address shape through both."""
+    """The text with every known link replaced by a mark, its spelling saved in `kept`, for put_back to restore in
+    a form marked (gfm, as ui_parts/app.html renders a briefing) can neither extend nor cut:
+      1. a known address already in angle brackets ("<K>") stays so: an autolink marked ends at the ">", before
+         any emphasis;
+      2. a known link target ("](K)") stays so when a label opens it, so it is a real link, and K's brackets
+         balance; one with nothing to open it is a bare address (3);
+      3. a known address standing in the text, when everything glued to it up to a space is K to marked (its own
+         rule, _linked), comes back as "<K>" with the punctuation after it: nothing glued to it (another link,
+         "K)evil.example", an "_" that opens emphasis) can change what it links. Anything else glued on makes the
+         run another address, and it goes.
+    Every pass that removes links runs on the marked text, so none can cut a known address short. The one place
+    both link passes decide what is known (services/briefing_links.strip_unknown_links and attach_links);
+    tests/unit/test_briefing_links.py renders every shape the way marked does."""
     def mark(spelling: str) -> str:
         kept.append(spelling)
         return "\x00%d\x00" % (len(kept) - 1)
-    ordered = sorted(set(known), key=len, reverse=True)
+    ordered = sorted({url for url in known if url and not _UNFIT.search(url)}, key=len, reverse=True)
+    for url in ordered:
+        if "<%s>" % url in text:
+            text = text.replace("<%s>" % url, mark("<%s>" % url))
     for url in ordered:
         span = "](%s)" % url
-        if span in text:
-            text = text.replace(span, mark(span))
+        if span in text and url.count("(") == url.count(")"):
+            text = re.sub(_LABEL + re.escape(span), lambda m, span=span: m.group(0)[:-len(span)] + mark(span), text)
     for url in ordered:
-        # Everything glued to the address up to a space is what marked would link, a link set aside before it
-        # included (put_back restores it, glued as it was); the address stands alone only when that is exactly
-        # the address. "K)evil.example", "K<@evil.example", "K]x" and K glued to another known link are other
-        # addresses, and go.
-        text = re.sub(re.escape(url) + "\\S*",
-                      lambda m, url=url: mark(m.group(0)) if _linked(m.group(0)) == url else m.group(0), text)
+        text = re.sub(re.escape(url) + "\\S*", lambda m, url=url: (
+            mark("<%s>%s" % (url, m.group(0)[len(url):])) if _linked(m.group(0)) == url else m.group(0)), text)
     return text
 
 
