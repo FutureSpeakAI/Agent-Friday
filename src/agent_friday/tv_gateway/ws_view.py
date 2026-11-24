@@ -77,7 +77,9 @@ def _body() -> tuple:
         raise Rejected(Refusal.BAD_REQUEST, "send {base_rev, change}")
     try:
         proposal_fp("", base_rev, change)
-    except ValueError:                       # test_a_proposal_that_cannot_be_fingerprinted_is_refused_not_a_crash
+    except ValueError:
+        # test_tv_ws_view.py: test_a_challenge_that_cannot_be_fingerprinted_is_refused_not_a_crash,
+        # test_a_signed_proposal_that_cannot_be_fingerprinted_is_refused_before_its_nonce
         raise Rejected(Refusal.BAD_REQUEST, "that change has no canonical form (a lone surrogate, NaN or Infinity)")
     return body, base_rev, change
 
