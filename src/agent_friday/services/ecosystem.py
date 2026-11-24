@@ -35,7 +35,7 @@ FACTS_DIR = ROOT / "facts"
 APP_IDS = ("phone", "tablet", "tv", "watch")
 APP_STATUSES = ("shipped", "developer_preview")
 ITEM_STATUSES = ("shipped", "built_off", "planned")
-PAIR_METHODS = ("gateway_sas", "relay_code")
+PAIR_METHODS = ("gateway_sas", "phone_link")
 TOPICS = ("overview", "install", "pair", "sees", "limits")
 
 PROMPT_BLOCK_MAX_CHARS = 700
@@ -116,6 +116,12 @@ HOUSEHOLD_TURN = ("Its questions are answered with none of your memory or files,
                   "is run for it. It also receives the household profile's settings and chats.")
 
 
+#: A watch holds no pairing with this PC: tv_gateway never sees it, the phone does the asking.
+PHONE_LINK_TURN = ("It does not connect to me directly and I grant it nothing. What you ask on it goes to the "
+                   "Agent Friday app on your phone, which asks me on the phone's own pairing; so it reaches "
+                   "what your phone reaches, and nothing when the phone is not paired.")
+
+
 class EcosystemError(ValueError):
     """The knowledge file or a facts snapshot is missing, malformed or untrue."""
 
@@ -133,6 +139,7 @@ class Facts:
     capabilities: frozenset
     verbs: frozenset           # "<capability>/<verb>", leaving out verbs the app gates as never
     pairing: frozenset         # the pairing markers found in the app's sources
+    routes: frozenset          # "<surface>/<name>": what the app's sources ask the PC or the phone for
     release_signing: str
 
     def holds(self, key) -> bool:
@@ -144,6 +151,7 @@ class Facts:
             "capability": value in self.capabilities,
             "verb": value in self.verbs,
             "pairing": value in self.pairing,
+            "route": value in self.routes,
             "signing": value == self.release_signing,
         }.get(kind, False)
 
@@ -160,6 +168,7 @@ def parse_facts(snapshot) -> Facts:
             verbs=frozenset(f"{name}/{verb}" for name, cap in caps.items()
                             for verb, gate in cap["verbs"].items() if gate != NEVER_GATE),
             pairing=frozenset(k for k, v in facts["pairing"].items() if v is True),
+            routes=frozenset(f"{surface}/{name}" for surface, names in facts["routes"].items() for name in names),
             release_signing=str(facts["release_signing"]))
     except (KeyError, TypeError, ValueError, AttributeError) as e:
         raise EcosystemError(f"a facts snapshot is malformed ({type(e).__name__})") from None
@@ -384,9 +393,8 @@ def sees(a: App) -> list:
     def listed(rights) -> str:
         return "; ".join(RIGHT_NOTES[r] for r in rights)
     lines = []
-    if a.pair.method == "relay_code":
-        lines.append("It does not connect to me directly, so I grant it nothing: "
-                     "what it reaches is decided by its own helper program.")
+    if a.pair.method == "phone_link":
+        lines.append(PHONE_LINK_TURN)
     elif pairing.owner_grant(a.id, household.member_for_kind(a.id)):
         lines.append(f"Once you approve the pairing it is signed in as you, and that one press lets it: "
                      f"{listed(device_pairing.RIGHTS)}.")

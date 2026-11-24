@@ -25,11 +25,25 @@
       "org.tvprivacy.adbreak.permission.GROWN_UP"
     ],
     "release_signing": "debug_key",
+    "routes": {
+      "gateway": [
+        "channels",
+        "hello",
+        "inherit",
+        "messages",
+        "models",
+        "pair",
+        "session",
+        "stt",
+        "wand"
+      ],
+      "phone_link": []
+    },
     "target_sdk": 34,
     "version_code": 1,
     "version_name": "0.1"
   },
-  "fingerprint": "daf0ce6bcdf6cb24b90963e5028b8f045627cd70708e8fafbdfed2b59493fdbc",
+  "fingerprint": "2426037319111a9410b2ea953899faf1f8f6392f5338f3d179a76e718957dea9",
   "schema": 1,
   "source": {
     "commit": null,

@@ -280,7 +280,8 @@ def _enc_keys() -> tuple:
     if wrap == "passphrase":
         return "yes", "Encrypted, and the key that opens them is locked with your passphrase."
     if wrap == "dpapi":
-        return "yes", "Encrypted, and the key that opens them is locked with Windows' protection for your account."
+        return "partly", ("Encrypted, and the key that opens them is locked to your Windows account: other accounts and a copy "
+                          "of the file cannot open it, but a program running as you can. A passphrase stops that too.")
     if wrap is None:
         return "unknown", "Friday's key store doesn't exist yet; nothing has been stored through it."
     return "partly", ("Encrypted, but the key that opens them is kept in Friday's folder without a "

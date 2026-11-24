@@ -131,15 +131,14 @@ def lan_address() -> Optional[str]:
 
 def serve(host: str, port: int) -> dict:
     """Serve the gateway on the Tailscale address only; ValueError for any other address."""
-    from werkzeug.serving import make_server
     from agent_friday.tv_gateway import app as gateway, tls
     host = str(host or "").strip()
     if not is_tailnet_address(host):
         raise ValueError("the tailnet listener binds only this PC's Tailscale address, never a LAN, public or wildcard one")
     with _lock:
         _stop_locked()
-        srv = make_server(host, int(port), gateway.create_app(tailnet=True), threaded=True,
-                          ssl_context=tls.server_context())
+        srv = gateway.make_bounded_server(host, int(port), gateway.create_app(tailnet=True),
+                                          ssl_context=tls.server_context())
         threading.Thread(target=srv.serve_forever, name="tv-gateway-tailnet", daemon=True).start()
         _state.update(server=srv, address=host, port=srv.port, name=dns_name())
         _log.info("TV gateway also listening on the tailnet at %s:%s", host, srv.port)
@@ -149,10 +148,8 @@ def serve(host: str, port: int) -> dict:
 def _stop_locked() -> None:
     srv = _state.get("server")
     if srv is not None:
-        try:
-            srv.shutdown()
-        except Exception:
-            pass
+        from agent_friday.tv_gateway import app as gateway
+        gateway.close_server(srv)
     _state.update(server=None, address=None, port=None, name=None)
 
 
