@@ -58,9 +58,19 @@ Each countdown says where it came from, for example "from your calendar" or
 "from your wiki". Public holidays are not added, unless they are on your
 calendar or in your wiki.
 
-**🌅 START MY DAY** gives a spoken briefing in this order: today's calendar,
-email that needs attention, news relevant to you, then your active tasks and
-commitments. It ends with one suggestion for the day.
+**🌅 START MY DAY** reads you today's written briefing and opens it in News at
+the same time, so you can see what is being said. If today's briefing was
+written in the last six hours, it reads that one; otherwise it writes a new one
+first. The briefing follows your daily-briefing-format skill and says at the top
+when it was generated.
+
+Every item in the briefing links to where it came from (the calendar event, the
+email in its own mailbox, the story). An item with no real link is left out,
+and the briefing says how many were left out. The extra sections, such as
+Events and the weekend family outing, are skills: turn each on or off in
+**News > Customize Briefing > Section skills**. A section that is on but could
+not run (its skill is missing, is waiting for your approval, or failed) shows
+one line, "Didn't run", with the reason.
 
 When this cluster shows is set in **Settings > Appearance > Start screen >
 Show my day**:

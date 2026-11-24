@@ -94,6 +94,7 @@
   "big_mode": {
    "type": "string"
   },
+  "briefing_sections": {},
   "calendar_delete_notify_guests": {
    "type": "boolean"
   },

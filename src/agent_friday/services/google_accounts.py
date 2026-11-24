@@ -1363,6 +1363,7 @@ def _calendar_for_creds(creds, start, end) -> list:
             s, e = ev.get("start", {}), ev.get("end", {})
             out.append({
                 "id": ev.get("id", ""),
+                "html_link": ev.get("htmlLink", ""),        # the event's own page; a briefing item links to it
                 "title": ev.get("summary", "(untitled)"),
                 "start_time": s.get("dateTime") or s.get("date") or "",
                 "end_time": e.get("dateTime") or e.get("date") or "",

@@ -127,8 +127,9 @@ def list_briefings():
                 entry[f.suffix.lstrip('.')] = f.name
                 entry['size'] = f.stat().st_size
 
-    # Location 2: ~/.friday/wiki/briefings — filenames like 2026-04-14.html or .md
-    wiki_briefings = HOME / '.friday' / 'wiki' / 'briefings'
+    # Location 2: the briefings folder briefing_files.write saves into — filenames like 2026-04-14.html or .md
+    from agent_friday.services import briefing_files
+    wiki_briefings = briefing_files.briefings_dir()
     if wiki_briefings.exists():
         for f in wiki_briefings.iterdir():
             if f.suffix in ('.html', '.md') and len(f.stem) == 10 and f.stem[4] == '-' and f.stem[7] == '-':

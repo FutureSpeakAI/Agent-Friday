@@ -74,8 +74,9 @@ def _find_briefing_path(filename):
         name = safe_name(filename, what="briefing name")
         # Location 1: Desktop/friday-creations (legacy daily-briefing-*.html files)
         p1 = contained(HOME / 'Desktop' / 'friday-creations', name)
-        # Location 2: ~/.friday/wiki/briefings (date-named files like 2026-04-14.html)
-        p2 = contained(HOME / '.friday' / 'wiki' / 'briefings', name)
+        # Location 2: the briefings folder briefing_files.write saves into (date-named files like 2026-04-14.md)
+        from agent_friday.services import briefing_files
+        p2 = contained(briefing_files.briefings_dir(), name)
     except ValueError:
         return None
     if p1.is_file() and p1.name.startswith('daily-briefing'):
@@ -1072,13 +1073,18 @@ def warm_news_cache(limit_per: int = 8) -> None:
 #: Written beside the run by _notify_briefing; see podcast_news.sidecar_path.
 _LAST_BRIEFING_SOURCES: dict = {}
 
+#: Tells the model to cite a calendar entry or an email by its id; the link is added by code
+#: (services/briefing_links), and an item that cannot cite one is dropped and counted.
+_ID_RULE = ("Cite an item by its id in square brackets after it, like [{letter}1]. Never write a web address "
+            "or an email link: links are added for you from the ids, and an item with no id is left out.")
+
 
 def _start_briefing_sources():
     """A briefing run's sources are its own: each run starts with none, so a
     run that gathers nothing never inherits an earlier run's stories."""
     _LAST_BRIEFING_SOURCES.clear()
     _LAST_BRIEFING_SOURCES.update({"version": 1, "date": datetime.now().strftime('%Y-%m-%d'),
-                                   "calendar": [], "news": []})
+                                   "calendar": [], "news": [], "email": [], "events": []})
 
 
 def _keep_briefing_sources(**parts):
@@ -1115,7 +1121,70 @@ def _finish_briefing(content):
     _LAST_BRIEFING_SOURCES["link_check"] = problems
     if problems:
         print(f"  [briefing] link check: {'; '.join(problems[:3])}")
-    return news_links.attach_links(content, stories)
+    # No item is stored or shown without a link taken from the tools' own output (services/briefing_links).
+    from agent_friday.services import briefing_links
+    sources = briefing_links.collect(news=stories, email=_LAST_BRIEFING_SOURCES.get("email"),
+                                     calendar=_LAST_BRIEFING_SOURCES.get("calendar"))
+    checked = briefing_links.validate(content, sources)
+    _LAST_BRIEFING_SOURCES["dropped"] = checked.dropped
+    if checked.dropped_total:
+        print(f"  [briefing] {checked.dropped_total} items dropped: no source ({checked.dropped})")
+    # The calendar and email links the validator just put in are verified; attach_links must not take them out.
+    verified = briefing_links.known_links(sources)
+    body = news_links.attach_links(checked.text, stories, keep=verified)
+    _LAST_BRIEFING_SOURCES["section_links"] = []
+    try:
+        extra = _briefing_sections()
+    except Exception as exc:
+        print(f"  [briefing] sections failed: {type(exc).__name__}: {exc}")
+        extra = "## Briefing sections\n_Didn't run: the section skills failed (%s)._" % type(exc).__name__
+    if extra:
+        body = body.rstrip() + "\n\n" + extra
+    # Last pass over everything assembled: the only links left are ones the tools returned.
+    allowed = verified | {s.get("url") for s in stories if s.get("url")} | set(_LAST_BRIEFING_SOURCES["section_links"])
+    body = briefing_links.strip_unknown_links(body, allowed)
+    from agent_friday.services import briefing_sections
+    body = briefing_sections.with_stamp(body, datetime.now())
+    notice = _LAST_BRIEFING_SOURCES.get("skill_notices") or ""
+    return (notice + "\n\n" + body) if notice else body
+
+
+def _skill_blocks():
+    """The briefing format skill as a prompt block. A format skill that is not installed is not silently skipped:
+    the run records the visible line and `_finish_briefing` puts it at the top of the briefing. The section skills
+    (events, family outing) are not prompt blocks; they run as their own calls in `_briefing_sections`."""
+    from agent_friday.services import briefing_skills
+    fmt = briefing_skills.load(briefing_skills.FORMAT_SKILL)
+    _keep_briefing_sources(skills={fmt.name: fmt.state}, skill_notices=briefing_skills.notices([fmt]))
+    if fmt.installed:
+        return [briefing_skills.instructions(fmt, "## Briefing format (the %s skill; follow it)" % fmt.name)]
+    return []
+
+
+def _briefing_sections():
+    """The section skills' markdown for today (services/briefing_sections): each its own call, link-checked,
+    with "Didn't run: <skill> <why>" in place of one that could not. Stored with the time they were made."""
+    from agent_friday.services import briefing_events, briefing_sections
+    now = datetime.now()
+    (_, _), (_, b_end) = briefing_events.windows(now)
+    rows = []
+    try:
+        from agent_friday.services import calendar_engine
+        rows = [r for r in calendar_engine._fetch_calendar_range(now, datetime.combine(b_end, datetime.min.time()))
+                if isinstance(r, dict) and "error" not in r]
+    except Exception as exc:
+        print(f"  [briefing] sections calendar read failed: {exc}")
+    made, results = briefing_sections.current(
+        now, rows, lambda prompt: _generate_text([{"role": "user", "content": prompt}], max_tokens=2000),
+        first_index=len(_LAST_BRIEFING_SOURCES.get("calendar") or []) + 1)
+    _keep_briefing_sources(sections={r.skill: r.state for r in results},
+                           sections_dropped={r.skill: r.dropped for r in results if r.dropped},
+                           section_links=sorted({link for r in results for link in r.links}),
+                           sections_made=made.isoformat())
+    if not results:
+        return ""
+    made_line = briefing_sections.made_line(made, now)
+    return (made_line + "\n\n" if made_line else "") + briefing_sections.render(results)
 
 
 def _gather_live_briefing_context():
@@ -1151,23 +1220,26 @@ def _gather_live_briefing_context():
                 cal_events, note = briefing_google.recover("calendar")
                 if cal_events is None:
                     return f"## Today's Calendar\n({note})"
+            shown = [ev for ev in (cal_events or [])[:20] if isinstance(ev, dict)]
             _keep_briefing_sources(calendar=[
-                {k: ev.get(k) or "" for k in ("title", "start_time", "end_time", "location")}
-                for ev in (cal_events or [])[:20] if isinstance(ev, dict)])
+                dict({k: ev.get(k) or "" for k in ("title", "start_time", "end_time", "location")},
+                     id="C%d" % n, url=ev.get("html_link") or "")
+                for n, ev in enumerate(shown, 1)])
             if cal_events:
                 lines = []
-                for ev in cal_events[:20]:
+                for n, ev in enumerate(shown, 1):
                     when = ev.get('start_time') or ''
                     title = ev.get('title') or 'Untitled'
                     loc = ev.get('location') or ''
                     attendees = ev.get('attendees') or []
-                    line = f"- {when} — {title}"
+                    line = f"- [C{n}] {when} — {title}"
                     if loc:
                         line += f" @ {loc}"
                     if attendees:
                         line += f" (with {', '.join(attendees[:5])})"
                     lines.append(line)
-                return "## Today's & Tomorrow's Calendar\n" + "\n".join(lines)
+                return ("## Today's & Tomorrow's Calendar\n" + _ID_RULE.format(letter="C") + "\n"
+                        + "\n".join(lines))
             return "## Today's Calendar\n(No events scheduled for today or tomorrow.)"
         except Exception as e:
             return f"## Today's Calendar\n(Calendar fetch failed: {e})"
@@ -1193,14 +1265,19 @@ def _gather_live_briefing_context():
                     return "## Recent / Unread Email (local cache)\n" + "\n".join(lines)
                 return f"## Recent / Unread Email\n({gmail_err})"
             if emails:
-                lines = []
-                for m in emails:
+                lines, kept = [], []
+                for n, m in enumerate(emails, 1):
                     sender = m.get('sender') or 'unknown'
                     subj = m.get('subject') or '(no subject)'
                     snippet = str(m.get('snippet') or '').strip().replace('\n', ' ')[:160]
                     flag = '🔵 ' if 'UNREAD' in (m.get('labels') or []) else ''
-                    lines.append(f"- {flag}**{sender}** — {subj}" + (f"\n  {snippet}" if snippet else ''))
-                return "## Recent / Unread Email\n" + "\n".join(lines)
+                    lines.append(f"- [E{n}] {flag}**{sender}** — {subj}" + (f"\n  {snippet}" if snippet else ''))
+                    # The legacy fetch names Gmail's id "id"; the connected-accounts read (briefing_google.recover)
+                    # names it "gmail_id" and says which account the message is in.
+                    kept.append({"id": f"E{n}", "message_id": m.get('id') or m.get('gmail_id') or "",
+                                 "account": m.get('account_email') or "", "sender": sender, "subject": subj})
+                _keep_briefing_sources(email=kept)
+                return "## Recent / Unread Email\n" + _ID_RULE.format(letter="E") + "\n" + "\n".join(lines)
             return "## Recent / Unread Email\n(No email in the last 24 hours.)"
         except Exception as e:
             return f"## Recent / Unread Email\n(Email fetch failed: {e})"
@@ -1288,6 +1365,8 @@ def _gather_live_briefing_context():
             sections.append(intel["markdown"])
     except Exception as _ci_err:
         print(f"  [briefing] connector intelligence skipped: {_ci_err}")
+
+    sections.extend(_skill_blocks())
 
     from agent_friday.services import briefing_google
     header = (
