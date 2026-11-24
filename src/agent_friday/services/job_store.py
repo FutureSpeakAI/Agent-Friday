@@ -4,9 +4,11 @@ Scanners (the bundled job_scanner today, the job-hunt skill after it) WRITE sigh
 the panel READS `list_recent` and `list_archive`. Neither side needs the other's internals.
 
 * a posting is one record however it arrives: `make_keys` gives every key a listing can be known by (its feed's
-  id, its company, title and location as words, its URL without tracking parameters or fragment), and a sighting
-  that shares any of them with a record is that record; a second feed with its own id, the same feed with and
-  without an id, and a URL with utm_ parameters all land on one record;
+  id, its company, title and location as words, its URL without tracking parameters or fragment); a sighting that
+  shares its feed id or its company, title and location with a record is that record, and one that shares only the
+  URL is that record unless it names another company, title or place (_contradicts: a careers page lists several
+  postings on one URL); a second feed with its own id, the same feed with and without an id, and a URL with utm_
+  parameters all land on one record;
 * a posting is open until its closing date passes (a date without a time closes at the end of that day) or it has
   not been seen for STALE_DAYS; the sweep then moves it to the archive (status closed or expired) with the date it
   closed, and never deletes it; an expired posting that is seen again is open again, a closed one stays closed;
@@ -168,18 +170,36 @@ def _save(data: dict) -> None:
             os.unlink(name)
 
 
+#: Words that say how a posting is worked, not where: "Remote - US" is placed in the US, "Remote" alone nowhere.
+_WORK_MODES = frozenset({"remote", "hybrid", "onsite", "anywhere"})
+
+
+def _place(location) -> Tuple[str, ...]:
+    """The place a location names first, as words: the first comma, slash, bracket or spaced dash separated part
+    that is more than a work mode. "New York, NY" and "New York, New York, United States" are ("new", "york");
+    "Austin, TX" is ("austin",); "Remote (US)" and "US Remote" are ("us",); "Remote" is ()."""
+    for part in re.split(r"[,;|/()]|\s[-\u2013\u2014]\s", str(location or "").lower()):
+        words = tuple(w for w in _words(part).split() if w not in _WORK_MODES)
+        if words:
+            return words
+    return ()
+
+
 def _contradicts(record: dict, listing: dict) -> bool:
-    """True when both name a company and a title and they differ, or both name a location and the two share no word:
-    then a shared URL is a careers page that lists several postings, not one posting. One role in New York and in
-    London is two postings; "New York, NY" and "New York, New York, United States" are two feeds spelling one place,
-    and stay one posting. A sighting that names no location contradicts nothing, so on a careers page it joins the
-    first record that page's URL was seen with."""
+    """True when both name a company and a title and they differ, or both name a place (_place) and neither place
+    begins the other: then a shared URL is a careers page that lists several postings, not one posting. Austin, TX
+    and Dallas, TX are two postings, and so are New York and York, PA; "New York, NY", "New York City" and "New
+    York, New York, United States" are feeds spelling one place, and stay one posting. Known limits: a place spelled
+    two ways that neither begins ("NYC", "New York") is two postings, and two towns of one name in different states
+    ("Portland, OR", "Portland, ME") are one. A sighting that names no place contradicts nothing, so on a careers
+    page it joins the first record that page's URL was seen with."""
     mine = (_words(record.get("company")), _words(record.get("title")))
     theirs = (_words(listing.get("company")), _words(listing.get("title")))
     if all(mine) and all(theirs) and mine != theirs:
         return True
-    here, there = set(_words(record.get("location")).split()), set(_words(listing.get("location")).split())
-    return bool(here and there and not here & there)
+    here, there = _place(record.get("location")), _place(listing.get("location"))
+    shorter = min(len(here), len(there))
+    return bool(shorter) and here[:shorter] != there[:shorter]
 
 
 def _find(data: dict, keys: List[str], listing: dict) -> Optional[dict]:
