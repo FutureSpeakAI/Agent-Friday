@@ -14,17 +14,18 @@ from agent_friday.services.peer_stage_heads import (
 )
 
 T = Transition
+P = frozenset({"alice", "bob"})
 
 
 def test_a_transition_on_the_current_head_advances_it():
-    s = StageHeads()
+    s = StageHeads(P)
     assert s.apply(T(GENESIS, "a")) is Outcome.ADVANCED
     assert s.apply(T("a", "b")) is Outcome.ADVANCED
     assert s.head == "b" and not s.frozen
 
 
 def test_a_transition_on_a_stale_head_is_refused():
-    s = StageHeads()
+    s = StageHeads(P)
     s.apply(T(GENESIS, "a"))
     s.apply(T("a", "b"))
     assert s.apply(T("zzz", "c")) is Outcome.STALE
@@ -32,14 +33,14 @@ def test_a_transition_on_a_stale_head_is_refused():
 
 
 def test_the_same_transition_twice_is_a_no_op():
-    s = StageHeads()
+    s = StageHeads(P)
     s.apply(T(GENESIS, "a"))
     assert s.apply(T(GENESIS, "a")) is Outcome.DUPLICATE
     assert s.head == "a" and not s.frozen
 
 
 def test_two_heads_on_one_prior_freeze_the_stage_and_keep_both():
-    s = StageHeads()
+    s = StageHeads(P)
     s.apply(T(GENESIS, "a"))
     assert s.apply(T(GENESIS, "b")) is Outcome.CONFLICT
     assert s.frozen and s.kept_heads() == {"a", "b"}
@@ -49,15 +50,80 @@ def test_two_heads_on_one_prior_freeze_the_stage_and_keep_both():
 def test_every_arrival_order_of_small_cases_gives_the_same_state(heads):
     states = set()
     for order in itertools.permutations(heads):
-        s = StageHeads()
+        s = StageHeads(P)
         for h in order:
             s.apply(T(GENESIS, h))
         states.add((s.frozen, s.kept_heads()))
     assert states == {(True, frozenset(heads))}
 
 
+CHAINS_AND_FORKS = [
+    # (transitions, reconcile to, transitions applied after the reconcile)
+    ([T(GENESIS, "a"), T("a", "b"), T(GENESIS, "c")], "a", [T("a", "d"), T("b", "e"), T("c", "f")]),
+    ([T(GENESIS, "a"), T("a", "b"), T("b", "c"), T("b", "x")], "c", [T("a", "y"), T("c", "d")]),
+    ([T(GENESIS, "a"), T("a", "b"), T(GENESIS, "c"), T("c", "d")], "c", [T("d", "e"), T("b", "z")]),
+]
+
+
+@pytest.mark.parametrize("received,chosen,later", CHAINS_AND_FORKS)
+def test_every_arrival_order_of_chains_and_forks_gives_the_same_state(received, chosen, later):
+    """Every order of the same signed transitions, the same reconcile, then the same later ones: one state."""
+    results = set()
+    for order in itertools.permutations(received):
+        s = StageHeads(P)
+        for t in order:
+            s.apply(t)
+        before = (s.head, s.frozen, s.kept_heads())
+        refusal = s.reconcile("carol", chosen)
+        after = []
+        for t in later:
+            after.append((s.apply(t), s.head, s.frozen, s.kept_heads()))
+        results.add((before, refusal, tuple(after)))
+    assert len(results) == 1, results
+
+
+def test_a_reconcile_keeps_the_work_built_on_the_chosen_head():
+    s = StageHeads(P)
+    for t in (T(GENESIS, "a"), T("a", "b"), T(GENESIS, "c")):
+        s.apply(t)
+    assert s.reconcile("carol", "a") is None
+    assert s.head == "b" and not s.frozen
+    assert s.apply(T("a", "d")) is Outcome.CONFLICT
+    assert s.frozen and s.kept_heads() == {"b", "d"}
+
+
+def test_a_second_head_on_an_old_prior_freezes_even_after_a_reconcile():
+    s = StageHeads(P)
+    for t in (T(GENESIS, "a"), T("a", "b"), T("b", "c"), T("b", "x")):
+        s.apply(t)
+    assert s.reconcile("carol", "c") is None and s.head == "c"
+    assert s.apply(T("a", "y")) is Outcome.CONFLICT
+    assert s.frozen and s.kept_heads() == {"b", "y"}
+
+
+def test_a_stage_must_name_its_parties():
+    with pytest.raises(TypeError):
+        StageHeads()
+    with pytest.raises(ValueError):
+        StageHeads(frozenset())
+
+
+@pytest.mark.parametrize("prior,new", [("a", "a"), ("a", GENESIS), (GENESIS, GENESIS)])
+def test_a_transition_cannot_loop_or_make_genesis(prior, new):
+    with pytest.raises(ValueError):
+        T(prior, new)
+
+
+def test_a_cycle_through_two_priors_freezes_instead_of_looping():
+    s = StageHeads(P)
+    for t in (T(GENESIS, "a"), T("a", "b")):
+        s.apply(t)
+    assert s.apply(T("b", "a")) is Outcome.CONFLICT
+    assert s.frozen and s.head == "b"
+
+
 def test_nothing_advances_a_frozen_stage():
-    s = StageHeads()
+    s = StageHeads(P)
     s.apply(T(GENESIS, "a"))
     s.apply(T(GENESIS, "b"))
     assert s.apply(T("a", "c")) is Outcome.FROZEN
@@ -65,7 +131,7 @@ def test_nothing_advances_a_frozen_stage():
 
 
 def test_only_an_independent_reviewer_reconciles_to_a_kept_head():
-    s = StageHeads(parties=frozenset({"alice", "bob"}))
+    s = StageHeads(P)
     assert s.reconcile("carol", "a") is ReconcileRefusal.NOT_FROZEN
     s.apply(T(GENESIS, "a"))
     s.apply(T(GENESIS, "b"))
