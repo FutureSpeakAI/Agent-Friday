@@ -83,6 +83,27 @@ def test_one_place_in_any_script_and_case_is_one_posting(_home, here, there):
     assert len(stored(_home)) == 1 and js.list_recent(NOW) == []
 
 
+#: Titles that differ only in the symbols that name a language: two jobs.
+SYMBOL_TITLES = [("Embedded C++ Developer", "Embedded C Developer"), ("Senior C# Engineer", "Senior C++ Engineer"),
+                 ("F# Developer", "F Developer"), ("C# Developer", "C Developer")]
+
+
+@pytest.mark.parametrize("first, second", SYMBOL_TITLES + [(b, a) for a, b in SYMBOL_TITLES])
+@pytest.mark.parametrize("shared_url", [True, False])
+def test_titles_that_differ_only_in_plus_or_hash_are_two_jobs(_home, first, second, shared_url):
+    """On one careers URL, and by company, title and location on two URLs with no feed id."""
+    url_a = "https://careers.example.test/acme"
+    url_b = url_a if shared_url else "https://jobs.example.test/42"
+    if shared_url:
+        ids = ({"source": "feed-a", "external_id": "A-1"}, {"source": "feed-a", "external_id": "A-2"})
+    else:
+        ids = ({"source": None, "external_id": None}, {"source": None, "external_id": None})
+    js.upsert(listing(first, url=url_a, location="Austin, TX", closes_at=days(-1).isoformat(), **ids[0]), days(-3))
+    js.upsert(listing(second, url=url_b, location="Austin, TX", **ids[1]), days(-2))
+    assert sorted(j["title"] for j in stored(_home).values()) == sorted([first, second])
+    assert [j["title"] for j in js.list_recent(NOW)] == [second]
+
+
 @pytest.mark.parametrize("company", ["", "Acme Robotics"])
 def test_two_titles_on_one_careers_url_are_two_postings_with_or_without_a_company(_home, company):
     """Another title contradicts a shared URL whether or not either sighting names a company."""
@@ -205,18 +226,20 @@ PLACES = {
 }
 #: Two places that share an unknown region, a prefix, or nothing the tables know: always two records.
 TWO_PLACES = [("Mexico, Mexico", "Remote - Mexico"), ("TX 78701", "TX 75001"), ("Mexico 06600", "Mexico 64000"),
-              ("Germany 10115", "Germany 80331"), ("India 560001", "India 400001"), ("पुणे", "पेण"), ("दीव", "दिवा"),
-              ("เชียงใหม่", "เชียงราย"), ("東京, 日本", "大阪, 日本"), ("東京, Japan", "大阪, Japan"),
-              ("Киев, Ukraine", "Львов, Ukraine"),
-              ("Москва", "Санкт-Петербург"), ("서울", "부산"), ("東京", "Austin, TX"), ("Remote - US", "東京"),
-              ("תל אביב", "חיפה"), ("Zürich", "Zug"), ("New York", "Remote - US"), ("Washington", "Remote - US"), ("Quebec", "Remote - Canada"),
+              ("Germany 10115", "Germany 80331"), ("India 560001", "India 400001"), ("पुणे", "पेण"),
+              ("दीव", "दिवा"), ("เชียงใหม่", "เชียงราย"), ("東京, 日本", "大阪, 日本"), ("東京, Japan", "大阪, Japan"),
+              ("Киев, Ukraine", "Львов, Ukraine"), ("Москва", "Санкт-Петербург"), ("서울", "부산"),
+              ("東京", "Austin, TX"), ("Remote - US", "東京"), ("תל אביב", "חיפה"), ("Zürich", "Zug"),
+              ("New York", "Remote - US"), ("Washington", "Remote - US"), ("Quebec", "Remote - Canada"),
               ("Remote - US", "Remote - CA"), ("Remote (US)", "Remote (DE)"), ("Remote - US", "Remote - IN"),
-              ("Remote - WA", "Washington, DC"), ("Washington, United States",
-              "Washington, District of Columbia, United States"), ("Ontario, Canada", "Ontario, CA"),
-              ("Remote - Netherlands", "Holland, MI"), ("Remote, CA", "Toronto, CA"), ("Tbilisi, Georgia",
-              "Georgia, United States"), ("Bangalore, IN", "Remote, IN"), ("Store 12, Dallas, TX", "Store 40, Dallas, TX"),
-              ("Austin, TX; Dallas, TX", "Dallas, TX"), ("EMEA - London", "EMEA - Paris"), ("EMEA - London", "London, UK"), ("Bay Area - San Francisco",
-              "Bay Area - San Jose"), ("New York City, NY", "New York, NY"), ("IND - Bengaluru", "IND - Hyderabad"),
+              ("Remote - WA", "Washington, DC"),
+              ("Washington, United States", "Washington, District of Columbia, United States"),
+              ("Ontario, Canada", "Ontario, CA"), ("Remote - Netherlands", "Holland, MI"),
+              ("Remote, CA", "Toronto, CA"), ("Tbilisi, Georgia", "Georgia, United States"),
+              ("Bangalore, IN", "Remote, IN"), ("Store 12, Dallas, TX", "Store 40, Dallas, TX"),
+              ("Austin, TX; Dallas, TX", "Dallas, TX"), ("EMEA - London", "EMEA - Paris"),
+              ("EMEA - London", "London, UK"), ("Bay Area - San Francisco", "Bay Area - San Jose"),
+              ("New York City, NY", "New York, NY"), ("IND - Bengaluru", "IND - Hyderabad"),
               ("Remote - US", "Remote - Canada"), ("Remote (US)", "Remote, Canada"), ("Toronto, CA", "Toronto, ON"),
               ("Office - Austin", "Office - Dallas"), ("Arlington, VA 22201", "Arlington, TX 76010")]
 SPELLINGS = [(place, spelling) for place, spellings in PLACES.items() for spelling in spellings]
@@ -239,7 +262,9 @@ def test_every_pair_of_place_spellings_on_one_url_is_one_posting_exactly_when_it
 
 #: FOLLOW-UPS (PR #1110 body): one job spelled two ways that the place rule keeps as two records. Each costs a
 #: duplicate in Career Ops, never a wrong merge; the rule fails apart on purpose. xfail(strict) so a fix shows.
-SAME_JOB_SPLITS = [("Toronto, ON M5V 2T6", "Toronto, ON"), ("Toronto, CA", "Toronto, ON"), ("Paris, FR", "Paris, France"), ("Washington, D.C.", "Washington, DC"),
+SAME_JOB_SPLITS = [("İzmir", "Izmir, Turkey"), ("Germany 10115", "Berlin, Germany"),
+                   ("Toronto, ON M5V 2T6", "Toronto, ON"), ("Toronto, CA", "Toronto, ON"),
+                   ("Paris, FR", "Paris, France"), ("Washington, D.C.", "Washington, DC"),
                    ("Remote in Austin, TX", "Austin, TX"), ("NYC", "New York, NY"), ("Bengaluru", "Bangalore"),
                    ("Zürich", "Zurich"), ("New York", "New York, NY"), ("Ft. Worth, TX", "Fort Worth, TX"),
                    ("Singapore, Singapore", "Singapore"), ("Bangalore, Karnataka, India", "Bangalore, India"),
