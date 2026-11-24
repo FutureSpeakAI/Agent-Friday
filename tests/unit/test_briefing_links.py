@@ -669,6 +669,18 @@ def test_follow_up_speech_drops_an_angle_bracketed_address_whole():
     assert ">" not in speakable("See <https://calendar.example.test/e_(1)> now.")
 
 
+@pytest.mark.xfail(strict=True, reason="follow-up: a known link with a title shows as text around a bare <address>")
+def test_follow_up_a_known_link_with_a_title_keeps_it():
+    url = CAL[0]["url"]
+    assert bl.strip_unknown_links('[x](%s "t")' % url, {url}) == '[x](%s "t")' % url
+
+
+@pytest.mark.xfail(strict=True, reason="follow-up: a known address inside its own link's label becomes a nested link")
+def test_follow_up_a_known_address_inside_its_own_link_label_is_not_nested():
+    url = CAL[0]["url"]
+    assert bl.strip_unknown_links("[a %s b](%s)" % (url, url), {url}) == "[a %s b](%s)" % (url, url)
+
+
 def test_a_known_story_link_with_empty_brackets_keeps_them_in_the_sources_list():
     from agent_friday.services import news_links
     url = "https://news.example.test/story()"
