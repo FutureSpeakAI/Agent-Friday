@@ -131,23 +131,28 @@ def strip_unknown_links(text: str, known: Iterable[str]) -> str:
          standing in the text up to a natural end, are set aside;
       3. every "<" becomes "&lt;" (no raw HTML: an anchor, however its address is spelled), every http(s):// or www.
          run left goes, glued to a word or not, and every "@" left becomes "&#64;" (it shows, but is no mailto: link);
-      4. the known links are put back."""
+      4. the empty brackets a removed address leaves ("()") go, and 1-4 repeat until nothing changes: taking text
+         away can join what was around it into a new address ("www().evil.example" is "www.evil.example" once the
+         brackets go), and every such address is taken away too;
+      5. the known links are put back, after every removal, so none changes ("e_()" keeps its brackets)."""
     kept: list = []
-    text = _CONTROL.sub("", text or "").replace("]:", "]\\:")
+    text = _CONTROL.sub("", text or "")
     # The known links, as targets and standing alone, are set aside first (news_links.set_aside_known, shared
     # with attach_links): nothing below can cut one short at a ")" or a "." and take it for an unknown one.
     text = news_links.set_aside_known(text, known, kept)
-    text = _MD_LINK.sub(lambda m: m.group(1), text)
-    # A label with brackets in it ("[[draft] plan](...)") is no _MD_LINK match; its target is caught here.
-    text = _LINK_TARGET.sub("]", text)
-    # Every "](" left opens a link this pass did not see (its target or title on the next line, which
-    # CommonMark allows): escaped, it is text. The known links are set aside, so none of theirs is touched.
-    text = text.replace("](", "]\\(")
-    text = _ANGLE_URL.sub("", text)
-    text = _BARE_URL.sub("", text.replace("<", "&lt;"))
-    text = text.replace("@", "&#64;")
-    text = news_links.put_back(text, kept)
-    return re.sub(r"\(\s*\)", "", text)
+    while True:
+        before = text
+        text = _MD_LINK.sub(lambda m: m.group(1), text.replace("]:", "]\\:"))
+        # A label with brackets in it ("[[draft] plan](...)") is no _MD_LINK match; its target is caught here.
+        text = _LINK_TARGET.sub("]", text)
+        # Every "](" left opens a link this pass did not see (its target or title on the next line, which
+        # CommonMark allows): escaped, it is text. The known links are set aside, so none of theirs is touched.
+        text = text.replace("](", "]\\(")
+        text = _ANGLE_URL.sub("", text)
+        text = _BARE_URL.sub("", text.replace("<", "&lt;"))
+        text = re.sub(r"\(\s*\)", "", text.replace("@", "&#64;"))
+        if text == before:         # ends: the escapes are made once each; every other change takes text away
+            return news_links.put_back(text, kept)
 
 
 def _section_kinds(title: str) -> set:
