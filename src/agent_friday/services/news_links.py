@@ -90,11 +90,21 @@ def attach_links(text: str, stories: list[dict], *, sources_heading: str = "Sour
     known = {s["url"] for s in stories if s.get("url")} | set(keep)
 
     # 1. Links and addresses the model typed: keep the words, drop the address,
-    #    unless it is exactly a fetched story's URL.
+    #    unless it is exactly a fetched story's URL. A known link's own target is
+    #    set aside first: its address may hold a ")" ("/wiki/Mercury_(planet)"),
+    #    where the patterns below would end it early.
+    text, kept = (text or "").replace("\x00", ""), []
+    for url in sorted(known, key=len, reverse=True):
+        span = "](%s)" % url
+        if span in text:
+            kept.append(span)
+            text = text.replace(span, "\x00%d\x00" % (len(kept) - 1))
+
     def md(m):
         return m.group(0) if m.group(2) in known else m.group(1)
-    text = _MD_LINK_RE.sub(md, text or "")
+    text = _MD_LINK_RE.sub(md, text)
     text = _BARE_URL_RE.sub(lambda m: m.group(0) if m.group(0) in known else "", text)
+    text = re.sub("\x00(\\d+)\x00", lambda m: kept[int(m.group(1))], text)
 
     # 2. Ids to links.
     def cite(m):

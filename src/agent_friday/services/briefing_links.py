@@ -65,7 +65,8 @@ _SET_ASIDE = re.compile("\x00(\\d+)\x00")
 #: controls (U+202A-202E, U+2066-2069) go too, so no text shows reversed.
 _CONTROL = re.compile("[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f\u200b-\u200f\u2028-\u202e\u2060\u2066-\u2069\ufeff]")
 #: The target of ANY markdown link or image, whatever its label holds: what follows "](" up to the closing ")".
-_LINK_TARGET = re.compile(r"\]\(([^)\n]*)\)")
+#: It stops at a set-aside mark, so an unknown target never swallows a known link set aside after it.
+_LINK_TARGET = re.compile(r"\]\(([^)\n\x00]*)\)")
 _HAS_WORDS = re.compile(r"[A-Za-z0-9]")
 LABELS = {EMAIL: "Open email", CALENDAR: "Calendar event", EVENT: "Event page"}
 
@@ -140,6 +141,12 @@ def strip_unknown_links(text: str, known: Iterable[str]) -> str:
         return "\x00%d\x00" % (len(kept) - 1)
 
     text = _CONTROL.sub("", text or "").replace("]:", "]\\:")
+    # A known link's own target first, exactly: its address may hold a ")" ("/wiki/Mercury_(planet)"), where the
+    # passes below would end it early and take the link for an unknown one.
+    for link in sorted(known, key=len, reverse=True):
+        span = "](%s)" % link
+        if span in text:
+            text = text.replace(span, aside(span))
     text = _MD_LINK.sub(lambda m: m.group(0) if m.group(2) in known else m.group(1), text)
     # A label with brackets in it ("[[draft] plan](...)") is no _MD_LINK match; its target is caught here.
     text = _LINK_TARGET.sub(lambda m: aside(m.group(0)) if m.group(1) in known else "]", text)
