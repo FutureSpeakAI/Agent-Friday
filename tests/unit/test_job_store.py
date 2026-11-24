@@ -121,6 +121,17 @@ def test_one_role_in_two_cities_on_one_careers_page_url_stays_two_records_and_on
     assert [j["location"] for j in js.list_recent(NOW)] == ["London"]                         # New York has closed
 
 
+@pytest.mark.parametrize("here, there", [("New York, NY", "New York, New York, United States"),
+                                         ("Remote", "Remote, US"), ("London", "London, England, GB")])
+def test_one_posting_whose_feeds_spell_its_location_differently_is_one_record_and_closes_once(_home, here, there):
+    url = "https://jobs.example.test/acme/4411"
+    js.upsert(listing("Software Engineer", url=url, location=here, source="feed-a", external_id="A-1",
+                      closes_at=days(-1).isoformat()), days(-3))
+    js.upsert(listing("Software Engineer", url=url, location=there, source="feed-b", external_id="B-2"), days(-2))
+    assert len(stored(_home)) == 1
+    assert js.list_recent(NOW) == []                       # closed once, on one record: no open copy left behind
+
+
 def test_a_sighting_that_names_no_location_is_still_the_posting_on_its_url(_home):
     page = "https://careers.example.test/acme"
     js.upsert(listing("Software Engineer", url=page, location="London"), days(-1))
