@@ -43,8 +43,10 @@ def _linked(run: str) -> str:
 _MARK = re.compile("\x00(\\d+)\x00")
 
 
-#: A known address that cannot stand in angle brackets or as a link's target is never set aside (it goes).
-_UNFIT = re.compile("[\\s<>\x00-\x1f\x7f]")
+#: A known address that cannot stand in angle brackets or as a link's target is never set aside (it goes), and
+#: no link is ever written to one: a space, an angle bracket or a control character, or a "|", which in a table
+#: row ends the cell and so the link (marked would link "https://a.test/x?q=1|2" as https://a.test/x?q=1).
+_UNFIT = re.compile("[\\s<>|\x00-\x1f\x7f]")
 #: What opens a markdown link before its "](": an unescaped "[", then a label holding no bracket but one balanced
 #: "[...]" pair at most ("[[draft] plan]").
 _LABEL = r"(?<!\\)\[(?:[^\[\]\n\\]|\\.|\[[^\[\]\n]*\])*"
