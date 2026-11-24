@@ -43,10 +43,12 @@ def _linked(run: str) -> str:
 _MARK = re.compile("\x00(\\d+)\x00")
 
 
-#: A known address that cannot stand in angle brackets or as a link's target is never set aside (it goes), and
-#: no link is ever written to one: a space, an angle bracket or a control character, or a "|", which in a table
-#: row ends the cell and so the link (marked would link "https://a.test/x?q=1|2" as https://a.test/x?q=1).
-_UNFIT = re.compile("[\\s<>|\x00-\x1f\x7f]")
+#: An address marked could read as another one is never set aside (it goes), and no link is ever written to it.
+#: An allowlist, not a list of known troubles: anything but plain URL characters (letters, digits and
+#: -._~:/?#[]@!$&'()*+,;=%) is unfit, and so is anything entity-like ("&amp;", "&#41;"), which marked keeps in an
+#: href for the browser to decode. So a space, "<", ">", "|" (ends a table cell), "\" (marked drops it before
+#: punctuation in a target), a backtick, and every non-ASCII character fail closed.
+_UNFIT = re.compile(r"[^A-Za-z0-9\-._~:/?#\[\]@!$&'()*+,;=%]|&#?[A-Za-z0-9]+;")
 #: What opens a markdown link before its "](": an unescaped "[", then a label holding no bracket but one balanced
 #: "[...]" pair at most ("[[draft] plan]").
 _LABEL = r"(?<!\\)\[(?:[^\[\]\n\\]|\\.|\[[^\[\]\n]*\])*"
@@ -108,8 +110,8 @@ def _balanced(url: str) -> bool:
 
 
 def working(url: str) -> bool:
-    """A link a reader can open, and that marked links whole: an http(s) address with a host, no space, angle
-    bracket or control character, and brackets that balance."""
+    """A link a reader can open, and that marked links whole and as written: an http(s) address with a host, made
+    only of plain URL characters with nothing entity-like (_UNFIT), and brackets that balance."""
     return bool(re.match(r"^https?://[^\s/]+\.[^\s/]+", url or "")) and not _UNFIT.search(url) and _balanced(url)
 
 
