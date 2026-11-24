@@ -6,8 +6,9 @@ tables do not know). services/job_store uses it to tell two postings on one care
 * a part is what lies between commas, semicolons, colons, slashes, brackets and spaced dashes; a part joined by
   hyphens ("US-TX-Austin") is several parts when at most one of its pieces is not a known region, and one name
   otherwise ("Saint-Laurent", "Newcastle-upon-Tyne"); work modes ("Remote", "Hybrid", "On-site", "Office") are
-  not places, and a number after a known region (a ZIP code: "Austin, TX 78701") is dropped, unless nothing else
-  names the town ("TX 78701" alone is the place 78701 in Texas);
+  not places, and a number after a known state or country (a postcode: "Austin, TX 78701") is dropped, unless
+  nothing else names the town ("TX 78701" alone is the place 78701 in Texas, "Mexico 06600" 06600 in Mexico);
+  words are letters with their marks and digits of any script (words());
 * a US state or Canadian province (by postal code, or by name) is the state, and a country (by name or
   three-letter code) the country; when a location has several, a postal code is the state before a name, the last
   name before an earlier one; every state not chosen is a name, and so is a country that disagrees with the
@@ -28,6 +29,7 @@ cannot read as one place is two places: "NYC" and "New York", "Bengaluru" and "B
 from __future__ import annotations
 
 import re
+import unicodedata
 from dataclasses import dataclass
 from typing import FrozenSet, List, Optional
 
@@ -92,8 +94,15 @@ class Place:
         return bool(self.country or self.state or self.names)
 
 
+def words(text) -> List[str]:
+    """The words of a text in any script: letters with their marks (a Devanagari or Thai vowel sign is part of its
+    word) and digits, after NFC and case folding; everything else separates. services/job_store keys on these too."""
+    text = unicodedata.normalize("NFC", str(text or "")).casefold()
+    return "".join(c if unicodedata.category(c)[0] in "LMN" else " " for c in text).split()
+
+
 def _words(text: str) -> List[str]:
-    return [w for w in re.sub(r"[\W_]+", " ", text).split() if w not in _NOT_A_PLACE]   # any script: 東京, Москва
+    return [w for w in words(text) if w not in _NOT_A_PLACE]
 
 
 def _core(words: List[str]) -> str:
@@ -117,19 +126,21 @@ def _pieces(text: str) -> List[List[str]]:
 
 def parse(location) -> Place:
     """The place a free-text location names (see the module docstring); Place() when it names none."""
-    text = re.sub(r"\bon[\s-]?site\b", "onsite", str(location or "").casefold())
+    text = unicodedata.normalize("NFC", str(location or "")).casefold()
+    text = re.sub(r"\bon[\s-]?site\b", "onsite", text)
     states, countries, names, numbers = [], [], set(), set()
-    for words in _pieces(text):
-        core = _core(words)
+    for part in _pieces(text):
+        core = _core(part)
+        if core in _STATES or core in _COUNTRIES:
+            numbers.update(w for w in part if w.isdigit())   # a postcode after a region ("TX 78701", "Mexico 06600")
         if core in _STATES:
             states.append(core)
-            numbers.update(w for w in words if w.isdigit())
         elif core in _COUNTRIES:
             if core in countries:
                 names.add(core)                              # "Mexico, Mexico": the city, then its country
             countries.append(core)
         else:
-            names.add(" ".join(words))                       # an unknown part keeps its numbers ("Store 12")
+            names.add(" ".join(part))                        # an unknown part keeps its numbers ("Store 12")
     state = country = None
     if states:
         codes = [s for s in states if s not in _STATE_NAMES]

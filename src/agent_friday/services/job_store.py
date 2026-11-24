@@ -66,8 +66,8 @@ def path() -> Path:
 # -- keys -------------------------------------------------------------------------------------
 
 def _words(text) -> str:
-    """Letters and digits of any script, case folded ("Straße" is "strasse"); everything else a single space."""
-    return re.sub(r"[\W_]+", " ", str(text or "").casefold()).strip()
+    """The words of any script, joined by single spaces (job_places.words: marks kept, NFC, case folded)."""
+    return " ".join(job_places.words(text))
 
 
 def _is_tracking(param: str) -> bool:
@@ -174,16 +174,16 @@ def _save(data: dict) -> None:
 
 
 def _contradicts(record: dict, listing: dict) -> bool:
-    """True when both name a company and a title and they differ, or the listing's place differs from a place the
-    record was seen at (job_places.differ, against every location in its "locations"): then a shared URL is a
-    careers page that lists several postings, not one posting. Austin, TX and Dallas, TX are two postings however
+    """True when both name a company and they differ, or both a title and they differ, or the listing's place
+    differs from a place the record was seen at (job_places.differ, against every location in its "locations"):
+    then a shared URL is a careers page that lists several postings, not one posting. Austin, TX and Dallas, TX are two postings however
     a feed orders them ("US, TX, Austin"); "New York, NY" and "New York, New York, United States" are one. A sighting
     that names no place (a bare "Remote") contradicts nothing, so on a careers page it joins the first record that
     page's URL was seen with, and changes none of that record's places."""
-    mine = (_words(record.get("company")), _words(record.get("title")))
-    theirs = (_words(listing.get("company")), _words(listing.get("title")))
-    if all(mine) and all(theirs) and mine != theirs:
-        return True
+    for field in ("company", "title"):                    # each on its own: a missing company keeps the title check
+        mine, theirs = _words(record.get(field)), _words(listing.get(field))
+        if mine and theirs and mine != theirs:
+            return True
     there = job_places.parse(listing.get("location"))
     return any(job_places.differ(job_places.parse(here), there) for here in _locations(record))
 
