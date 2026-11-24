@@ -94,12 +94,24 @@ class Place:
         return bool(self.country or self.state or self.names)
 
 
+#: The characters that only separate words: spaces, controls, dashes, brackets, quotes and plain punctuation. Every
+#: other character is part of a word, so a symbol nobody listed (C♯, an emoji, a + or #) keeps two titles apart.
+_SEPARATING_CATEGORIES = frozenset({"Zs", "Zl", "Zp", "Cc", "Cf", "Pd", "Ps", "Pe", "Pi", "Pf", "Pc"})
+#: Plain punctuation (Po) that still means something in a title or a place, so is kept.
+_MEANINGFUL_PUNCTUATION = frozenset("#%&*@")
+
+
+def is_separator(c: str) -> bool:
+    category = unicodedata.category(c)
+    return category in _SEPARATING_CATEGORIES or (category == "Po" and c not in _MEANINGFUL_PUNCTUATION)
+
+
 def words(text) -> List[str]:
-    """The words of a text in any script: letters with their marks (a Devanagari or Thai vowel sign is part of its
-    word), digits, and the "+" and "#" that tell C++, C# and F# from C and F, after NFC and case folding; everything
-    else separates. services/job_store keys titles and companies on these too."""
-    text = unicodedata.normalize("NFC", str(text or "")).casefold()
-    return "".join(c if unicodedata.category(c)[0] in "LMN" or c in "+#" else " " for c in text).split()
+    """The words of a text in any script, after NFKC (a full-width ＃ is #) and case folding: runs of every character
+    but the separators (is_separator), so letters with their marks (a Devanagari vowel sign), digits and every
+    symbol stay. services/job_store keys titles and companies on these too."""
+    text = unicodedata.normalize("NFKC", str(text or "")).casefold()
+    return "".join(" " if is_separator(c) else c for c in text).split()
 
 
 def _words(text: str) -> List[str]:
@@ -127,7 +139,7 @@ def _pieces(text: str) -> List[List[str]]:
 
 def parse(location) -> Place:
     """The place a free-text location names (see the module docstring); Place() when it names none."""
-    text = unicodedata.normalize("NFC", str(location or "")).casefold()
+    text = unicodedata.normalize("NFKC", str(location or "")).casefold()
     text = re.sub(r"\bon[\s-]?site\b", "onsite", text)
     states, countries, names, numbers = [], [], set(), set()
     for part in _pieces(text):
