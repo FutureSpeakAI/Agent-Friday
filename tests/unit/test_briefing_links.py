@@ -578,7 +578,25 @@ URL_ALLOWED = set("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz012345678
 UNFIT_SOURCES = sorted({"https://a.example.test/a%sb" % c for c in map(chr, range(32, 127)) if c not in URL_ALLOWED}
                        | {"https://a.example.test/a%sb" % c for c in ("\u00e9", "\u00a0", "\u200b", "\uff5c", "\t")}
                        | {"https://a.example.test/?a=1%sb=2" % e for e in ("&amp;", "&#38;", "&#x26;", "&lt;", "&quot;")}
+                       | {"https://a.example.test/a%sb" % e for e in ("&#41", "&#x29", "&#47..&#47evil")}
+                       | {"https://a.example.test/?a=1&amp", "https://a.example.test/x&lt/y", "https://a.example.test/x&AMP"}
                        | {"https://a.example.test/a)(b", "https://a.example.test/a)", "https://a.example.test/(a"})
+
+
+#: Query strings a browser leaves as written: "&" then a name it would only decode with ";" or before "=" or a
+#: letter. Each is a working link, cited, in the Sources list and in a table, and the app's sanitizer keeps it whole.
+AMPERSAND_SOURCES = ["https://news.example.test/story?id=7&tab=comments", "https://news.example.test/?t=9&ampm=pm",
+                     "https://news.example.test/?a=1&lt=5", "https://news.example.test/?a=1&colon=2",
+                     "https://news.example.test/?a=1&quote=x", "https://news.example.test/?a=1&nbsp2=y"]
+
+
+@pytest.mark.parametrize("url", AMPERSAND_SOURCES)
+@pytest.mark.parametrize("placement", ["## Calendar\n- Standup [C1]\n", "## Calendar\n| Item |\n| --- |\n| Standup [C1] |\n"])
+def test_an_ampersand_query_a_browser_leaves_as_written_is_a_working_link(url, placement):
+    src = bl.collect(calendar=[{"id": "C1", "title": "Standup", "url": url}])
+    got, known, final = _pipeline(placement, src)
+    assert known == {url} and got.dropped_total == 0 and "](%s)" % url in final, final
+    assert set(_live_links(final, known)) <= known
 
 
 @pytest.mark.parametrize("url", UNFIT_SOURCES)
