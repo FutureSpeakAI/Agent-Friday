@@ -690,3 +690,13 @@ def test_the_tool_has_a_decided_class_at_the_action_gate():
     from agent_friday.governance import action_gate
     assert action_gate.known("ecosystem_info")
     assert "ecosystem_info" in action_gate.INTERNAL_TOOLS
+
+
+@pytest.mark.parametrize("app_id", ("phone", "tablet"))
+def test_approving_is_said_to_need_a_fingerprint_on_the_installed_build(app_id):
+    """The same approvals code is on both builds (friday-phone approvals/ApprovalKey.kt asks for a strong
+    biometric and has no screen-lock fallback until the unlock-approve build is installed)."""
+    a = eco.app(app_id)
+    assert a.facts.holds("permission:android.permission.USE_BIOMETRIC")
+    assert (f"In the build installed now, approving from a {a.noun} needs a fingerprint enrolled on it. A build "
+            f"that accepts the {a.noun}'s own screen lock is written but not installed yet.") in a.limits
