@@ -6,12 +6,14 @@ tables do not know). services/job_store uses it to tell two postings on one care
 * a part is what lies between commas, semicolons, colons, slashes, brackets and spaced dashes; a part joined by
   hyphens ("US-TX-Austin") is several parts when at most one of its pieces is not a known region, and one name
   otherwise ("Saint-Laurent", "Newcastle-upon-Tyne"); work modes ("Remote", "Hybrid", "On-site", "Office") are
-  not places, and a number after a known region (a ZIP code: "TX 78701") is dropped;
+  not places, and a number after a known region (a ZIP code: "Austin, TX 78701") is dropped, unless nothing else
+  names the town ("TX 78701" alone is the place 78701 in Texas);
 * a US state or Canadian province (by postal code, or by name) is the state, and a country (by name or
   three-letter code) the country; when a location has several, a postal code is the state before a name, the last
   name before an earlier one; every state not chosen is a name, and so is a country that disagrees with the
-  state or with the first country ("Washington, DC" is Washington in DC; "Mexico, MO" and "Holland, MI" are towns
-  in the US; "New York, New York, United States" is New York in New York; "Singapore, Singapore" is Singapore);
+  state or with the first country, or is spelled again ("Washington, DC" is Washington in DC; "Mexico, MO" and
+  "Holland, MI" are towns in the US; "New York, New York, United States" is New York in New York; "Mexico, Mexico"
+  is a city named Mexico, in Mexico);
 * two locations with names are one place only when their names are the same and no state or country of one
   differs from the other's: "Dallas" and "Dallas, TX", "London" and "London, England, GB"; two without names are
   one only when they name the same state and country: "Remote - US" and "Remote, United States", "Remote - TX" and
@@ -116,12 +118,15 @@ def _pieces(text: str) -> List[List[str]]:
 def parse(location) -> Place:
     """The place a free-text location names (see the module docstring); Place() when it names none."""
     text = re.sub(r"\bon[\s-]?site\b", "onsite", str(location or "").casefold())
-    states, countries, names = [], [], set()
+    states, countries, names, numbers = [], [], set(), set()
     for words in _pieces(text):
         core = _core(words)
         if core in _STATES:
             states.append(core)
+            numbers.update(w for w in words if w.isdigit())
         elif core in _COUNTRIES:
+            if core in countries:
+                names.add(core)                              # "Mexico, Mexico": the city, then its country
             countries.append(core)
         else:
             names.add(" ".join(words))                       # an unknown part keeps its numbers ("Store 12")
@@ -138,6 +143,8 @@ def parse(location) -> Place:
             country = _COUNTRIES[core]
         else:
             names.add(core)                                  # "Mexico, MO": a town, not the country
+    if not names and numbers:
+        names = numbers                                      # "TX 78701" alone: the ZIP is all that names the town
     return Place(country, state, frozenset(names))
 
 
