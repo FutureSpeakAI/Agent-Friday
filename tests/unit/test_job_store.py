@@ -137,7 +137,8 @@ def test_one_posting_whose_feeds_spell_its_location_differently_is_one_record_an
 #: posting on a shared URL; two places are two postings, also when they share a country, a state, a word of their
 #: name, or "Remote".
 PLACES = {
-    "new york": ("New York", "New York, NY", "New York, New York, United States", "US - NY - New York",
+    "new york state": ("New York", "New York, United States"),
+    "new york": ("New York, NY", "New York, New York, United States", "US - NY - New York",
                  "United States, New York, New York", "New York, NY 10001"),
     "york pa": ("York, PA", "York, Pennsylvania", "US-PA-York"),
     "austin": ("Austin, TX", "Austin, Texas, US", "US, TX, Austin", "United States - Texas - Austin", "US-TX-Austin",
@@ -161,8 +162,8 @@ PLACES = {
     "newcastle under lyme": ("Newcastle-under-Lyme, UK",),
     "berlin": ("Berlin, Germany", "Germany, Berlin", "DEU - Berlin"),
     "munich": ("Germany, Munich", "Munich", "DEU - Munich"),
-    "bangalore": ("Bangalore, Karnataka, India", "India - Bangalore", "IND - Bangalore",
-                  "India - Karnataka - Bangalore"),
+    "bangalore": ("India - Bangalore", "IND - Bangalore", "Bangalore, India"),
+    "bangalore karnataka": ("Bangalore, Karnataka, India", "India - Karnataka - Bangalore"),
     "mysore": ("India - Karnataka - Mysore",),
     "hyderabad": ("India - Hyderabad", "IND - Hyderabad"),
     "toronto": ("Toronto, ON", "Toronto, Ontario, Canada", "CAN - Toronto"),
@@ -173,7 +174,11 @@ PLACES = {
     "newcastle nsw": ("Australia, NSW, Newcastle",),
 }
 #: Two places that share an unknown region, a prefix, or nothing the tables know: always two records.
-TWO_PLACES = [("EMEA - London", "EMEA - Paris"), ("EMEA - London", "London, UK"), ("Bay Area - San Francisco",
+TWO_PLACES = [("Remote - WA", "Washington, DC"), ("Washington, United States",
+              "Washington, District of Columbia, United States"), ("Ontario, Canada", "Ontario, CA"),
+              ("Remote - Netherlands", "Holland, MI"), ("Remote, CA", "Toronto, CA"), ("Tbilisi, Georgia",
+              "Georgia, United States"), ("Bangalore, IN", "Remote, IN"), ("Store 12, Dallas, TX", "Store 40, Dallas, TX"),
+              ("Austin, TX; Dallas, TX", "Dallas, TX"), ("EMEA - London", "EMEA - Paris"), ("EMEA - London", "London, UK"), ("Bay Area - San Francisco",
               "Bay Area - San Jose"), ("New York City, NY", "New York, NY"), ("IND - Bengaluru", "IND - Hyderabad"),
               ("Remote - US", "Remote - Canada"), ("Remote (US)", "Remote, Canada"), ("Toronto, CA", "Toronto, ON"),
               ("Office - Austin", "Office - Dallas"), ("Arlington, VA 22201", "Arlington, TX 76010")]
@@ -205,16 +210,42 @@ def test_two_places_that_each_name_something_the_other_lacks_are_two_postings(_h
     assert [j["location"] for j in js.list_recent(NOW)] == [second]
 
 
-@pytest.mark.parametrize("country_only", ["Remote, US", "US"])
-def test_a_country_only_sighting_between_two_cities_in_it_never_joins_them(_home, country_only):
+@pytest.mark.parametrize("country_only", ["Remote, US", "US", "Remote - TX", "Texas"])
+def test_a_region_only_sighting_joins_no_city_so_never_joins_two(_home, country_only):
     url = "https://careers.example.test/acme"
     js.upsert(listing("Software Engineer", url=url, location="Austin, TX", source="feed-a", external_id="A-1",
                       closes_at=days(-1).isoformat()), days(-3))
     js.upsert(listing("Software Engineer", url=url, location=country_only, source="feed-b", external_id="B-2"),
               days(-2.5))
     js.upsert(listing("Software Engineer", url=url, location="Dallas, TX", source="feed-c", external_id="C-3"), days(-2))
+    assert len(stored(_home)) == 3
+    assert [j["location"] for j in js.list_recent(NOW)] == ["Dallas, TX", country_only]       # Austin has closed
+
+
+def _namesakes():
+    """From the tables themselves: a place named after a state, province or country, and the region-only spelling
+    of that region; and each postal code alone and with a city. Every pair is two places."""
+    from agent_friday.services import job_places as jp
+    pairs = []
+    for table in (jp._US_STATES, jp._CA_PROVINCES):
+        for code, name in table.items():
+            other = "TX" if code != "TX" else "CA"
+            pairs += [("Remote - %s" % name.title(), "%s, %s" % (name.title(), other)),
+                      ("%s" % name.title(), "%s, %s" % (name.title(), other)),
+                      ("Remote, %s" % code, "Springfield, %s" % code)]
+    for country in sorted(set(jp._COUNTRY_NAMES) - {"united states"}):     # "United States, MO" is Missouri
+        pairs.append(("Remote - %s" % country.title(), "%s, MO" % country.title()))
+    return pairs
+
+
+@pytest.mark.parametrize("first, second", _namesakes() + [(b, a) for a, b in _namesakes()])
+def test_a_town_named_after_a_region_is_never_that_region(_home, first, second):
+    url = "https://careers.example.test/acme"
+    js.upsert(listing("Software Engineer", url=url, location=first, source="feed-a", external_id="A-1",
+                      closes_at=days(-1).isoformat()), days(-3))
+    js.upsert(listing("Software Engineer", url=url, location=second, source="feed-b", external_id="B-2"), days(-2))
     assert len(stored(_home)) == 2
-    assert [j["location"] for j in js.list_recent(NOW)] == ["Dallas, TX"]
+    assert [j["location"] for j in js.list_recent(NOW)] == [second]
 
 
 @pytest.mark.parametrize("between", PLACELESS)
