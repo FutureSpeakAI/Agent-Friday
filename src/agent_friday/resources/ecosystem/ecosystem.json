@@ -1,7 +1,7 @@
 {
   "schema": 1,
-  "comment": "What Friday may say about her companion apps. services/ecosystem.py parses and renders this; tests/unit/test_ecosystem_knowledge.py ties every app to its facts snapshot in facts/. Status: shipped (needs evidence from the snapshot), built_off, planned. Evidence keys: permission:<name>, service:<BIND_...>, capability:<name>, verb:<capability>/<verb>, pairing:gateway|relay|discovery, signing:<value>.",
-  "reviewed": "2026-11-22",
+  "comment": "What Friday may say about her companion apps. services/ecosystem.py parses and renders this; tests/unit/test_ecosystem_knowledge.py ties every app to its facts snapshot in facts/. Status: shipped (needs evidence from the snapshot), built_off, planned. Evidence keys: permission:<name>, service:<BIND_...>, capability:<name>, verb:<capability>/<verb>, pairing:gateway|relay|discovery, route:gateway/<name> or route:phone_link/<name> (a surface the app's sources ask for), signing:<value>.",
+  "reviewed": "2026-11-23",
   "apps": [
     {
       "id": "phone",
@@ -9,10 +9,10 @@
       "noun": "phone",
       "status": "shipped",
       "version": {
-        "name": "0.12.27-p0u",
-        "code": 60
+        "name": "0.12.29-workspaces",
+        "code": 62
       },
-      "facts_fingerprint": "6d3e7f2f4a3c66e2c77e2f767683708606dc097e6d8c18d65f6ea96ba491ccb9",
+      "facts_fingerprint": "c189caa8efa46ef1ae3645411ed39c78aad3ffd8d3b82639f84faa19b62c2967",
       "platform": {
         "summary": "Android 12 or newer, on a 64-bit ARM phone",
         "min_sdk": 31,
@@ -24,7 +24,8 @@
       "adds": [
         "You can talk or type to me from anywhere in the house, and I answer from this PC.",
         "Once you allow it on this PC's screen, the phone can approve what I ask.",
-        "It can do things on the phone itself when you ask, such as timers, calendar entries and starting a call."
+        "It can do things on the phone itself when you ask, such as timers, calendar entries and starting a call.",
+        "Your chats with me and your workspaces on this PC open on the phone."
       ],
       "capabilities": [
         {
@@ -35,6 +36,22 @@
             "capability:talk",
             "permission:android.permission.RECORD_AUDIO",
             "pairing:gateway"
+          ]
+        },
+        {
+          "id": "chats",
+          "text": "open the chats you have had with me on this PC and carry one on",
+          "status": "shipped",
+          "evidence": [
+            "route:gateway/chats"
+          ]
+        },
+        {
+          "id": "workspaces",
+          "text": "open workspaces from this PC, such as Knowledge",
+          "status": "shipped",
+          "evidence": [
+            "route:gateway/workspaces"
           ]
         },
         {
@@ -83,7 +100,15 @@
         },
         {
           "id": "widget",
-          "text": "A home-screen widget",
+          "text": "show a home-screen widget",
+          "status": "shipped",
+          "evidence": [
+            "service:BIND_APPWIDGET"
+          ]
+        },
+        {
+          "id": "pc_voice",
+          "text": "A live spoken conversation in this PC's own voice",
           "status": "planned",
           "evidence": []
         },
@@ -165,6 +190,9 @@
             "text": "Put the phone on the same home Wi-Fi as this PC."
           },
           {
+            "text": "Open pairing on this PC: type \"Friday, add a device\" in my chat here, or open the Add a device page on this PC (its address ends in /pairing) and press Open pairing. It stays open for five minutes and can only be opened from this PC itself."
+          },
+          {
             "text": "On the phone, open Agent Friday and tap Pair. It looks for this PC on your Wi-Fi. There is nothing to type and nothing to scan."
           },
           {
@@ -180,7 +208,8 @@
         "It is not in the Play Store yet. A first install needs a computer and Android's developer tools.",
         "Today's builds are test builds, not a store release.",
         "A phone I pair is signed in as you. I cannot yet give another person their own space on their own phone, so if it belongs to someone else in the house it is safer to wait.",
-        "Pairing only works at home, on the same network as this PC. Using it away from home needs Tailscale on both, which you set up yourself."
+        "Pairing only works at home, on the same network as this PC. Using it away from home needs Tailscale on both, which you set up yourself.",
+        "Every 30 days I ask you on this PC whether to keep the phone paired. Until you answer, it is refused."
       ]
     },
     {
@@ -189,10 +218,10 @@
       "noun": "tablet",
       "status": "shipped",
       "version": {
-        "name": "0.12.27-p0u",
-        "code": 60
+        "name": "0.12.29-workspaces",
+        "code": 62
       },
-      "facts_fingerprint": "dce30418ef8bb8fc8b6e7367a3571b94f6e9b6910a75e229441387e1cb9744aa",
+      "facts_fingerprint": "427e287e0cc7fd4136dbbe6453e95d581f5323edc1f81b5d6afe11f7cdadb4bb",
       "platform": {
         "summary": "Android 12 or newer, on a 64-bit ARM tablet",
         "min_sdk": 31,
@@ -203,7 +232,8 @@
       },
       "adds": [
         "The same app as the phone, laid out for a larger screen.",
-        "You can talk or type to me from the sofa or the kitchen, and I answer from this PC."
+        "You can talk or type to me from the sofa or the kitchen, and I answer from this PC.",
+        "Your chats with me and your workspaces on this PC open on the tablet."
       ],
       "capabilities": [
         {
@@ -214,6 +244,22 @@
             "capability:talk",
             "permission:android.permission.RECORD_AUDIO",
             "pairing:gateway"
+          ]
+        },
+        {
+          "id": "chats",
+          "text": "open the chats you have had with me on this PC and carry one on",
+          "status": "shipped",
+          "evidence": [
+            "route:gateway/chats"
+          ]
+        },
+        {
+          "id": "workspaces",
+          "text": "open workspaces from this PC, such as Knowledge",
+          "status": "shipped",
+          "evidence": [
+            "route:gateway/workspaces"
           ]
         },
         {
@@ -235,7 +281,15 @@
         },
         {
           "id": "widget",
-          "text": "A home-screen widget",
+          "text": "show a home-screen widget",
+          "status": "shipped",
+          "evidence": [
+            "service:BIND_APPWIDGET"
+          ]
+        },
+        {
+          "id": "pc_voice",
+          "text": "A live spoken conversation in this PC's own voice",
           "status": "planned",
           "evidence": []
         },
@@ -323,6 +377,9 @@
             "text": "Put the tablet on the same home Wi-Fi as this PC."
           },
           {
+            "text": "Open pairing on this PC: type \"Friday, add a device\" in my chat here, or open the Add a device page on this PC (its address ends in /pairing) and press Open pairing. It stays open for five minutes and can only be opened from this PC itself."
+          },
+          {
             "text": "On the tablet, open Agent Friday and tap Pair. It looks for this PC on your Wi-Fi. There is nothing to type and nothing to scan."
           },
           {
@@ -338,7 +395,9 @@
         "It is not in the Play Store yet. A first install needs a computer and Android's developer tools.",
         "Today's builds are test builds, not a store release.",
         "A tablet I pair is signed in as you. I cannot yet give another person their own space on their own tablet, so if it belongs to someone else in the house it is safer to wait.",
-        "Pairing only works at home, on the same network as this PC."
+        "Pairing only works at home, on the same network as this PC.",
+        "Every 30 days I ask you on this PC whether to keep the tablet paired. Until you answer, it is refused.",
+        "In the build installed now, approving from a tablet needs a fingerprint enrolled on it. A build that accepts the tablet's own screen lock is written but not installed yet."
       ]
     },
     {
@@ -350,7 +409,7 @@
         "name": "0.1",
         "code": 1
       },
-      "facts_fingerprint": "daf0ce6bcdf6cb24b90963e5028b8f045627cd70708e8fafbdfed2b59493fdbc",
+      "facts_fingerprint": "2426037319111a9410b2ea953899faf1f8f6392f5338f3d179a76e718957dea9",
       "platform": {
         "summary": "an Android TV or Google TV set running Android 9 or newer",
         "min_sdk": 28,
@@ -457,6 +516,9 @@
             "text": "Put the TV on the same home network as this PC."
           },
           {
+            "text": "Open pairing on this PC: type \"Friday, add a device\" in my chat here, or open the Add a device page on this PC (its address ends in /pairing) and press Open pairing. It stays open for five minutes and can only be opened from this PC itself."
+          },
+          {
             "text": "On the TV, open Agent Friday, then Settings, and enter your grown-up PIN with the remote. Choose to pair with your PC."
           },
           {
@@ -473,7 +535,8 @@
         "The build is signed with a development key, not a store release.",
         "A TV is a household device: it never signs in as you and gets none of your memory.",
         "Kids mode on the TV starts and ends only on the TV itself, with the remote and your grown-up PIN. I cannot change it from here, and neither can a voice.",
-        "Pairing and use are home-network only."
+        "Pairing and use are home-network only.",
+        "Every 90 days I ask you on this PC whether to keep the TV paired. Until you answer, it is refused."
       ]
     },
     {
@@ -485,26 +548,34 @@
         "name": "0.1.0-hack",
         "code": 1
       },
-      "facts_fingerprint": "f0f65fbd28bcda6c0b15f4de0880f7a759b4c075d76cd09a353b596a3a27b266",
+      "facts_fingerprint": "de61aa10e150ea6299792782373b27f1c6791b44e2a66e64063751eb3aa5e006",
       "platform": {
         "summary": "a Wear OS watch running Wear OS 3 or newer",
         "min_sdk": 30,
         "abis": [],
         "needs": [
-          "A separate helper program on this PC that has to be started by hand. I cannot see or start it."
+          "The Agent Friday app on a phone that is paired with this PC, and a small link app on that phone."
         ]
       },
       "adds": [
-        "A talk button on your wrist, and a buzz when something finishes or needs you."
+        "You can ask me from your wrist and see your chats, through your phone."
       ],
       "capabilities": [
         {
           "id": "talk",
-          "text": "hold to talk from the wrist, through its helper program",
+          "text": "ask me by voice from the wrist, through your phone",
           "status": "shipped",
           "evidence": [
             "permission:android.permission.RECORD_AUDIO",
-            "pairing:relay"
+            "route:phone_link/item"
+          ]
+        },
+        {
+          "id": "chats",
+          "text": "show your chats with me and open one, through your phone",
+          "status": "shipped",
+          "evidence": [
+            "route:phone_link/chats"
           ]
         },
         {
@@ -517,7 +588,7 @@
         },
         {
           "id": "gateway",
-          "text": "Pairing with this PC the way the phone does",
+          "text": "Pairing directly with this PC",
           "status": "planned",
           "evidence": []
         },
@@ -540,7 +611,7 @@
           "for": "developers trying the preview",
           "steps": [
             {
-              "text": "This is a developer preview. It needs the watch app file, Android's platform tools, and the watch helper program running on this PC, none of which I can set up for you."
+              "text": "This is a developer preview. It needs the watch app file, the link app file for the phone, and Android's platform tools, none of which I can set up for you."
             },
             {
               "text": "On the watch, open Settings, About watch, Software information, and tap Software version until developer options appear."
@@ -564,26 +635,31 @@
         }
       ],
       "pair": {
-        "method": "relay_code",
+        "method": "phone_link",
         "status": "shipped",
         "evidence": [
-          "pairing:relay"
+          "route:phone_link/item"
         ],
         "steps": [
           {
-            "text": "The watch does not pair with me directly yet. It pairs with its own helper program on this PC, which a developer starts by hand and which prints a six-digit code."
+            "text": "The watch does not pair with me. It reaches me through the Agent Friday app on your phone, so pair the phone with this PC first."
           },
           {
-            "text": "That code is typed on the watch and works only once."
+            "text": "The watch must already be connected to that phone as a Wear OS watch, set up the usual way in the watch maker's own app."
           },
           {
-            "text": "Because the helper is separate, I cannot tell you whether a watch is paired or connected."
+            "text": "With the link app on the phone and the watch app on the watch, open Agent Friday on the watch. Its home screen says whether the phone is connected and whether this PC can be reached."
+          },
+          {
+            "text": "Because the watch never signs in to this PC, I cannot tell you from here whether it is connected."
           }
         ]
       },
       "limits": [
         "It is a developer preview, not something I would set up for a new user yet.",
-        "It connects through a separate helper program that I cannot see from here.",
+        "It only reaches me through your phone, so it needs the phone nearby or online, and the phone paired with this PC.",
+        "It cannot approve anything through the phone.",
+        "In the build on the watch now, listening may not stop on a second tap. A fix is written but not installed yet.",
         "It is not in the Play Store."
       ]
     }

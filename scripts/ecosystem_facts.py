@@ -40,6 +40,10 @@ GATEWAY_PAIR = "/tv/v1/pair/start"
 RELAY_PAIR = "/v1/pair/complete"
 DISCOVERY_PROBE = "FRIDAY-TV-DISCOVER v1"
 APP_REPORT = '"app_report"'
+#: What an app's sources ask for, by surface: the PC's device gateway, and the
+#: watch-to-phone link. The first path segment is recorded, so a new surface
+#: (chats, workspaces) changes the fingerprint and nothing device-specific is kept.
+ROUTE_SURFACES = {"gateway": "/tv/v1/", "phone_link": "/af/v1/"}
 
 
 @dataclass(frozen=True)
@@ -54,11 +58,11 @@ class AppSource:
 
 
 APPS = (
-    AppSource("phone", "friday-phone", "HEAD", "app/build.gradle.kts",
+    AppSource("phone", "friday-phone", "ws/vc62-phone", "app/build.gradle.kts",
               "app/src/main/AndroidManifest.xml", "app/src/main/assets/capabilities"),
-    AppSource("tablet", "friday-phone", "tablet/w11", "app/build.gradle.kts",
+    AppSource("tablet", "friday-phone", "ws/vc62-tablet", "app/build.gradle.kts",
               "app/src/main/AndroidManifest.xml", "app/src/main/assets/capabilities"),
-    AppSource("watch", "friday-watch", "HEAD", "app/build.gradle.kts",
+    AppSource("watch", "friday-watch", None, "app/build.gradle.kts",
               "app/src/main/AndroidManifest.xml"),
     AppSource("tv", "friday-tv", None, "app/build.gradle",
               "app/src/main/AndroidManifest.xml"),
@@ -230,6 +234,15 @@ def pairing_facts(tree: Tree) -> dict:
             "declares_kind": kind, "reports_app_version": report}
 
 
+def route_facts(tree: Tree) -> dict:
+    found = {surface: set() for surface in ROUTE_SURFACES}
+    for path in tree.main_sources():
+        text = tree.read(path)
+        for surface, prefix in ROUTE_SURFACES.items():
+            found[surface].update(re.findall(r'"' + re.escape(prefix) + r"([a-z][a-z0-9_-]*)", text))
+    return {surface: sorted(names) for surface, names in found.items()}
+
+
 def fingerprint(facts: dict) -> str:
     canonical = json.dumps(facts, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
     return hashlib.sha256(canonical.encode("ascii")).hexdigest()
@@ -245,6 +258,7 @@ def extract(source: AppSource, repos: Path) -> dict:
     facts.update(manifest_facts(tree.read(source.manifest)))
     facts["capabilities"] = capability_facts(tree, source.capabilities)
     facts["pairing"] = pairing_facts(tree)
+    facts["routes"] = route_facts(tree)
     return {"schema": SCHEMA, "app": source.app,
             "source": {"repo": source.repo, "ref": source.ref or "working tree", "commit": tree.commit},
             "facts": facts, "fingerprint": fingerprint(facts)}

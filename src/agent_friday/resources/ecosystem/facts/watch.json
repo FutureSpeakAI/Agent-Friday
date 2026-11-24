@@ -20,23 +20,35 @@
     },
     "permissions": [
       "android.permission.ACCESS_NETWORK_STATE",
-      "android.permission.FOREGROUND_SERVICE",
-      "android.permission.FOREGROUND_SERVICE_DATA_SYNC",
       "android.permission.INTERNET",
       "android.permission.POST_NOTIFICATIONS",
       "android.permission.RECORD_AUDIO",
       "android.permission.VIBRATE"
     ],
     "release_signing": "none",
+    "routes": {
+      "gateway": [],
+      "phone_link": [
+        "card",
+        "cards",
+        "chat",
+        "chats",
+        "item",
+        "ping",
+        "reply",
+        "settings",
+        "voice"
+      ]
+    },
     "target_sdk": 35,
     "version_code": 1,
     "version_name": "0.1.0-hack"
   },
-  "fingerprint": "f0f65fbd28bcda6c0b15f4de0880f7a759b4c075d76cd09a353b596a3a27b266",
+  "fingerprint": "de61aa10e150ea6299792782373b27f1c6791b44e2a66e64063751eb3aa5e006",
   "schema": 1,
   "source": {
-    "commit": "2b510488563ac09987ba758271ae6f6ff7812899",
-    "ref": "HEAD",
+    "commit": null,
+    "ref": "working tree",
     "repo": "friday-watch"
   }
 }

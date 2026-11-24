@@ -6,6 +6,7 @@
     ],
     "application_id": "ai.futurespeak.friday.phone.flagship",
     "bound_services": [
+      "BIND_APPWIDGET",
       "BIND_NOTIFICATION_LISTENER_SERVICE",
       "BIND_QUICK_SETTINGS_TILE",
       "BIND_VOICE_INTERACTION"
@@ -122,15 +123,43 @@
       "com.android.alarm.permission.SET_ALARM"
     ],
     "release_signing": "none",
+    "routes": {
+      "gateway": [
+        "approvals",
+        "chats",
+        "connectors",
+        "evolution",
+        "graph",
+        "hello",
+        "inherit",
+        "jobs",
+        "media",
+        "messages",
+        "model",
+        "models",
+        "orbs",
+        "pair",
+        "phone",
+        "projects",
+        "providers",
+        "stop-everything",
+        "stt",
+        "tts",
+        "voices",
+        "wiki",
+        "workspaces"
+      ],
+      "phone_link": []
+    },
     "target_sdk": 37,
-    "version_code": 60,
-    "version_name": "0.12.27-p0u"
+    "version_code": 62,
+    "version_name": "0.12.29-workspaces"
   },
-  "fingerprint": "6d3e7f2f4a3c66e2c77e2f767683708606dc097e6d8c18d65f6ea96ba491ccb9",
+  "fingerprint": "c189caa8efa46ef1ae3645411ed39c78aad3ffd8d3b82639f84faa19b62c2967",
   "schema": 1,
   "source": {
-    "commit": "5c21092320e2f29dbd25913a79aae2be4f78106a",
-    "ref": "HEAD",
+    "commit": "1d0d893dee815741ad3ccb4d61116de2f4a724ed",
+    "ref": "ws/vc62-phone",
     "repo": "friday-phone"
   }
 }

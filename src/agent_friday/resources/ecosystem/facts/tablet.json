@@ -6,6 +6,7 @@
     ],
     "application_id": "ai.futurespeak.friday.phone.flagship",
     "bound_services": [
+      "BIND_APPWIDGET",
       "BIND_NOTIFICATION_LISTENER_SERVICE",
       "BIND_QUICK_SETTINGS_TILE",
       "BIND_VOICE_INTERACTION"
@@ -122,15 +123,43 @@
       "com.android.alarm.permission.SET_ALARM"
     ],
     "release_signing": "none",
+    "routes": {
+      "gateway": [
+        "approvals",
+        "chats",
+        "connectors",
+        "evolution",
+        "graph",
+        "hello",
+        "inherit",
+        "jobs",
+        "media",
+        "messages",
+        "model",
+        "models",
+        "orbs",
+        "pair",
+        "phone",
+        "projects",
+        "providers",
+        "stop-everything",
+        "stt",
+        "tts",
+        "voices",
+        "wiki",
+        "workspaces"
+      ],
+      "phone_link": []
+    },
     "target_sdk": 37,
-    "version_code": 60,
-    "version_name": "0.12.27-p0u"
+    "version_code": 62,
+    "version_name": "0.12.29-workspaces"
   },
-  "fingerprint": "dce30418ef8bb8fc8b6e7367a3571b94f6e9b6910a75e229441387e1cb9744aa",
+  "fingerprint": "427e287e0cc7fd4136dbbe6453e95d581f5323edc1f81b5d6afe11f7cdadb4bb",
   "schema": 1,
   "source": {
-    "commit": "454f82925d065686ab1ed951dff3293eea0908b7",
-    "ref": "tablet/w11",
+    "commit": "c35ce65a619976cae8e22c4fbd77bbdc90114bf9",
+    "ref": "ws/vc62-tablet",
     "repo": "friday-phone"
   }
 }
