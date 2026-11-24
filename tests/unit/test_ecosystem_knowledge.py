@@ -293,6 +293,27 @@ def test_approving_from_a_phone_is_said_to_need_its_own_permission():
         assert "and, separately, to approve, each on this PC's screen" in cap.text
 
 
+def test_approving_from_a_device_is_said_to_cover_most_requests_not_all():
+    """With both presses given, the gateway still refuses a device's approval for the screen-only card
+    kinds and for any card that gives a device a right (tv_gateway/approval_verify.device_may_not_decide)."""
+    from agent_friday.services import approvals
+    from agent_friday.tv_gateway import approval_verify, pairing
+    assert approvals.SCREEN_ONLY_KINDS
+    for kind in list(approvals.SCREEN_ONLY_KINDS) + [pairing.RIGHT_KIND, pairing.KIND]:
+        assert approval_verify.device_may_not_decide({"kind": kind, "approval_id": "a-1"}, "aaaa000000000001")
+    only_here = "only ever approved on this PC's own screen"
+    for app_id in ("phone", "tablet"):
+        a = eco.app(app_id)
+        cap = next(c for c in a.capabilities if c.id == "approve")
+        assert cap.text.startswith("approve most of what I ask") and only_here in cap.text
+        for line in a.adds:
+            if "approve" in line:
+                assert "most of what I ask" in line and only_here in line
+    assert "most of my requests" in eco.RIGHT_NOTES["pc_approve"] and only_here in eco.RIGHT_NOTES["pc_approve"]
+    for text in _everything_rendered():
+        assert "can approve what I ask" not in text and "approve my requests, one at a time" not in text
+
+
 # ── Nothing false, secret or personal is rendered ───────────────────────────
 
 FORBIDDEN = (
@@ -495,7 +516,7 @@ def test_the_lines_about_what_a_device_adds_carry_the_same_condition():
         for line in eco.app(app_id).adds:
             if re.search(r"chats|workspaces|approve", line):
                 assert READ_SAID.search(line), line
-    assert "read your chats, workspaces, jobs and approval cards on this PC" in eco.RIGHT_NOTES["pc_read"]
+    assert "read your chats, workspaces, jobs, media and approval cards on this PC" in eco.RIGHT_NOTES["pc_read"]
 
 
 def test_the_watch_chat_list_is_said_to_wait_on_the_phones_read_press():
@@ -532,7 +553,8 @@ def test_the_watch_is_said_to_reach_me_through_the_phone_and_its_older_helper_is
 
 
 def test_the_watch_buzz_is_not_said_as_working_while_only_the_helper_feeds_it():
-    """The buzz is driven by the helper's events, not by the phone link (the link carries no events)."""
+    """The buzz for something finishing or needing him is driven by the helper's events; the phone link
+    carries no events (it buzzes only for a reply it brings back)."""
     watch = eco.app("watch")
     assert "events" not in {r.split("/", 1)[1] for r in watch.facts.routes if r.startswith("phone_link/")}
     buzz = next(c for c in watch.capabilities if c.id == "buzz")

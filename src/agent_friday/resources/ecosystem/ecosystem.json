@@ -23,7 +23,7 @@
       },
       "adds": [
         "You can talk or type to me from anywhere in the house, and I answer from this PC.",
-        "Once you allow it to read this PC and, separately, to approve, each on this PC's screen, the phone can approve what I ask.",
+        "Once you allow it to read this PC and, separately, to approve, each on this PC's screen, the phone can approve most of what I ask. Some requests are only ever approved on this PC's own screen.",
         "It can do things on the phone itself when you ask, such as timers, calendar entries and starting a call.",
         "Once you allow it to read this PC, on this PC's screen, your chats with me and your workspaces here open on the phone."
       ],
@@ -56,7 +56,7 @@
         },
         {
           "id": "approve",
-          "text": "approve what I ask, signed on the unlocked device, once you allow it to read this PC and, separately, to approve, each on this PC's screen",
+          "text": "approve most of what I ask, signed on the unlocked device, once you allow it to read this PC and, separately, to approve, each on this PC's screen; some requests are only ever approved on this PC's own screen",
           "status": "shipped",
           "evidence": [
             "capability:needs_you",
@@ -140,7 +140,7 @@
               "text": "If a newer build has been accepted on this PC, the app offers it and checks the file before anything is installed."
             },
             {
-              "text": "Tap Install. Android then asks you to confirm."
+              "text": "Tap Download, then Install. Android then asks you to confirm."
             }
           ]
         },
@@ -267,7 +267,7 @@
         },
         {
           "id": "approve",
-          "text": "approve what I ask, signed on the unlocked device, once you allow it to read this PC and, separately, to approve, each on this PC's screen",
+          "text": "approve most of what I ask, signed on the unlocked device, once you allow it to read this PC and, separately, to approve, each on this PC's screen; some requests are only ever approved on this PC's own screen",
           "status": "shipped",
           "evidence": [
             "capability:needs_you",
@@ -330,7 +330,7 @@
               "text": "If a newer build has been accepted on this PC, the app offers it and checks the file before anything is installed."
             },
             {
-              "text": "Tap Install. Android then asks you to confirm."
+              "text": "Tap Download, then Install. Android then asks you to confirm."
             }
           ]
         },
