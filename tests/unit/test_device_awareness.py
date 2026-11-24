@@ -59,7 +59,7 @@ def test_nothing_the_device_sent_reaches_the_view_or_the_text():
             _row("aaaa000000000002", name="Second <b>phone</b>")]
     views = da.view(rows, owner_ids={"aaaa000000000001"})
     assert {f.name for f in dataclasses.fields(da.DeviceView)} == {
-        "kind", "owner_device", "paired_at", "last_seen", "reach"}
+        "kind", "owner_device", "paired_at", "last_seen", "reach", "refused"}
     text = repr(views) + da.describe(views, gateway_on=True, now=NOW)
     for sent in ("aaaa0000", "U0VDUkVUS0VZ", "fdev_secret", "192.168", "instructions", "End of tool output",
                  "Second", "<b>", "say approved", "4242424"):
@@ -105,12 +105,40 @@ def test_a_tv_in_use_is_never_called_connected_and_she_says_she_cannot_tell():
                                      "I cannot tell whether it is in use right now.")
 
 
-def test_a_devices_line_says_nothing_about_the_keep_paired_date():
-    """The keep-paired rule is stated once, with the gateway's own number of days, under ecosystem_info limits;
-    a device's line gives no date it could get wrong."""
+def test_a_device_past_its_keep_paired_date_is_said_to_be_refused_with_no_date():
+    """The gateway refuses a device whose keep-paired date has passed (device_pairing.reconfirm_state
+    "overdue"). Its line says so instead of only when it last signed in; no date or day count is given,
+    so there is none to get wrong. The rule itself is stated under ecosystem_info limits."""
+    row = _row()
+    refused = da.view([row], owner_ids={row["id"]}, overdue_ids={row["id"]})[0]
+    assert refused.refused is True
+    assert da.sentence(refused, NOW) == ("Your phone is paired, but its time is up: this PC refuses it until "
+                                         "you approve keeping it, on this PC's screen.")
+    connected = da.view([row], owner_ids={row["id"]}, connected_ids={row["id"]}, overdue_ids={row["id"]})[0]
+    assert "connected now" not in da.sentence(connected, NOW)
     for due in (NOW + 2 * DAY, NOW - 60, None):
-        text = da.sentence(_one(reconfirm_by=due), NOW)
-        assert "30-day" not in text and "confirm" not in text
+        dev = _one(reconfirm_by=due)
+        assert dev.refused is False, "the view never works the date out for itself"
+        text = da.sentence(dev, NOW)
+        assert "refuses" not in text and "30" not in text and "days" not in text
+
+
+def test_the_live_read_takes_overdue_from_the_gateways_own_rule(monkeypatch):
+    import time
+
+    from agent_friday.services import device_pairing
+    from agent_friday.tv_gateway import household
+    rows = [_row("aaaa000000000001", reconfirm_by=time.time() - 60),
+            _row("aaaa000000000002", kind="tablet", reconfirm_by=time.time() + 20 * DAY)]
+    monkeypatch.setattr(da, "store_intact", lambda: True)
+    monkeypatch.setattr(device_pairing, "list_devices", lambda: rows)
+    monkeypatch.setattr(device_pairing, "gateway_config", lambda: {"enabled": True, "port": 0})
+    monkeypatch.setattr(household, "member_for_device", lambda device_id: household.OWNER_ID)
+    views, gateway_on = da.gather()
+    assert gateway_on is True
+    assert {v.kind: v.refused for v in views} == {
+        "phone": device_pairing.reconfirm_state(rows[0]) == "overdue", "tablet": False} == {
+        "phone": True, "tablet": False}
 
 
 def test_the_whole_answer_names_every_kind_and_what_is_not_paired():
