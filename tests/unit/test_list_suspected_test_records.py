@@ -13,11 +13,15 @@ import ast
 import hashlib
 import importlib.util
 import json
+import os
 from pathlib import Path
 
 import pytest
 
 SCRIPT = Path(__file__).resolve().parents[2] / "scripts" / "list_suspected_test_records.py"
+# Q3 exception: extended-length and admin-share path spellings, trailing dot/space trimming and NTFS streams exist only
+# on Windows, so these tests skip elsewhere; the pytest matrix in .github/workflows/tests.yml runs them on windows-latest.
+WINDOWS_ONLY = pytest.mark.skipif(os.name != "nt", reason="Windows-only path behaviour; Q3 exception, expires 2027-05-24")
 
 
 def _load():
@@ -202,7 +206,7 @@ def test_the_spellings_name_the_same_folder(tmp_path):
         assert other.startswith(_BS * 2) and os.path.samefile(other, tmp_path), spelling
 
 
-@pytest.mark.skipif(__import__("os").name != "nt", reason="Windows path spellings")
+@WINDOWS_ONLY
 @pytest.mark.parametrize("spelling", ["extended", "unc"])
 @pytest.mark.parametrize("home_exists", [True, False], ids=["home-exists", "home-not-yet"])
 def test_out_under_another_spelling_of_the_root_is_refused(tmp_path, monkeypatch, spelling, home_exists):
@@ -220,7 +224,7 @@ def test_out_under_another_spelling_of_the_root_is_refused(tmp_path, monkeypatch
     assert home.is_dir() if home_exists else not home.exists()
 
 
-@pytest.mark.skipif(__import__("os").name != "nt", reason="Windows name trimming")
+@WINDOWS_ONLY
 @pytest.mark.parametrize("tail", [".", " "], ids=["trailing-dot", "trailing-space"])
 @pytest.mark.parametrize("home_exists", [True, False], ids=["home-exists", "home-not-yet"])
 def test_out_with_a_name_windows_trims_is_refused(tmp_path, monkeypatch, tail, home_exists):
@@ -236,7 +240,7 @@ def test_out_with_a_name_windows_trims_is_refused(tmp_path, monkeypatch, tail, h
     assert home.is_dir() if home_exists else not home.exists()
 
 
-@pytest.mark.skipif(__import__("os").name != "nt", reason="Windows name trimming and streams")
+@WINDOWS_ONLY
 @pytest.mark.parametrize("name", [".friday.", ".friday ", ".friday:rep"])
 @pytest.mark.parametrize("home_exists", [True, False], ids=["home-exists", "home-not-yet"])
 def test_a_relative_out_is_checked_like_an_absolute_one(tmp_path, monkeypatch, name, home_exists):
@@ -261,7 +265,7 @@ def test_out_naming_a_folder_the_data_root_will_be_made_in_is_refused(tmp_path, 
     assert not (tmp_path / "not-yet").exists()
 
 
-@pytest.mark.skipif(__import__("os").name != "nt", reason="NTFS streams")
+@WINDOWS_ONLY
 def test_out_naming_a_stream_is_refused(tmp_path, monkeypatch):
     """`<folder>:name` writes a hidden stream ON that folder (on the data root itself): a report path never names one."""
     home = tmp_path / ".friday"
