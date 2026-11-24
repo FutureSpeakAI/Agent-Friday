@@ -100,8 +100,47 @@ LABEL_MAX = 80
 def doc_ctx(ws: str) -> prof.Context:
     """The one context for a document he approves, and for every restore, undo and reset of a view: checked as
     Friday's own documents are (composer, model_authored: no data of its own), no verb lookup (V9 fails closed), and
-    the card strings reserved. Design: ftv/program/specs/A2UI_SLICE3_OWNER_DOCUMENTS_2026-11-24.md, rev 2 and 3."""
+    the card strings reserved. Design: ftv/program/specs/A2UI_SLICE3_OWNER_DOCUMENTS_2026-11-24.md."""
     return prof.Context(subject=subject(ws), authorship="composer", model_authored=True, extra_reserved=CARD_STRINGS)
+
+
+#: Props that carry rows of data: in a document from a device they are always a binding, never literal rows.
+_DATA_PROPS = frozenset({"rows", "events", "series", "sources", "items"})
+#: Keys whose values are structure, not words anyone reads.
+_STRUCTURE = frozenset({"id", "component", "children", "style", "kind", "destination", "@path", "variant"})
+
+
+def _words(value):
+    if isinstance(value, str):
+        yield value
+    elif isinstance(value, dict):
+        for k, v in value.items():
+            if k not in _STRUCTURE:
+                yield from _words(v)
+    elif isinstance(value, list):
+        for v in value:
+            yield from _words(v)
+
+
+def check_document(ws: str, doc) -> list:
+    """A document that may become a view's current one from a device: the profile under doc_ctx, then two rules the
+    profile keeps only for headings and the data model: every data prop is a binding (V7), and no literal string
+    anywhere echoes a reserved word or card string (V11). Raises store.ViewRefused.
+    tests/unit/test_tv_ws_view_documents.py: test_data_in_a_document_he_approves_only_ever_comes_from_a_binding,
+    test_a_card_word_anywhere_in_the_document_is_refused."""
+    store._validated(doc, doc_ctx(ws))
+    for message in doc:
+        for c in ((message.get("createSurface") or {}).get("components") or []) if isinstance(message, dict) else []:
+            if not isinstance(c, dict):
+                continue
+            for prop in _DATA_PROPS & c.keys():
+                v = c[prop]
+                if not (isinstance(v, dict) and set(v) == {"@path"}):
+                    raise store.ViewRefused("V7", "%s: %s must come from a binding" % (c.get("id"), prop))
+            for text in _words(c):
+                if hit := prof.reserved_hit(text, CARD_STRINGS):
+                    raise store.ViewRefused("V11", "%s uses reserved word %r" % (c.get("id"), hit))
+    return doc
 
 
 def _check_reads(doc: list, sections) -> None:
@@ -216,6 +255,7 @@ def apply_change(ws: str, change, *, base_rev: str, by: str, sections=None) -> d
         target = next((v for v in (store.load(ws) or {}).get("versions", []) if v.get("id") == str(change["restore"])),
                       None)
         if target is not None:
+            check_document(ws, target["doc"])
             _check_reads(target["doc"], sections)
         got = store.restore(ws, str(change["restore"]), base_rev=base_rev, by=by, ctx=doc_ctx(ws))
     return {"rev": got["rev"], "version": got["versions"]}
@@ -225,7 +265,7 @@ def _document(ws: str, view: dict, doc, label: str, base_rev: str, by: str, sect
     """His approved document as the view's new current one. The first one keeps the builtin (with its carried look)
     as the earlier version, in the same write. His customization stays; hidden ids the new document no longer has are
     dropped and named."""
-    store._validated(doc, doc_ctx(ws))
+    check_document(ws, doc)
     _check_reads(doc, sections)
     ids = store._component_ids(doc)
     if not view["stored"] and base_rev != view["rev"]:
@@ -255,8 +295,7 @@ def _reset(ws: str, view: dict, base_rev: str, by: str) -> dict:
         if base_rev != view["rev"]:
             raise store.ViewStale(view["rev"])
         return {"rev": view["rev"], "version": 0}
-    doc = builtin(ws)
-    store._validated(doc, doc_ctx(ws))
+    doc = check_document(ws, builtin(ws))
 
     def build(previous):
         versions = list(previous["versions"]) + [store._snapshot(previous, store.KIND_CHANGE)]

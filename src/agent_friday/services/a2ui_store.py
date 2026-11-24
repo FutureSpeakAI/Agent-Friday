@@ -191,10 +191,15 @@ def _validated(doc, ctx: prof.Context) -> list:
     return doc
 
 
+#: Who wrote a document and who approved it travel with it into a version and back out of it on restore.
+PROVENANCE = ("authorship", "model_authored", "approved_by")
+
+
 def _snapshot(record: dict, kind: str) -> dict:
     return {"id": uuid.uuid4().hex[:12], "ts": record.get("updated") or _now(), "kind": kind,
             "label": record.get("label"), "by": record.get("updated_by"),
-            "doc": record["doc"], "customization": record["customization"]}
+            "doc": record["doc"], "customization": record["customization"],
+            **{k: record[k] for k in PROVENANCE if k in record}}
 
 
 def _commit(view_id: str, build, base_rev: str):
@@ -271,7 +276,8 @@ def restore(view_id: str, version_id: str, *, base_rev: str, by: str, ctx: Optio
         _validated(target["doc"], ctx or _default_ctx(previous))
         versions = [dict(v, undone=True) if v["id"] == version_id else v for v in previous["versions"]]
         versions.append(_snapshot(previous, KIND_RESTORE))
-        return {**previous, "doc": target["doc"], "customization": target["customization"],
+        return {**previous, **{k: target[k] for k in PROVENANCE if k in target},
+                "doc": target["doc"], "customization": target["customization"],
                 "label": target.get("label") or previous.get("label"), "versions": versions[-MAX_VERSIONS:],
                 "updated_by": by}
     return _commit(view_id, build, base_rev)

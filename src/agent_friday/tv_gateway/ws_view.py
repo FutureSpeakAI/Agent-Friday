@@ -33,9 +33,11 @@ from agent_friday.tv_gateway.approval_verify import Refusal, Rejected
 _log = logging.getLogger(__name__)
 
 SIGN_PREFIX = "wsview:"
-#: The most a proposal body may be, read by the route itself (a chunked body has no length to trust). This, not the
-#: store's MAX_DOC_BYTES, is the real limit on a document from a device.
+#: The most a proposal body may be. The gateway reads a chunked body up to its own 2 MB cap (app.py); this route then
+#: refuses anything over BODY_MAX before parsing it. This, not the store's MAX_DOC_BYTES, is the real limit on a
+#: document from a device.
 BODY_MAX = 72 * 1024
+SAFE_INT = 2 ** 53
 
 
 def proposal_fp(ws: str, base_rev: str, change) -> str:
@@ -86,6 +88,31 @@ def _no_constant(name):
     raise ValueError("%s is not JSON" % name)
 
 
+def _canonical(value) -> None:
+    """ValueError unless value has one canonical form a phone computes the same way: no floats, integers within
+    +/-2^53, every string (key or value) valid Unicode in NFC."""
+    import unicodedata
+    stack = [value]
+    while stack:
+        v = stack.pop()
+        if isinstance(v, bool) or v is None:
+            continue
+        if isinstance(v, float):
+            raise ValueError("a float")
+        if isinstance(v, int):
+            if abs(v) > SAFE_INT:
+                raise ValueError("an integer past 2^53")
+        elif isinstance(v, str):
+            if unicodedata.normalize("NFC", v) != v:
+                raise ValueError("text not in NFC")
+            v.encode("utf-8")
+        elif isinstance(v, dict):
+            stack.extend(v.keys())
+            stack.extend(v.values())
+        elif isinstance(v, list):
+            stack.extend(v)
+
+
 def _body() -> tuple:
     """The proposal body, read and parsed here: at most BODY_MAX bytes (_TooBig), and no repeated key, NaN, Infinity
     or anything without a canonical form (Rejected). tests/unit/test_tv_ws_view_documents.py holds the limits."""
@@ -94,7 +121,9 @@ def _body() -> tuple:
     raw = request.get_data(cache=True)
     if len(raw) > BODY_MAX:
         raise _TooBig()
+    from agent_friday.tv_gateway.app import _check_depth
     try:
+        _check_depth(raw)
         body = json.loads(raw.decode("utf-8"), object_pairs_hook=_no_repeats, parse_constant=_no_constant)
     except (ValueError, RecursionError):
         raise Rejected(Refusal.BAD_REQUEST, "send one JSON object, each key once")
@@ -104,9 +133,11 @@ def _body() -> tuple:
     if not isinstance(base_rev, str) or not base_rev or len(base_rev) > 128 or not isinstance(change, dict):
         raise Rejected(Refusal.BAD_REQUEST, "send {base_rev, change}")
     try:
+        _canonical(change)
         proposal_fp("", base_rev, change)
     except ValueError:
-        raise Rejected(Refusal.BAD_REQUEST, "that change has no canonical form (a lone surrogate, NaN or Infinity)")
+        raise Rejected(Refusal.BAD_REQUEST, "that change has no canonical form (a float, a huge number, text not in "
+                                            "NFC, a lone surrogate, NaN or Infinity)")
     return body, base_rev, change
 
 
