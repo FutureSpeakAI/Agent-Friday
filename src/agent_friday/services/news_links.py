@@ -24,9 +24,11 @@ import re
 _CITE_RE = re.compile(r"\[\s*([A-Z]\d{1,3}(?:\s*[,;]\s*[A-Z]\d{1,3})*)\s*\]")
 _MD_LINK_RE = re.compile(r"\[([^\]\n]{1,300})\]\((https?://[^)\s]+)\)")
 _BARE_URL_RE = re.compile(r"(?<![(\[])\bhttps?://[^\s)\]>\"'\x00]+")
-#: Where a known address standing in the text may end: closing punctuation at most, then a space, the end, or a
-#: bracket that closes it. Anything else glued on makes it another address.
-_KNOWN_END = r"(?=[.,;:!?]*(?:[ \t\r\n]|$|[)\]>]))"
+#: Where a known address standing in the text may end: a run of closing punctuation, brackets, quotes or emphasis at
+#: most, then a space, the end, or a "<". A renderer links an address up to the next space or "<", so anything
+#: else glued on, after a bracket too ("K)evil.example"), makes the whole run another address: it is not set aside,
+#: and goes with the unknown ones.
+_KNOWN_END = r"""(?=[.,;:!?*_~'"`)\]>]*(?:[ \t\r\n]|$|<))"""
 _MARK = re.compile("\x00(\\d+)\x00")
 
 
