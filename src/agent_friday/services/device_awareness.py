@@ -8,7 +8,9 @@ reads the live sources; ``tool_devices_status`` is the tool.
 
 Rules, each enforced by tests/unit/test_device_awareness.py:
 
-* nothing here writes: no device is added, removed, granted a right or paired;
+* nothing here changes a device: none is added, removed, granted a right or paired. Reading the
+  list goes through the store's own reader, which stamps keep-paired dates once on a list written
+  before those dates were enforced (device_pairing._grace_old_rows);
 * nothing a device sent reaches the text: not its name, and not its id, key,
   token or address. Two devices of one kind are told apart by when they were
   paired;
@@ -32,7 +34,7 @@ _log = logging.getLogger(__name__)
 
 KINDS = ("phone", "tablet", "tv", "watch")
 NOUNS = {"phone": "phone", "tablet": "tablet", "tv": "TV", "watch": "watch"}
-#: Kinds whose app reaches this PC through the phone and never signs in here, so "none paired" proves nothing.
+#: Kinds whose app reaches Friday through the phone and never signs in to the gateway, so "none paired" proves nothing.
 UNSEEN_KINDS = ("watch",)
 #: Kinds that hold the event stream (tv_gateway/pc_events): the only ones seen as connected.
 STREAM_KINDS = ("phone", "tablet")
@@ -130,7 +132,7 @@ def describe(devices: tuple, *, gateway_on: bool, kind: Optional[str] = None,
             continue
         if k in UNSEEN_KINDS:
             lines.append(f"No {noun} is paired with me. The {noun} app is a developer preview that reaches me "
-                         "through your phone and never signs in to this PC, so I cannot tell whether one is in use.")
+                         "through your phone and never signs in to me, so I cannot tell whether one is in use.")
         else:
             lines.append(f"No {noun} is paired.")
     if any(d.kind in kinds for d in devices):

@@ -116,7 +116,13 @@ HOUSEHOLD_TURN = ("Its questions are answered with none of your memory or files,
                   "is run for it. It also receives the household profile's settings and chats.")
 
 
-#: A watch holds no pairing with this PC: tv_gateway never sees it, the phone does the asking.
+#: Ends every claim that rests on the pc_read right, which the pairing press does not grant.
+NEEDS_READ_PRESS = "once you allow it to read this PC, on this PC's screen"
+#: Said while the watch app still carries its pairing with a helper (facts: pairing.relay).
+WATCH_HELPER = ("It can also still pair, by a code typed on the watch, with an older helper program on this PC. "
+                "That helper is separate from me, a developer starts it by hand, and I cannot see or start it.")
+
+#: A watch holds no pairing with the device gateway: tv_gateway never sees it, the phone does the asking.
 PHONE_LINK_TURN = ("It does not connect to me directly and I grant it nothing. What you ask on it goes to the "
                    "Agent Friday app on your phone, which asks me on the phone's own pairing; so it reaches "
                    "what your phone reaches, and nothing when the phone is not paired.")
