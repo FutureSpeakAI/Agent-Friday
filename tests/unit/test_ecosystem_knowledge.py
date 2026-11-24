@@ -290,7 +290,7 @@ def test_what_a_device_sees_follows_its_permissions():
 def test_approving_from_a_phone_is_said_to_need_its_own_permission():
     for app_id in ("phone", "tablet"):
         cap = next(c for c in eco.app(app_id).capabilities if c.id == "approve")
-        assert "once you allow approvals from it on this PC's screen" in cap.text
+        assert "and, separately, to approve, each on this PC's screen" in cap.text
 
 
 # ── Nothing false, secret or personal is rendered ───────────────────────────
@@ -411,21 +411,105 @@ def test_the_phone_and_tablet_are_said_to_open_chats_workspaces_and_a_widget(app
     assert caps["pc_voice"].status == "planned"
 
 
-@pytest.mark.parametrize("app_id", ("phone", "tablet"))
-def test_reading_this_pc_from_a_device_is_said_to_need_its_own_press(app_id):
-    """tv_gateway/pc_read guards chats and workspaces with the pc_read right, which the pairing press
-    does not grant: it is its own press at the PC. A sentence that leaves that out promises a refusal."""
+def _read_guarded_surfaces() -> set:
+    """The first path segment of every gateway route whose handler asks pc_read._guard, read from the
+    gateway's own sources: the surfaces a device is refused on until the owner's separate read press."""
+    from agent_friday import tv_gateway
+    guarded = set()
+    for file, text in _package_sources(Path(tv_gateway.__file__).parent):
+        call = "_guard(" if file.name == "pc_read.py" else "pc_read._guard("
+        marks = list(re.finditer(r'@app\.(?:get|post|put|delete|route)\("/tv/v1/([a-z][a-z0-9_-]*)', text))
+        pending = []
+        for i, mark in enumerate(marks):
+            chunk = text[mark.end():marks[i + 1].start() if i + 1 < len(marks) else len(text)]
+            pending.append(mark.group(1))
+            if "def " in chunk:
+                if call in chunk:
+                    guarded.update(pending)
+                pending = []
+    return guarded
+
+
+#: How a claim says it waits for the read press.
+READ_SAID = re.compile(r"allow(?: it|ed) to read this PC")
+#: Read-guarded surfaces an app asks for that no sentence in the file talks about. A new one fails
+#: test_every_read_guarded_surface_an_app_uses_is_claimed_with_the_press_or_listed until it is decided.
+UNCLAIMED_READS = {"jobs", "media", "orbs", "evolution", "connectors", "providers", "graph", "events"}
+NEEDS_ROUTE = {"chats": "route:gateway/chats", "workspaces": "route:gateway/workspaces",
+               "approve": "route:gateway/approvals", "pc_update": "route:gateway/phone"}
+
+
+def _shipped_claims(raw):
+    """(what, text, evidence) for every shipped capability and install channel of one raw entry."""
+    for cap in raw["capabilities"]:
+        if cap["status"] == "shipped":
+            yield f"capability {cap['id']}", cap["text"], cap["evidence"]
+    for channel in raw["install"]:
+        if channel["status"] == "shipped":
+            yield f"install {channel['id']}", f"{channel['title']} {channel['for']}", channel["evidence"]
+
+
+def test_the_read_guarded_surfaces_are_found_from_the_gateways_own_code():
+    guarded = _read_guarded_surfaces()
+    assert {"chats", "workspaces", "approvals", "phone", "jobs"} <= guarded
+    assert not guarded & {"messages", "pair", "hello", "inherit", "session"}
+
+
+@pytest.mark.parametrize("app_id", eco.APP_IDS)
+def test_every_claim_behind_the_read_press_says_so(app_id):
+    """tv_gateway refuses a read-guarded surface with needs_right until the owner allows the device to
+    read this PC, a press of its own that pairing does not include (device_pairing.PC_RIGHTS). A shipped
+    sentence resting on such a surface and silent about the press promises a refusal."""
     from agent_friday.services import device_pairing
-    from agent_friday.tv_gateway import pc_read
     assert "pc_read" in device_pairing.PC_RIGHTS and "pc_read" not in device_pairing.RIGHTS
-    source = Path(pc_read.__file__).read_text(encoding="utf-8")
-    assert '"/tv/v1/chats"' in source and '"/tv/v1/workspaces"' in source
-    a = eco.app(app_id)
-    for cap in a.capabilities:
-        if cap.id in ("chats", "workspaces"):
-            assert cap.text.endswith(eco.NEEDS_READ_PRESS), cap.text
-    said = [line for line in a.adds if "chats" in line or "workspaces" in line]
-    assert said and all(line.startswith("Once you allow it to read this PC") for line in said)
+    guarded = _read_guarded_surfaces()
+    for what, text, evidence in _shipped_claims(_raw(app_id)):
+        behind = [k for k in evidence if k.startswith("route:gateway/") and k.split("/", 1)[1] in guarded]
+        if behind:
+            assert READ_SAID.search(text), f"{app_id} {what} rests on {behind} and does not say it needs the read press"
+
+
+@pytest.mark.parametrize("app_id", ("phone", "tablet"))
+def test_claims_that_use_a_gateway_surface_cite_it(app_id):
+    """The check above only sees a surface a claim cites, so the claims known to use one must cite it."""
+    raw = _raw(app_id)
+    caps = {c["id"]: c for c in raw["capabilities"]}
+    for cap_id, key in NEEDS_ROUTE.items():
+        assert key in caps[cap_id]["evidence"], (cap_id, key)
+    channel = next(c for c in raw["install"] if c["id"] == "pc_update")
+    assert NEEDS_ROUTE["pc_update"] in channel["evidence"]
+
+
+@pytest.mark.parametrize("app_id", ("phone", "tablet", "tv"))
+def test_every_read_guarded_surface_an_app_uses_is_claimed_with_the_press_or_listed(app_id):
+    guarded = _read_guarded_surfaces()
+    used = {r.split("/", 1)[1] for r in eco.app(app_id).facts.routes if r.startswith("gateway/")} & guarded
+    cited = {k.split("/", 1)[1] for _w, _t, evidence in _shipped_claims(_raw(app_id))
+             for k in evidence if k.startswith("route:gateway/")}
+    assert used <= cited | UNCLAIMED_READS, sorted(used - cited - UNCLAIMED_READS)
+    assert not cited & UNCLAIMED_READS, "a surface with a claim is no longer unclaimed"
+
+
+def test_the_lines_about_what_a_device_adds_carry_the_same_condition():
+    for app_id in ("phone", "tablet"):
+        for line in eco.app(app_id).adds:
+            if re.search(r"chats|workspaces|approve", line):
+                assert READ_SAID.search(line), line
+    assert "read your chats, workspaces, jobs and approval cards on this PC" in eco.RIGHT_NOTES["pc_read"]
+
+
+def test_the_watch_chat_list_is_said_to_wait_on_the_phones_read_press():
+    """The phone serves the watch's chat list from /tv/v1/chats, which is read-guarded (friday-phone
+    watch/WatchInboxProvider -> chats/ChatSession), so the watch sees no chats until the phone may read."""
+    watch = _raw("watch")
+    for what, text, evidence in _shipped_claims(watch):
+        if "route:phone_link/chats" in evidence:
+            assert READ_SAID.search(text), what
+    assert any("route:phone_link/chats" in e for _w, _t, e in _shipped_claims(watch))
+    for line in eco.app("watch").adds:
+        if "chats" in line:
+            assert READ_SAID.search(line), line
+    assert "no more than your phone can" in eco.PHONE_LINK_TURN
 
 
 def test_the_watch_is_said_to_reach_me_through_the_phone_and_its_older_helper_is_named():
