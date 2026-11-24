@@ -9,17 +9,19 @@ tables do not know). services/job_store uses it to tell two postings on one care
   not places, and a number after a known region (a ZIP code: "TX 78701") is dropped;
 * a US state or Canadian province (by postal code, or by name) is the state, and a country (by name or
   three-letter code) the country; when a location has several, a postal code is the state before a name, the last
-  name before an earlier one, and a country agreeing with the state before one that does not; every one not
-  chosen is a name ("Washington, DC" is Washington in DC; "Mexico, MO" and "Holland, MI" are towns in the US;
-  "New York, New York, United States" is New York in New York);
-* two locations are one place only when their names are the same and no state or country of one differs from
-  the other's: "Dallas" and "Dallas, TX", "London" and "London, England, GB", "Remote - US" and "Remote, United
-  States". A location that names nothing (a bare "Remote") is one place with any.
+  name before an earlier one; every state not chosen is a name, and so is a country that disagrees with the
+  state or with the first country ("Washington, DC" is Washington in DC; "Mexico, MO" and "Holland, MI" are towns
+  in the US; "New York, New York, United States" is New York in New York; "Singapore, Singapore" is Singapore);
+* two locations with names are one place only when their names are the same and no state or country of one
+  differs from the other's: "Dallas" and "Dallas, TX", "London" and "London, England, GB"; two without names are
+  one only when they name the same state and country: "Remote - US" and "Remote, United States", "Remote - TX" and
+  "Texas". A location that names nothing (a bare "Remote") is one place with any.
 
 So a city never joins a location without that city ("Remote - WA" and "Washington, DC", "Ontario, Canada" and
-"Ontario, CA", "New York" and "New York, NY" are two), and every spelling the tables cannot read as one place is
-two places: "NYC" and "New York", "Bengaluru" and "Bangalore", "EMEA - London" and "London, UK". Two records for
-one posting can happen; one record for two only when both feeds name the same place.
+"Ontario, CA", "New York" and "New York, NY" are two), a country is never one of its states ("New York" and
+"Remote - US", "Remote - CA" (read as California) and "Remote - US" are two), and every spelling the tables
+cannot read as one place is two places: "NYC" and "New York", "Bengaluru" and "Bangalore", "EMEA - London" and
+"London, UK". Two records for one posting can happen; one record for two only when both feeds name the same place.
 """
 from __future__ import annotations
 
@@ -143,5 +145,8 @@ def differ(a: Place, b: Place) -> bool:
     """True when two locations are two places (see the module docstring)."""
     if not a or not b:
         return False
-    return (a.names != b.names or bool(a.state and b.state and a.state != b.state)
-            or bool(a.country and b.country and a.country != b.country))
+    if a.names != b.names:
+        return True
+    if not a.names:                          # two regions: one only when they are the same region
+        return (a.state, a.country) != (b.state, b.country)
+    return bool(a.state and b.state and a.state != b.state) or bool(a.country and b.country and a.country != b.country)
