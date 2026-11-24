@@ -7,6 +7,7 @@ model typed is removed unless it is exactly one the tools returned. Nothing here
 Synthetic stories, senders and events only.
 """
 import re
+import string
 
 import pytest
 
@@ -360,9 +361,10 @@ KNOWN_SHAPES = ["https://calendar.example.test/event?eid=abc123", "https://calen
                 "https://en.wikipedia.example.test/wiki/Mercury_(planet)", "https://calendar.example.test/a/",
                 "https://www.calendar.example.test/e.html", "https://calendar.example.test/e?x=1&y=(2)",
                 "https://calendar.example.test/e()", "https://mail.google.com/mail/u/dana@example.test/#all/18f3a1b2c3"]
-PLACEMENTS = ["- Standup %s", "- Standup %s.", "- Standup **%s**", "- Standup \"%s\".", "- Standup `%s`",
-              "- Standup (%s)", "- Standup (%s).", "- Standup %s, then lunch.", "- Standup: %s; then lunch.", "- Standup [agenda](%s)", "- Standup [agenda](%s).",
-              "- Standup ([agenda](%s))", "- Standup [[draft] agenda](%s)!"]
+PLACEMENTS = ["- Standup %s", "- Standup %s.", "- Standup **%s**", "- Standup \"%s\".", "- Standup '%s'?",
+              "- Standup (%s)", "- Standup (%s).", "- Standup %s, then lunch.", "- Standup: %s; then lunch.",
+              "- Standup [agenda](%s)", "- Standup [agenda](%s).", "- Standup ([agenda](%s))",
+              "- Standup [[draft] agenda](%s)!"]
 
 
 def _pipeline(briefing, src):
@@ -407,30 +409,40 @@ def test_no_unknown_address_is_left_or_made_by_the_whole_pipeline_wherever_it_st
     assert bl.strip_unknown_links(final, known) == final
 
 
-#: What may follow a known address with no space between: a tail that is not part of it, so the run is another
-#: address, never the known one with something after it.
-GLUED_TAILS = [")evil.example.test", ")@evil.example.test/x", ".)/../../phish", "]x", ">x", "evil", "/../phish",
-               "?next=https://evil.example.test", ")x(", "'x", "*x", ".x", ":8080"]
-GLUED_PLACEMENTS = ["## Calendar\n- Standup [C1] %s\n", "## Tasks\n- See %s\n", "## Calendar\nNothing today: %s\n"]
+#: Everything that can be glued to a known address: each punctuation character alone (marked trims some, so the
+#: address stands; the rest make another address) and followed by a word, a host, or an "@" and a host.
+GLUED_TAILS = sorted({c + rest for c in string.punctuation for rest in ("", "x", "evil.example.test",
+                                                                        "@evil.example.test/x")})
+#: An item that cites, sourced prose, an item kept as it is, and a heading: the last two meet only the final pass.
+GLUED_PLACEMENTS = ["## Calendar\n- Standup [C1] %s\n", "## Calendar\nNothing today: %s\n", "## Tasks\n- See %s\n",
+                    "## Tasks %s\n- Renew\n"]
 
 
 @pytest.mark.parametrize("tail", GLUED_TAILS)
 @pytest.mark.parametrize("placement", GLUED_PLACEMENTS)
 def test_an_unknown_tail_glued_to_a_known_address_never_renders_as_a_link(tail, placement):
-    """A known address with anything glued after it is another address: it goes, and nothing a renderer links is
-    left but the known links themselves."""
+    """A known address with anything glued after it renders as a link only to itself: when marked would link the
+    run as the address alone, it stays; otherwise the run is another address and goes. A second pass changes
+    nothing."""
     url = CAL[0]["url"]
     got, known, final = _pipeline(placement % (url + tail), bl.collect(calendar=CAL))
     assert set(_live_links(final, known)) <= known, final
     assert bl.strip_unknown_links(final, known) == final
 
 
+def test_a_known_address_with_only_what_a_renderer_trims_after_it_stands():
+    url = CAL[0]["url"]
+    for tail in (".", ",", ":", ";", "!", "?", "*", "_", "~", "'", '"', ")", ").", "**", "...", "?!"):
+        got, known, final = _pipeline("## Tasks\n- See %s%s\n" % (url, tail), bl.collect(calendar=CAL))
+        assert "%s%s" % (url, tail) in final, tail
+
+
 def _live_links(text, known):
     """Every link a GFM renderer (marked, as ui_parts/app.html uses it) makes of the text: link and image targets,
-    extended autolinks (http(s):// and www. runs to the next space or "<", less trailing punctuation and unbalanced
-    ")"), and email autolinks (outside the known links). Nothing in a code span is a link."""
+    extended autolinks (http(s):// and www. runs, anywhere in a word, to the next space, less trailing punctuation
+    and unbalanced ")"), and email autolinks (outside the known links). Code spans are not left out: no address may
+    stand in one either."""
     links = []
-    text = re.sub(r"`[^`\n]*`", " ", text)
     for m in re.finditer(r"\]\(", text):
         i = j = m.end()
         depth = 0
@@ -443,7 +455,7 @@ def _live_links(text, known):
                 depth -= 1
             j += 1
         links.append(text[i:j])
-    for m in re.finditer(r"(?i)(?<![A-Za-z0-9/])(?:https?://|www\.)[^\s<]*", text):
+    for m in re.finditer(r"(?i)(?:https?://|www\.)\S*", text):
         url = m.group(0)
         while url:
             if url[-1] in "?!.,:;*_~'\"":
