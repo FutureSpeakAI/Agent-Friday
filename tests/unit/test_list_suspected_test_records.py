@@ -196,11 +196,9 @@ def _spelled(text: str, spelling: str) -> str:
     return _BS * 2 + "localhost" + _BS + text[0] + "$" + text[2:]          # \\localhost\C$\...
 
 
+@WINDOWS_ONLY
 def test_the_spellings_name_the_same_folder(tmp_path):
     """Guard for the test below: each spelling really is the folder (two leading backslashes, resolvable)."""
-    if __import__("os").name != "nt":
-        pytest.skip("Windows path spellings")
-    import os
     for spelling in ("extended", "unc"):
         other = _spelled(str(tmp_path.resolve()), spelling)
         assert other.startswith(_BS * 2) and os.path.samefile(other, tmp_path), spelling
