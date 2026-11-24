@@ -253,7 +253,8 @@ def test_the_device_may_send_only_the_listed_frames_everything_else_is_dropped()
     (b"\x00" * (vb.MAX_PCM_FRAME + 1), "frame_too_large"),
     ("x" * (vb.MAX_TEXT_FRAME + 1), "frame_too_large"),
     (12345, "frame_too_large"),
-])
+], ids=["pcm_over_cap", "text_over_cap", "neither_bytes_nor_text"])  # ids: a raw 64 KB id overflows
+# PYTEST_CURRENT_TEST on Windows (env var limit 32767), which turned the b81 gate red
 def test_an_oversize_or_odd_frame_ends_the_session_and_is_not_forwarded(frame, code):
     b, _, up = _bridge()
     assert b.from_device(frame) is False
