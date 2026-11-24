@@ -23,7 +23,7 @@
       },
       "adds": [
         "You can talk or type to me from anywhere in the house, and I answer from this PC.",
-        "Once you allow it on this PC's screen, the phone can approve what I ask.",
+        "Once you allow it to read this PC and, separately, to approve, each on this PC's screen, the phone can approve what I ask.",
         "It can do things on the phone itself when you ask, such as timers, calendar entries and starting a call.",
         "Once you allow it to read this PC, on this PC's screen, your chats with me and your workspaces here open on the phone."
       ],
@@ -56,11 +56,12 @@
         },
         {
           "id": "approve",
-          "text": "approve what I ask, signed on the unlocked device, once you allow approvals from it on this PC's screen",
+          "text": "approve what I ask, signed on the unlocked device, once you allow it to read this PC and, separately, to approve, each on this PC's screen",
           "status": "shipped",
           "evidence": [
             "capability:needs_you",
-            "permission:android.permission.USE_BIOMETRIC"
+            "permission:android.permission.USE_BIOMETRIC",
+            "route:gateway/approvals"
           ]
         },
         {
@@ -92,10 +93,11 @@
         },
         {
           "id": "pc_update",
-          "text": "take a newer build from this PC once it is paired",
+          "text": "take a newer build from this PC, once it is paired and you allow it to read this PC, on this PC's screen",
           "status": "shipped",
           "evidence": [
-            "permission:android.permission.REQUEST_INSTALL_PACKAGES"
+            "permission:android.permission.REQUEST_INSTALL_PACKAGES",
+            "route:gateway/phone"
           ]
         },
         {
@@ -126,9 +128,10 @@
           "status": "shipped",
           "advanced": false,
           "evidence": [
-            "permission:android.permission.REQUEST_INSTALL_PACKAGES"
+            "permission:android.permission.REQUEST_INSTALL_PACKAGES",
+            "route:gateway/phone"
           ],
-          "for": "a phone that is already paired",
+          "for": "a phone that is already paired and allowed to read this PC",
           "steps": [
             {
               "text": "On the phone, open Agent Friday, then Settings, then About & diagnostics."
@@ -264,19 +267,21 @@
         },
         {
           "id": "approve",
-          "text": "approve what I ask, signed on the unlocked device, once you allow approvals from it on this PC's screen",
+          "text": "approve what I ask, signed on the unlocked device, once you allow it to read this PC and, separately, to approve, each on this PC's screen",
           "status": "shipped",
           "evidence": [
             "capability:needs_you",
-            "permission:android.permission.USE_BIOMETRIC"
+            "permission:android.permission.USE_BIOMETRIC",
+            "route:gateway/approvals"
           ]
         },
         {
           "id": "pc_update",
-          "text": "take a newer build from this PC once it is paired",
+          "text": "take a newer build from this PC, once it is paired and you allow it to read this PC, on this PC's screen",
           "status": "shipped",
           "evidence": [
-            "permission:android.permission.REQUEST_INSTALL_PACKAGES"
+            "permission:android.permission.REQUEST_INSTALL_PACKAGES",
+            "route:gateway/phone"
           ]
         },
         {
@@ -313,9 +318,10 @@
           "status": "shipped",
           "advanced": false,
           "evidence": [
-            "permission:android.permission.REQUEST_INSTALL_PACKAGES"
+            "permission:android.permission.REQUEST_INSTALL_PACKAGES",
+            "route:gateway/phone"
           ],
-          "for": "a tablet that is already paired",
+          "for": "a tablet that is already paired and allowed to read this PC",
           "steps": [
             {
               "text": "On the tablet, open Agent Friday, then Settings, then About & diagnostics."
@@ -558,7 +564,8 @@
         ]
       },
       "adds": [
-        "You can ask me from your wrist and see your chats, through your phone."
+        "You can ask me from your wrist, through your phone.",
+        "Once your phone is allowed to read this PC, your chats with me show on the watch too."
       ],
       "capabilities": [
         {
@@ -572,7 +579,7 @@
         },
         {
           "id": "chats",
-          "text": "show your chats with me and open one, through your phone",
+          "text": "show your chats with me and open one, through your phone, once the phone is allowed to read this PC",
           "status": "shipped",
           "evidence": [
             "route:phone_link/chats"
@@ -583,7 +590,7 @@
           "text": "A buzz on the wrist when something finishes or needs you",
           "status": "built_off",
           "evidence": [],
-          "until": "its older helper program is running on this PC"
+          "until": "its older helper program is running on this PC, the watch is paired with it and its live alerts are switched on"
         },
         {
           "id": "gateway",
