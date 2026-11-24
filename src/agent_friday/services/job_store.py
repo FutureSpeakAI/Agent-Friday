@@ -66,7 +66,8 @@ def path() -> Path:
 # -- keys -------------------------------------------------------------------------------------
 
 def _words(text) -> str:
-    """The words of any script, joined by single spaces (job_places.words: marks kept, NFC, case folded)."""
+    """The words of any script, joined by single spaces (job_places.words: NFKC, case folded, every character but
+    a separator kept)."""
     return " ".join(job_places.words(text))
 
 
@@ -99,14 +100,20 @@ def make_keys(listing: dict) -> List[str]:
     url = normalize_url(listing.get("url") or listing.get("source_url"))
     bases = []
     if source and external:
-        bases.append("id|%s|%s" % (source, external))
+        bases.append(["id", source, external])
     if company and title:
-        bases.append("ct|%s|%s|%s" % (company, title, location))
+        bases.append(["ct", company, title, location])
     if url:
-        bases.append("u|%s" % url)
+        bases.append(["u", url])
     if not bases:
         raise ValueError("a listing needs a source id, a company and title, or a URL")
-    return [_hash(basis) for basis in bases]
+    return [_key(basis) for basis in bases]
+
+
+def _key(fields: list) -> str:
+    """One key from its fields, as a JSON list: no field's text can ever reach into the next one ("Acme|Health" /
+    "Nurse" is not "Acme" / "Health|Nurse")."""
+    return _hash(json.dumps(fields, ensure_ascii=False))
 
 
 # -- time -------------------------------------------------------------------------------------
@@ -199,7 +206,7 @@ def _find(data: dict, keys: List[str], listing: dict) -> Optional[dict]:
     """The record the listing is a sighting of. A feed id or company+title+location match is enough; a URL match
     only when the company, title and location do not contradict the record's (_contradicts)."""
     url = normalize_url(listing.get("url") or listing.get("source_url"))
-    url_key = _hash("u|%s" % url) if url else None
+    url_key = _key(["u", url]) if url else None
     for key in keys:
         primary = data["aliases"].get(key)
         if primary not in data["jobs"]:

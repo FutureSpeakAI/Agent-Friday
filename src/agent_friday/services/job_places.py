@@ -8,7 +8,7 @@ tables do not know). services/job_store uses it to tell two postings on one care
   otherwise ("Saint-Laurent", "Newcastle-upon-Tyne"); work modes ("Remote", "Hybrid", "On-site", "Office") are
   not places, and a number after a known state or country (a postcode: "Austin, TX 78701") is dropped, unless
   nothing else names the town ("TX 78701" alone is the place 78701 in Texas, "Mexico 06600" 06600 in Mexico);
-  words are letters with their marks and digits of any script (words());
+  words are every character but a separator, in any script (words());
 * a US state or Canadian province (by postal code, or by name) is the state, and a country (by name or
   three-letter code) the country; when a location has several, a postal code is the state before a name, the last
   name before an earlier one; every state not chosen is a name, and so is a country that disagrees with the
@@ -96,14 +96,20 @@ class Place:
 
 #: The characters that only separate words: spaces, controls, dashes, brackets, quotes and plain punctuation. Every
 #: other character is part of a word, so a symbol nobody listed (C♯, an emoji, a + or #) keeps two titles apart.
-_SEPARATING_CATEGORIES = frozenset({"Zs", "Zl", "Zp", "Cc", "Cf", "Pd", "Ps", "Pe", "Pi", "Pf", "Pc"})
+_SEPARATING_CATEGORIES = frozenset({"Zs", "Zl", "Zp", "Cc", "Pd", "Ps", "Pe", "Pi", "Pf", "Pc"})
+#: The format characters (Cf) that only hide or join: the soft hyphen, zero-width space, non-joiner and joiner, the
+#: word joiner, byte-order mark and the direction marks. Every other Cf (the tag characters of a subdivision flag:
+#: 🏴 England is not 🏴 Scotland) is part of a word.
+_INVISIBLE = (frozenset(map(chr, (0x00AD, 0x200B, 0x200C, 0x200D, 0x2060, 0xFEFF, 0x200E, 0x200F)))
+              | frozenset(map(chr, range(0x202A, 0x202F))) | frozenset(map(chr, range(0x2066, 0x206A))))
 #: Plain punctuation (Po) that still means something in a title or a place, so is kept.
 _MEANINGFUL_PUNCTUATION = frozenset("#%&*@")
 
 
 def is_separator(c: str) -> bool:
     category = unicodedata.category(c)
-    return category in _SEPARATING_CATEGORIES or (category == "Po" and c not in _MEANINGFUL_PUNCTUATION)
+    return (category in _SEPARATING_CATEGORIES or c in _INVISIBLE
+            or (category == "Po" and c not in _MEANINGFUL_PUNCTUATION))
 
 
 def words(text) -> List[str]:
