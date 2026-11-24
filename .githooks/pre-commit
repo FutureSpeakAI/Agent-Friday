@@ -83,6 +83,14 @@ if ! $PY "$HERE/../scripts/check_stale_model_names.py"; then
     exit 1
 fi
 
+# No new module reads a raw provider key; the list of today's readers only shrinks
+# (scripts/check_raw_key_readers.py). AST walk, stdlib only.
+if ! $PY "$HERE/../scripts/check_raw_key_readers.py"; then
+    echo "[pre-commit] raw-key-readers check FAILED - commit blocked." >&2
+    echo "[pre-commit] emergency bypass (discouraged): git commit --no-verify" >&2
+    exit 1
+fi
+
 # Governance never reads trust: trust may add caution and can never clear a
 # card (scripts/check_trust_in_governance.py). AST walk, stdlib only.
 if ! $PY "$HERE/../scripts/check_trust_in_governance.py"; then
@@ -90,6 +98,11 @@ if ! $PY "$HERE/../scripts/check_trust_in_governance.py"; then
     echo "[pre-commit] emergency bypass (discouraged): git commit --no-verify" >&2
     exit 1
 fi
+
+# ── Cloud voice engine names ──────────────────────────────────────────────
+# One module (services/voice_engines.py) spells the cloud voice engines; warn-only
+# until the batch after 2026-11-23, then add --enforce. Stdlib AST scan.
+$PY "$HERE/../scripts/check_cloud_engine_literals.py" || true
 
 # ── Visible-jobs check ────────────────────────────────────────────────────
 # Every launch point of model work sits behind services/visible_jobs, so the

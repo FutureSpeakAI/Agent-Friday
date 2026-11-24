@@ -58,15 +58,14 @@ def test_cards_of_one_batchable_kind_and_service_are_one_batch_that_lists_each_a
     assert "3 media diet rule approvals" in b["sentence"] and b["batch_id"].startswith("batch_")
 
 
-def test_taint_cards_do_not_batch_until_their_own_review(monkeypatch):
-    """The addendum puts taint batching under NA-4 (safety review + harsh critic before enable)."""
+def test_taint_cards_batch_only_for_wiki_edits_and_every_other_tool_stays_single(monkeypatch):
+    """The wiki-edit batch is held by tests/unit/test_approval_batches_wiki_edits.py; any other taint card is single."""
     for i in range(3):
         _card(i, kind="tainted_action", by="taint_gate",
               payload={"tool": "open_url", "conversation_id": "chat-1", "task_id": "t1"})
     plan = ab.pending_plan()
     assert plan["batches"] == [] and len(plan["singles"]) == 3
-    assert "tainted_action" not in ab.BATCHABLE_KINDS and "governed_action" not in ab.BATCHABLE_KINDS
-    assert "tool_confirm" not in ab.BATCHABLE_KINDS
+    assert "governed_action" not in ab.BATCHABLE_KINDS and "tool_confirm" not in ab.BATCHABLE_KINDS
 
 
 def test_a_batch_shows_every_item_in_full_as_a_single_card_would():

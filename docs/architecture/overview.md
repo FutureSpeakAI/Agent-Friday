@@ -274,11 +274,12 @@ bare "no" declines only the card of the newest waiting question
 (`_deny_awaiting_card`). A yes from anywhere else does not decide a card. If
 the card was already decided elsewhere the turn says so.
 
-**Where cards appear.** All read one feed (`services/approval_feed.py`, SSE at
+**Where cards appear.** Approval cards are drawn in the approval tray only, never inline in the chat; the chat
+shows at most one line (`ChatApprovalNote`: "Waiting on your approval in the tray."), with no buttons. All tray
+surfaces read one feed (`services/approval_feed.py`, SSE at
 `/api/approvals/events`; in the page `fridayApprovalFeed`, one tab holds the
 stream and relays to others):
 
-- in the chat, `ChatApprovalCards` (`index.html`), filtered by conversation;
 - the Activity panel's **Needs you** tab (`static/friday_experience.js`,
   `services/activity_lane.py`, `/api/lanes/needs-you`);
 - the popup on every page (`ApprovalPopups`);
@@ -286,7 +287,11 @@ stream and relays to others):
 
 `static/friday_responsive_topbar.js` keeps the Activity button in the top bar
 while anything waits. `services/approval_batches.py` groups a few
-low-risk kinds into one decision; it is a view, not a separate gate.
+low-risk kinds into one decision; it is a view, not a separate gate. Several wiki edits that used details
+from outside content (`correct_wiki`, `propose_wiki_update`, one conversation and task) are one tray card
+(`ApprovalTrayList`, `LaneBatch`): Approve applies each edit through its own approval, "Reject this one" declines
+one edit and leaves the rest, and the parts that came from outside text are marked. Any other taint card
+stays a single card.
 
 **Other card kinds.**
 - `cloud_release`: money paragraphs (section 2).

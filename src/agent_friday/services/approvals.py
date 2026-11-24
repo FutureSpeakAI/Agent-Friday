@@ -250,6 +250,8 @@ SCREEN_ONLY_KINDS: Dict[str, frozenset] = {
     # Widening what a paired device may do (one right per card: Friday as the TV's
     # brain; Studio jobs that spend on this PC's providers). Narrowing needs no card.
     "device_right": frozenset({"owner:ui"}),
+    # Keeping a paired device for 30 more days (services/device_pairing.reconfirm): the owner's press at the PC.
+    "device_reconfirm": frozenset({"owner:ui"}),
 }
 
 
@@ -435,19 +437,23 @@ _CARD_FIELDS = ("approval_id", "kind", "subject_type", "subject_id", "title", "d
 _SEAL_FIELDS = _CARD_FIELDS + ("status", "decided_by", "decided_source", "pre_approved")
 _CARD_TAG = b"agent-friday/approval-card/v1\0"
 _SEAL_TAG = b"agent-friday/approval/v1\0"
-#: The governance key, read once a minute at most (each read is an OS keychain call).
+#: The governance key, read once a minute at most (each read is an OS keychain call), and the reader it
+#: came from. A key is reused only while that reader is still the one in place: a key from a reader
+#: swapped since (a test's synthetic key) must not seal a card and then run out before the spend reads
+#: another (b80; tests/unit/test_approval_seal_key_cache.py). In the app the reader never changes.
 _KEY_CACHE: Dict[str, Any] = {"key": None, "at": 0.0}
 
 
 def _seal_key() -> bytes:
+    from agent_friday.governance import proof_of_integrity as _poi
+    reader = _poi.get_governance_key
     now = time.monotonic()
-    if _KEY_CACHE["key"] and now - _KEY_CACHE["at"] < 60:
+    if _KEY_CACHE["key"] and _KEY_CACHE.get("reader") is reader and now - _KEY_CACHE["at"] < 60:
         return _KEY_CACHE["key"]
-    from agent_friday.governance.proof_of_integrity import get_governance_key
-    key = get_governance_key()
+    key = reader()
     if not key:
         raise RuntimeError("governance key unavailable")
-    _KEY_CACHE.update(key=key, at=now)
+    _KEY_CACHE.update(key=key, at=now, reader=reader)
     return key
 
 
@@ -461,12 +467,22 @@ def _mac(tag: bytes, rec: Dict[str, Any], fields, key: Optional[bytes]) -> str:
     return _hm.new(key or _seal_key(), tag + blob, hashlib.sha256).hexdigest()
 
 
+#: The seal errors already reported, so a missing key is said once and not on every card read.
+_SEAL_WARNED: set = set()
+
+
 def _holds(rec: Dict[str, Any], field: str, tag: bytes, fields) -> bool:
     import hmac as _hm
     try:
         seal = (rec or {}).get(field)
         return bool(seal) and _hm.compare_digest(str(seal), _mac(tag, rec, fields, None))
-    except Exception:  # noqa: BLE001 - no key, no proof
+    except Exception as e:  # noqa: BLE001 - no key, no proof
+        # Still refused. But a seal that cannot be CHECKED (a key that would not read) must not look like a
+        # seal that does not MATCH: say which, once per distinct error (F2/F9).
+        said = (type(e).__name__, str(e)[:200])
+        if said not in _SEAL_WARNED and len(_SEAL_WARNED) < 20:
+            _SEAL_WARNED.add(said)
+            _log.warning("a card seal could not be checked (%s: %s); it is treated as not sealed", *said)
         return False
 
 
@@ -518,17 +534,27 @@ _CLAIM_KINDS = _SPENT_KINDS + ("approval_claimed",)
 
 def _ledger_has(approval_id: str, kinds=_SPENT_KINDS) -> bool:
     """The ledger records this card under one of `kinds`. Raises when the ledger cannot be read
-    (a strict read, archive included; one retry on a momentary sharing violation)."""
+    (a strict read, archive included; a momentary sharing violation is retried like the store's own file)."""
     from agent_friday.services import action_ledger
     aid = str(approval_id)
-    for attempt in (0, 1):
+    for attempt in range(_BUSY_RETRIES):
         try:
             rows = action_ledger.entries(list(kinds), newest_first=False, strict=True, archive=True)
             break
-        except PermissionError:
-            if attempt:
+        except (PermissionError, action_ledger.LedgerError):
+            # A strict read reports a file Windows refused for a moment as a LedgerError (its integrity check
+            # fails first: "a break to review"), with no trace of the cause, so any LedgerError is tried again,
+            # a few times. A real break is still there after the last try, and the read raises: not claimed.
+            if attempt == _BUSY_RETRIES - 1:
                 raise
-            time.sleep(0.05)
+            if attempt == 0:
+                # verify() keeps even a failed check while no ledger file changes (up to FULL_RECHECK_S), so a
+                # refusal seen while it read would answer every retry. Check the files again, once.
+                try:
+                    action_ledger.verify(force=True)
+                except Exception:  # noqa: BLE001 - the strict read below judges
+                    pass
+            time.sleep(0.02 * (attempt + 1))
     return any(str((e.get("rec") or {}).get("approval") or "") == aid for e in rows)
 
 
@@ -582,7 +608,8 @@ _DEVICE_OF_SOURCE = {"desktop_press": "this_pc", "typed": "this_pc", "voice": "t
                      "page_not_on_this_pc": "another_device", "page_without_desk_key": "another_device",
                      "text_message": "owner_phone", "sms": "owner_phone", "text": "owner_phone",
                      "google_tasks_tick": "google_tasks", "standing_grant": "pre_approved_in_settings",
-                     "auto_policy": "policy", "law1_block": "policy", "system": "friday"}
+                     "auto_policy": "policy", "law1_block": "policy", "system": "friday",
+                     "device_signed": "owner_device", "device": "owner_device"}
 
 
 def decided_device(source: Optional[str]) -> str:
@@ -1174,14 +1201,19 @@ def _everything_stopped() -> bool:
 
 
 def decide_with_outcome(approval_id: str, decision: str, *, decided_by: str = "owner",
-                        note: str = "", source: str = "") -> tuple:
+                        note: str = "", source: str = "", expect_fp: str = "",
+                        proof: Optional[Dict[str, Any]] = None) -> tuple:
     """`decide()`, also saying whether THIS call made the decision.
 
     Returns (record, won). `won` is True for exactly one caller per card: the
     check that the card is still pending and the write that decides it happen
     under one lock, so two pages (or a page and a voice command) deciding at
     once cannot both act; every other caller gets the card as it now stands
-    and won=False. (None, False) for an unknown id.
+    and won=False. (None, False) for an unknown id. ``expect_fp``, when given, is the action fingerprint the
+    decider saw and signed: an approve of a card that no longer has it is not made (under the same lock).
+    ``proof`` (a device's signature, nonce and signed time) is kept on the decision record as ``decided_proof`` so the
+    approval can be checked later. Guarded by test_the_signed_fingerprint_is_checked_under_the_decision_lock and
+    test_the_signature_is_kept_on_the_decision_record.
     """
     if decision not in ("approve", "deny"):
         raise ValueError("decision must be 'approve' or 'deny'")
@@ -1193,6 +1225,8 @@ def decide_with_outcome(approval_id: str, decision: str, *, decided_by: str = "o
     if decided_by == SCREEN_LABEL and not _press_granted(approval_id):
         decided_by = "owner"
     named = source if source in _CALLER_SOURCES else ""
+    if named in _DEVICE_SOURCES and not decided_by.startswith(DEVICE_LABEL):
+        named = ""                  # only a decision labelled as a device's may say it was one
     source, check = decision_source(decided_by, approval_id)
     if named and source != "desktop_press":
         # The caller knows the channel better than the label does (a typed "no" in chat is
@@ -1230,6 +1264,8 @@ def decide_with_outcome(approval_id: str, decision: str, *, decided_by: str = "o
             # Send on a card that lets private text leave the PC is its own button on screen (or the
             # owner's own words after a read-back), never another approvals route (cloud_release.decide).
             return dict(rec), False
+        if decision == "approve" and expect_fp and _action_fp(rec) != expect_fp:
+            return dict(rec), False
         if decision == "approve" and not card_seal_holds(rec):
             # changed since it was raised (or not raised by this module): never approved as is
             _log.error("approval %s is not the card that was raised; it is not approved", approval_id)
@@ -1244,11 +1280,13 @@ def decide_with_outcome(approval_id: str, decision: str, *, decided_by: str = "o
         if check is not None:
             rec["decided_check"] = check
         rec["decision_note"] = note
+        if proof:
+            rec["decided_proof"] = dict(proof)
         rec.pop("approval_seal", None)
         if decision == "approve" and not _seal_approval(rec):
             # the decision cannot be made a token (no governance key): it stays undecided
             for k in ("decided_at", "decided_by", "decided_source", "decided_policy_version",
-                      "decided_device", "decided_check", "decision_note"):
+                      "decided_device", "decided_check", "decision_note", "decided_proof"):
                 rec.pop(k, None)
             rec["status"] = "pending"
             return dict(rec), False
@@ -1256,8 +1294,15 @@ def decide_with_outcome(approval_id: str, decision: str, *, decided_by: str = "o
         out = dict(rec)
     _feed("card_resolved", out)
     _journal_card(out, "decided")
+    _note_novelty(out)
     _fire_hook(out)
     return out, True
+
+
+def _note_novelty(card: Dict[str, Any]) -> None:
+    """Shadow label for the decision (approval_novelty); it reads and decides nothing."""
+    from agent_friday.services import approval_novelty
+    approval_novelty.note_decision(card)
 
 
 #: The label a verified press on this PC's own screen carries (services/screen_click.SCREEN).
@@ -1273,7 +1318,13 @@ _TYPED_SURFACES = frozenset({"chat", "typed", "app", "palette", "reflex"})
 _MESSAGE_SURFACES = frozenset({"sms", "text", "telegram", "discord", "channel", "whatsapp", "phone", "email"})
 #: Sources a caller may name for its own decision (decide(source=...)). Never desktop_press:
 #: that one is only ever worked out from a verified press.
-_CALLER_SOURCES = frozenset({"typed", "voice", "text_message", "in_process", "system", "friday"})
+_CALLER_SOURCES = frozenset({"typed", "voice", "text_message", "in_process", "system", "friday",
+                             "device_signed", "device"})
+
+#: The decided_by prefix of an owner's phone or tablet (tv_gateway/pc_approve), and the sources only it may name.
+#: Guarded by test_a_device_source_needs_a_device_label.
+DEVICE_LABEL = "device:"
+_DEVICE_SOURCES = frozenset({"device_signed", "device"})
 
 
 def voice_on_this_desk() -> bool:
@@ -1354,6 +1405,8 @@ def decision_source(decided_by: str, approval_id=None) -> tuple:
         return "system", None
     if label.startswith("friday:"):
         return "friday", None
+    if label.startswith(DEVICE_LABEL):
+        return "device", None
     if "voice" in low:
         return "voice", None
     surface = low.split(":", 1)[1] if low.startswith("owner:") else ""
