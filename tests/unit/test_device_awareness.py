@@ -36,7 +36,7 @@ def test_the_kinds_are_the_gateways_and_the_knowledge_files():
     from agent_friday.tv_gateway import household
     assert set(da.KINDS) == set(household.DEVICE_KINDS) == set(eco.APP_IDS) == set(da.NOUNS)
     assert {k: eco.app(k).noun for k in da.KINDS} == da.NOUNS
-    assert set(da.UNSEEN_KINDS) == {a.id for a in eco.apps() if a.pair.method == "relay_code"}
+    assert set(da.UNSEEN_KINDS) == {a.id for a in eco.apps() if a.pair.method == "phone_link"}
 
 
 @pytest.mark.parametrize("kind,connected,last_seen,reach", [
@@ -105,8 +105,9 @@ def test_a_tv_in_use_is_never_called_connected_and_she_says_she_cannot_tell():
                                      "I cannot tell whether it is in use right now.")
 
 
-def test_no_confirmation_check_is_described_because_nothing_enforces_one():
-    """The store keeps a reconfirm_by date that nothing reads; she does not describe a check that does not happen."""
+def test_a_devices_line_says_nothing_about_the_keep_paired_date():
+    """The keep-paired rule is stated once, with the gateway's own number of days, under ecosystem_info limits;
+    a device's line gives no date it could get wrong."""
     for due in (NOW + 2 * DAY, NOW - 60, None):
         text = da.sentence(_one(reconfirm_by=due), NOW)
         assert "30-day" not in text and "confirm" not in text
@@ -119,8 +120,8 @@ def test_the_whole_answer_names_every_kind_and_what_is_not_paired():
         "No phone is paired.",
         "Your tablet is connected now.",
         "No TV is paired.",
-        "No watch is paired with me. The watch app is a developer preview that connects through a separate "
-        "helper I cannot see from here, so I cannot tell whether one is in use.",
+        "No watch is paired with me. The watch app is a developer preview that reaches me through your phone "
+        "and never signs in to this PC, so I cannot tell whether one is in use.",
         "The apps do not tell me which version they are running yet."]
 
 
