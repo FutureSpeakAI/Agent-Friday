@@ -26,6 +26,7 @@ AFTER_STYLE = (
     ("routines", "none", ""),
     ("memory_rules", "ok", ""),
     ("household", "skip", ""),
+    ("devices", "none", ""),
 )
 
 

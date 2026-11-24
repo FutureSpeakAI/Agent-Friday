@@ -206,6 +206,17 @@ test('a new person sets Friday up, end to end, and every step is on screen', asy
 
   await waitStage(page, 'household');
   await chip(page, 'Yes');
+  await waitStage(page, 'devices');
+  await expect(chat(page)).toContainText('None of them is needed');
+  expect(await chat(page).locator('.sc-chips button').allTextContents()).toEqual(['Phone (recommended)', 'Tablet', 'TV', 'Not now']);
+  await newestInView(page, info, '14a');
+  await shot(page, info, '14a-devices-offered');
+  await chip(page, 'Phone (recommended)');
+  await expect(chat(page)).toContainText('Setting up the phone. What it adds:');
+  await expect(chat(page)).toContainText('Where things stand:');
+  await newestInView(page, info, '14b');
+  await shot(page, info, '14b-devices-phone-walk');
+  await chip(page, 'Carry on');
   await waitStage(page, 'room_voice');
   await expect(chat(page).getByRole('button', { name: "Open Windows' Other users page" })).toBeVisible();
   await shot(page, info, '14-household');
