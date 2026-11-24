@@ -35,6 +35,7 @@ def _clean(tmp_path, monkeypatch):
     household.ensure_default_members()
     monkeypatch.setattr(tailnet, "_cli", lambda *a, **k: None)
     tailnet.stop()
+    device_pairing.open_pairing_window(900)          # the owner has opened pairing at the PC
     yield
     tailnet.stop()
     device_pairing._reset_for_tests()
@@ -281,7 +282,7 @@ def test_the_tailnet_door_is_reported_open_only_while_it_serves(monkeypatch):
 
         def shutdown(self):
             pass
-    monkeypatch.setattr("werkzeug.serving.make_server", lambda *a, **k: Srv())
+    monkeypatch.setattr("agent_friday.tv_gateway.app.make_bounded_server", lambda *a, **k: Srv())
     monkeypatch.setattr("agent_friday.tv_gateway.tls.server_context", lambda: None)
     got = tailnet.serve("100.101.102.103", 47810)
     assert got["address"] == "100.101.102.103" and got["port"] == 47810 and tailnet.info() == got

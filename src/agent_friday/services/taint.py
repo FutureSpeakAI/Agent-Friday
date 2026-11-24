@@ -189,6 +189,7 @@ def note_user_message(key: str, text: str):
 CARRIED_LABELS = {
     "ledger": "the task's working notes (written from what it read earlier)",
     "summary": "a summary of earlier work (written from what was read then)",
+    "phone_outside_text": "text from an app on the owner's phone (written by someone else, not by the owner)",
 }
 
 
@@ -606,6 +607,37 @@ def origin_of(key: str, value: Any, *, free_text: bool = False,
     return _origin_in(n, s, entries, free_text)
 
 
+#: Share of a line's content words the owner's own messages must hold for the line to be the owner's.
+OWNER_LINE_COVERAGE = 0.6
+#: Share of a line's content words found in one thing Friday read, at or above which the line is that thing's.
+CONTENT_OVERLAP_LIMIT = 0.5
+
+
+def owner_authored(key: str, text: Any) -> bool:
+    """True when `text` is the owner's own line: its content words come from the owner's own messages in this
+    conversation, and it does not draw on anything Friday read (a page, a mail, a carried summary).
+
+    Provenance attaches to the content, not to the session: a web page read earlier does not taint a line the
+    owner wrote about something else. Both halves are checked. A line paraphrased from a page rests on the page's
+    words, not the owner's ("sure" backs nothing); a line the owner repeats from a page overlaps that page. Either
+    keeps the card. Cannot tell (an error): False."""
+    try:
+        from agent_friday.services.core_memory import content_words
+        want = content_words(text)
+        if not want:
+            return False
+        led = _ledger(key)
+        with _LOCK:
+            entries = list(led.carried.values()) + list(led.entries)
+        owner = set().union(*[content_words(e.raw) for e in entries if e.kind == "user"]) if entries else set()
+        if len(want & owner) / len(want) < OWNER_LINE_COVERAGE:
+            return False
+        return not any(len(want & content_words(e.raw)) / len(want) >= CONTENT_OVERLAP_LIMIT
+                       for e in entries if e.kind not in ("user", "own"))
+    except Exception:
+        return False
+
+
 def read_source_of(key: str, text: Any) -> str:
     """Plain words for the earlier tool output in this conversation that contains `text`
     (as free text), or "" when none does.
@@ -868,11 +900,17 @@ def _payment_shaped(v: str) -> bool:
     return bool(m and len(re.sub(r"\D", "", m.group())) >= 13)
 
 
+#: learn_skill actions that only read: their `name` is a lookup, not text saved into memory.
+SKILL_READ_ACTIONS = frozenset({"read", "list"})
+
+
 def roles_for(tool_name: str, tool_input: dict) -> List[Tuple[str, str, Any]]:
     """[(arg_name, role, value)] for the arguments of this call that matter."""
     out: List[Tuple[str, str, Any]] = []
     table = TOOL_ROLES.get(tool_name)
     inp = tool_input or {}
+    if tool_name == "learn_skill" and str(inp.get("action") or "").strip().lower() in SKILL_READ_ACTIONS:
+        return out                               # reading or listing skills writes nothing: never gated
     if tool_name == "write_file" and inp.get("content") and _shapes_behaviour(inp.get("path")):
         # A file Friday reads back as instructions is memory, whatever tool
         # writes it.
@@ -1067,12 +1105,35 @@ def _url_decision(key: str, role: str, url: str) -> Tuple[str, Optional[Origin],
     return "allow", o, ""
 
 
-def evaluate(key: str, tool_name: str, tool_input: Optional[dict]) -> Decision:
-    """Decide what the provenance of this call's arguments requires."""
+def _plain_web_url(url: str) -> bool:
+    """A link whose host every parser agrees on: http(s), no user part, no backslash, no space or control
+    character. Only such a link may be trusted as a site the owner approved (`evaluate`)."""
+    u = str(url or "")
+    if not u or "\\" in u or any(c.isspace() or ord(c) < 32 for c in u):
+        return False
+    try:
+        parts = urlsplit(u)
+    except Exception:
+        return False
+    return parts.scheme in ("http", "https") and bool(parts.hostname) and "@" not in parts.netloc
+
+
+def evaluate(key: str, tool_name: str, tool_input: Optional[dict], trusted_host=None) -> Decision:
+    """Decide what the provenance of this call's arguments requires.
+
+    `trusted_host(host) -> bool`: a host the owner approved a skill to read (governance/send_grants.
+    skill_browse_covers). Fetching such a host (browse_web, browser_open) is not asking for details from outside
+    content, whether the link is the skill's own or built on it, but only for a plain link (`_plain_web_url`)
+    that cannot reach another host. Opening it in the owner's browser (open_url) and sending to it (post_url)
+    are never trusted this way."""
     d = Decision()
     for arg, role, value in roles_for(tool_name, tool_input or {}):
         if role in ("fetch_url", "open_url", "post_url"):
             for url in _atoms(role, value):
+                if (trusted_host is not None and role == "fetch_url" and _plain_web_url(url)
+                        and trusted_host(_host(url))):
+                    d._count("own")
+                    continue
                 act, o, why = _url_decision(key, role, url)
                 d._count(o.kind if o is not None else "model")
                 if o is not None and o.kind in ("content", "sender", "own"):
@@ -1113,7 +1174,7 @@ def evaluate(key: str, tool_name: str, tool_input: Optional[dict]) -> Decision:
             # outside content is fresh in this conversation is shown to the
             # user first, unless the user typed the words themselves.
             text = value if isinstance(value, str) else json.dumps(value, default=str)
-            if origin_of(key, text, free_text=True).kind != "user":
+            if origin_of(key, text, free_text=True).kind != "user" and not owner_authored(key, text):
                 recent = recent_content(key)
                 if recent:
                     src = recent[0] + (f" and {len(recent) - 1} other source(s)" if len(recent) > 1 else "")

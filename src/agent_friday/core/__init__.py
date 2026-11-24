@@ -2263,6 +2263,10 @@ def _invalidate_settings_cache() -> None:
 
 #: Total time a settings read keeps retrying a transient failure.
 _SETTINGS_READ_RETRY_S: float = 1.0
+#: Looks a read makes before its deadline may end the retry (not applied to a read asked for one attempt). The
+#: deadline bounds the wait, not the number of looks: a thread the machine stalled past it would otherwise give up
+#: after one failed read.
+_SETTINGS_READ_MIN_TRIES: int = 4
 #: Total time a settings write keeps retrying a replace Windows denied.
 _SETTINGS_REPLACE_RETRY_S: float = 1.0
 #: The last settings read from or written to disk, per settings file path.
@@ -2307,7 +2311,10 @@ def _read_settings_file(path=None, *, retry_s=None) -> dict:
     deadline = _time.monotonic() + (
         _SETTINGS_READ_RETRY_S if retry_s is None else retry_s)
     delay = 0.01
+    tries = 0
+    min_tries = 1 if (retry_s is not None and retry_s <= 0) else _SETTINGS_READ_MIN_TRIES
     while True:
+        tries += 1
         try:
             # utf-8-sig: a byte-order mark is not corruption (see the loader).
             data = json.loads(path.read_text(encoding='utf-8-sig'))
@@ -2316,7 +2323,7 @@ def _read_settings_file(path=None, *, retry_s=None) -> dict:
             return data
         except Exception as e:  # noqa: BLE001
             if (not _settings_read_is_transient(e)
-                    or _time.monotonic() + delay > deadline):
+                    or (tries >= min_tries and _time.monotonic() + delay > deadline)):
                 raise
             _time.sleep(delay)
             delay = min(delay * 2, 0.1)
@@ -3057,6 +3064,9 @@ DEFAULT_SETTINGS = {
     # day) shows (unified-shell.md §10.4): "smart" when it is useful, "always"
     # whenever no workspace is open, "never" only when asked (show_my_day).
     "landing_mode": "smart",
+    # Start-screen countdowns the owner hid: countdown id -> epoch seconds when that countdown passes, after which
+    # the entry is dropped (a yearly one comes back next year). Written by the start screen's hide control.
+    "dismissed_countdowns": {},
     # Big mode (hand-cursor.md §2): large targets when hand tracking is on. auto | on | off.
     "big_mode": "auto",
     # Claude Sonnet 5 is the default orchestrator — best cost/quality ratio for
@@ -5348,6 +5358,7 @@ OWN_PAGE_ENDPOINTS = frozenset({
     "core_routes.serve_friday_live",
     "doctor.doctor_page",
     "ledger.ledger_page",
+    "liquid_views.liquid_view_page",   # the desktop's A2UI workspace page (routes/liquid_views.py); same-origin fetch only
     "login",
 })
 

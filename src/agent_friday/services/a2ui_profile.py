@@ -74,6 +74,12 @@ BANNED_EFFECTS = frozenset({
     "governance", "claws_write", "trust_write", "policy_write"})
 
 
+#: V14: who may author a view. "builtin" is Friday's own shipped code writing a workspace document (contract draft 3,
+#: D-B); like a model-authored one it carries no data of its own (V7), only declared bindings.
+#: tests/unit/test_a2ui_conformance.py: test_a_builtin_document_never_carries_planted_data.
+AUTHORSHIPS = frozenset({"composer", "friday_liquid", "builtin"})
+
+
 class ProfileError(ValueError):
     """The document breaks a profile rule; `rule` is its V-id (V1..V14) and the whole document is rejected."""
 
@@ -88,7 +94,7 @@ class Context:
     {"gate_class": str, "effects": [str], "args": [str]}; absent or unknown means refuse."""
     subject: str
     verbs: Callable[[str], dict | None] = lambda name: None
-    authorship: str = "composer"            # "composer" | "friday_liquid" | anything else is outside content
+    authorship: str = "composer"            # AUTHORSHIPS below; anything else is outside content (V14)
     model_authored: bool = False
     extra_reserved: Iterable[str] = field(default_factory=tuple)   # the shell's card strings, every locale
 
@@ -490,11 +496,11 @@ def _check_tree(comps: list[dict], ctx: Context) -> None:
 def _check_data(comps, data, meta, ctx: Context, messages) -> None:
     declared = ((meta.get("friday") or {}).get("bindings") or {}) if isinstance(meta, dict) else {}
     prefixes = [b.get("path", "") for b in declared.values() if isinstance(b, dict)]
-    if ctx.model_authored:
+    if ctx.model_authored or ctx.authorship == "builtin":
         for m in messages:
             key = next(k for k in m if k != "version")
             if key == "updateDataModel" or (key == "createSurface" and m[key].get("dataModel")):
-                raise ProfileError("V7", "a model-authored document carries no data of its own")
+                raise ProfileError("V7", "a model-authored or builtin document carries no data of its own")
     total = 0
     for c in comps:
         for _, s in _strings({k: v for k, v in c.items() if k not in ("id", "component", "@catalogId")}):
@@ -537,8 +543,8 @@ def _lists(node):
 
 def check(messages, ctx: Context, direction: str = "to_renderer") -> dict:
     """Validate a whole document; return {"components", "data", "metadata", "surface"} or raise ProfileError."""
-    if ctx.authorship not in ("composer", "friday_liquid"):
-        raise ProfileError("V14", "only Friday's composer or the friday-liquid fence may author a view; "
+    if ctx.authorship not in AUTHORSHIPS:
+        raise ProfileError("V14", "only Friday's composer, its builtin workspaces or the friday-liquid fence may author a view; "
                                   "outside content is shown as one plain line")
     _v1_v2_messages(messages, direction)
     if direction != "to_renderer":

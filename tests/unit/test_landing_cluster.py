@@ -216,7 +216,10 @@ def test_the_cluster_is_on_the_desktop_and_the_judge_fades_it(rel):
     assert re.search(r"aria-hidden\"?:? ?=?\{?landing\.show ?\? ?undefined ?: ?'true'", text), rel
     assert "el.setAttribute('inert', '')" in text, rel
     assert "fridayLandingStep(st, " in text and "console.info('[landing] ' + (r.show ? 'shown' : 'hidden') + ': ' + r.reason)" in text, rel
-    assert "landingJudge.current();" in text and "[landingMode, openWins, experienceDesktop, focusWin, voiceOn, chatOpen, countdowns]" in text, rel
+    # the judge re-runs when a countdown is hidden or brought back, not only when the list itself changes
+    assert "landingJudge.current();" in text and ("[landingMode, openWins, experienceDesktop, focusWin, voiceOn, "
+                                                  "chatOpen, visibleCountdowns.length, countdowns, "
+                                                  "agentSettings.dismissed_countdowns]") in text, rel
 
 
 @pytest.mark.parametrize("rel", PAGES)

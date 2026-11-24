@@ -816,10 +816,18 @@ def list_send_grants():
         for sk in skill_registry.load_skills():
             needs = skill_registry.send_permissions(sk)
             refused = skill_registry.refused_send_permissions(sk)
-            if needs or refused:
-                mine = [g for g in live if g.get("scope") == "skill" and g.get("skill") == sk.name
-                        and g.get("in_force")]
+            browse = skill_registry.browse_domains(sk)
+            if needs or refused or browse:
+                mine_all = [g for g in live if g.get("scope") == "skill" and g.get("skill") == sk.name
+                            and g.get("in_force")]
+                # A browse approval (the sites the skill reads) is not a send approval.
+                mine = [g for g in mine_all if not g.get("browse_domains")]
+                seen = [g for g in mine_all if g.get("browse_domains")]
                 skills.append({"name": sk.name, "description": sk.description, "needs": needs,
+                               # The web domains it declares it reads, approved once as a list (item 6).
+                               "browse": browse,
+                               "browse_granted": [g["grant_id"] for g in seen if not g.get("changed")],
+                               "browse_changed": [g["grant_id"] for g in seen if g.get("changed")],
                                # Declared but never pre-approvable, with the reason.
                                "refused": refused,
                                # Approved for the skill as it is now.
@@ -846,7 +854,12 @@ def create_send_grant():
     # the grant record's further limits (governance/grant_record), when given
     limits = body.get("limits") if isinstance(body.get("limits"), dict) else None
     try:
-        if body.get("scope") == "skill":
+        if body.get("scope") == "skill" and body.get("browse_domains") is not None:
+            # The sites a skill declares it reads: exactly the list the page showed (a changed list is refused
+            # with the new one). Reading only, never a send.
+            g = send_grants.create_browse_grant(str(body.get("skill") or ""), body.get("browse_domains"),
+                                                created_by="owner")
+        elif body.get("scope") == "skill":
             # Approving a skill's needs approves exactly the list the owner
             # saw: the page sends it, and it must equal what the skill
             # declares now. A skill rewritten since the page loaded is refused

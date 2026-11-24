@@ -22,19 +22,27 @@ device request is ``device:<id>`` (see principal()).
 from __future__ import annotations
 
 import base64
+import enum
 import hashlib
 import hmac
 import json
 import secrets
 import threading
 import time
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Tuple
 
 SESSION_PREFIX = "fdev_"
 SESSION_TTL_S = 12 * 3600
 CHALLENGE_TTL_S = 60
-RECONFIRM_DAYS = 30
+RECONFIRM_DAYS = 30                  # a personal device (phone, tablet, watch): kept by the owner this often
+RECONFIRM_DAYS_TV = 90               # a household TV: it cannot hold anything the owner's phone cannot
+RECONFIRM_WARN_DAYS = 7              # the owner is asked this long before a device's date
+RECONFIRM_GRACE_DAYS = 7             # rows made before enforcement shipped get this long, once
+RECONFIRM_CARD_KIND = "device_reconfirm"
+RECONFIRM_KIND_WORDS = {"tv": "TV", "phone": "phone", "tablet": "tablet", "watch": "watch"}
+RECONFIRM_ASK_EVERY_S = 6 * 3600     # a card the owner left or declined is raised again after this
 # Named rights. A device holds a set of them; "chat_read" always, the others only by a
 # press on this PC, one card per right, nothing pre-selected (tv_gateway/pairing).
 #   chat_read  chat with Friday and read what she shares (memory, knowledge graph, models)
@@ -48,8 +56,8 @@ RECONFIRM_DAYS = 30
 #              (tv_gateway/channels). A channel is data the PC stores and never runs.
 RIGHTS = ("chat_read", "tv_brain", "studio", "tv_channels")
 # The owner's phone/tablet control rights (Mobile v3, Addendum B). They are NOT part of the pairing bundle above:
-# each is its own screen-only press at the PC, never preselected. Only pc_read exists so far (read-only routes).
-PC_RIGHTS = ("pc_read",)
+# each is its own screen-only press at the PC, never preselected.
+PC_RIGHTS = ("pc_read", "pc_approve", "pc_act")
 ALL_RIGHTS = RIGHTS + PC_RIGHTS
 BASE_RIGHT = "chat_read"
 SESSION_CONTEXT = b"friday-tv-session-v1|"
@@ -120,8 +128,13 @@ def _sign(body: dict) -> str:
     return hmac.new(_key(), b"friday-devices-v1|" + raw, hashlib.sha256).hexdigest()
 
 
+def reconfirm_days(kind) -> int:
+    """How long a press keeps a device of this kind paired."""
+    return RECONFIRM_DAYS_TV if str(kind or "").lower() == "tv" else RECONFIRM_DAYS
+
+
 def _empty() -> dict:
-    return {"gateway": {"enabled": False, "port": 0}, "devices": {}}
+    return {"gateway": {"enabled": False, "port": 0}, "devices": {}, "reconfirm_grace_done": True}
 
 
 def _load() -> dict:
@@ -133,9 +146,30 @@ def _load() -> dict:
             return _empty()
         body.setdefault("gateway", {"enabled": False, "port": 0})
         body.setdefault("devices", {})
+        if not body.get("reconfirm_grace_done"):
+            _grace_old_rows(body)
         return body
     except Exception:
         return _empty()
+
+
+def _grace_old_rows(body: dict) -> None:
+    """Once, the first time a store made before reconfirm_by was enforced is read: a row with no date gets 30 days
+    from when it was paired, and a row due sooner than the grace gets the grace, so shipping this locks nothing
+    out the same minute. New stores are born with the flag set (_empty), so a lapse later is never excused."""
+    now = time.time()
+    floor = now + RECONFIRM_GRACE_DAYS * 86400
+    with _LOCK:
+        for dev in body["devices"].values():
+            due = dev.get("reconfirm_by")
+            if due is None:
+                due = float(dev.get("paired_at") or now) + reconfirm_days(dev.get("kind")) * 86400
+            dev["reconfirm_by"] = max(float(due), floor)
+        body["reconfirm_grace_done"] = True
+        try:
+            _save(body)
+        except OSError:
+            pass
 
 
 def _save(body: dict) -> None:
@@ -154,14 +188,93 @@ def gateway_config() -> dict:
 
 
 def set_gateway(enabled: bool, port: int = 0) -> dict:
+    """Turning the gateway on opens pairing for 10 minutes, so a caller must carry the same proof as the
+    pairing-window route (a press on this PC's own page); tests/unit/test_pairing_window.py guards who calls it."""
     with _LOCK:
         body = _load()
+        was_on = bool(body["gateway"].get("enabled"))
         body["gateway"] = {"enabled": bool(enabled), "port": int(port or body["gateway"].get("port") or 0)}
         _save(body)
         if not enabled:
             _SESSIONS.clear()
             _persist_sessions()
-        return dict(body["gateway"])
+        out = dict(body["gateway"])
+    if not enabled:
+        close_pairing_window(by="gateway_off")
+    elif not was_on:
+        open_pairing_window(GATEWAY_ON_WINDOW_S, by="gateway_on")     # turning it on is the owner's act at the PC
+    return out
+
+
+# ── the pairing window ──────────────────────────────────────────────────────
+# pair/start is refused unless the owner opened pairing at the PC. Held in memory only, so a restart closes it.
+
+PAIRING_WINDOW_MIN_S = 30
+PAIRING_WINDOW_MAX_S = 900
+GATEWAY_ON_WINDOW_S = 600
+_WINDOW_UNTIL = 0.0
+
+
+def pairing_window() -> dict:
+    """Whether pairing is open and for how many more seconds."""
+    with _LOCK:
+        left = _WINDOW_UNTIL - time.time()
+    return {"open": left > 0, "remaining_s": int(round(left)) if left > 0 else 0}
+
+
+def _window_receipt(kind: str, by: str, **extra) -> None:
+    try:
+        from agent_friday.services import action_ledger
+        action_ledger.append(kind, {"principal": by, "surface": "pairing_window", **extra})
+    except Exception:
+        pass
+
+
+_WINDOW_HOOKS = {"open": [], "close": []}
+
+
+def on_pairing_window(*, opened=None, closed=None) -> None:
+    """The gateway's pairing flow registers what it does when the window opens (forget what strangers used up) and
+    closes (end a pairing not yet pressed). Registered from tv_gateway/pairing, so this service never imports the
+    gateway (tests/unit/test_tv_pc_approve_key.py holds that line)."""
+    if opened is not None and opened not in _WINDOW_HOOKS["open"]:
+        _WINDOW_HOOKS["open"].append(opened)
+    if closed is not None and closed not in _WINDOW_HOOKS["close"]:
+        _WINDOW_HOOKS["close"].append(closed)
+
+
+def _run_window_hooks(which: str) -> None:
+    for hook in list(_WINDOW_HOOKS[which]):
+        try:
+            hook()
+        except Exception:
+            pass
+
+
+def open_pairing_window(seconds: float = 300, by: str = "owner:desk") -> dict:
+    """Open pairing for ``seconds`` (clamped to 30 s .. 15 min). Callers prove the owner is at the PC."""
+    global _WINDOW_UNTIL
+    try:
+        secs = float(seconds)
+    except (TypeError, ValueError):
+        secs = 300.0
+    secs = max(PAIRING_WINDOW_MIN_S, min(PAIRING_WINDOW_MAX_S, secs))
+    with _LOCK:
+        _WINDOW_UNTIL = time.time() + secs
+    _run_window_hooks("open")
+    _window_receipt("pairing_window_opened", by, seconds=int(secs))
+    return pairing_window()
+
+
+def close_pairing_window(by: str = "owner:desk") -> dict:
+    global _WINDOW_UNTIL
+    with _LOCK:
+        was_open = _WINDOW_UNTIL > time.time()
+        _WINDOW_UNTIL = 0.0
+    _run_window_hooks("close")
+    if was_open:
+        _window_receipt("pairing_window_closed", by)
+    return pairing_window()
 
 
 # ── devices ─────────────────────────────────────────────────────────────────
@@ -200,7 +313,7 @@ def add_device(spki_der: bytes, *, name: str, rights=BASE_RIGHT, kind: str = "tv
         "rights": rights,
         "paired_at": now,
         "last_seen": None,
-        "reconfirm_by": now + RECONFIRM_DAYS * 86400,
+        "reconfirm_by": now + reconfirm_days(kind) * 86400,
     }
     with _LOCK:
         body = _load()
@@ -210,7 +323,10 @@ def add_device(spki_der: bytes, *, name: str, rights=BASE_RIGHT, kind: str = "tv
 
 
 def public_view(dev: dict) -> dict:
-    return {k: dev.get(k) for k in ("id", "kind", "name", "rights", "paired_at", "last_seen", "reconfirm_by")}
+    out = {k: dev.get(k) for k in ("id", "kind", "name", "rights", "paired_at", "last_seen", "reconfirm_by")}
+    out["approval_biometric"] = dev.get("approval_biometric")
+    out["approval_attested"] = dev.get("approval_attested")
+    return out
 
 
 def has_right(dev: Optional[dict], right: str) -> bool:
@@ -231,9 +347,182 @@ def set_right(device_id: str, right: str, granted: bool) -> Optional[dict]:
         have = set(dev.get("rights") or ()) | {BASE_RIGHT}
         (have.add if granted else have.discard)(right)
         dev["rights"] = sorted(have)
+        if right == APPROVAL_RIGHT and not granted:
+            _clear_approval_key(dev)
         _save(body)
+    if right == APPROVAL_RIGHT and not granted:
+        expire_pending_key_cards(device_id, "the right was withdrawn")
     _receipt("device_right_granted" if granted else "device_right_withdrawn", dev, right=right)
     return public_view(dev)
+
+
+# ── the approval key (pc_approve) ───────────────────────────────────────────
+
+APPROVAL_RIGHT = "pc_approve"
+RIGHT_CARD_KIND = "device_right"      # the kind of the screen-only card that grants a wider right (tv_gateway/pairing)
+APPROVAL_FIELDS = ("approval_spki", "approval_biometric", "approval_attested", "approval_fail_count")
+
+
+class KeyRefusal(enum.Enum):
+    BAD_KEY = "bad_key"
+    UNKNOWN_DEVICE = "unknown_device"
+    SESSION_KEY_REUSED = "session_key_reused"
+    TABLET_NEEDS_BIOMETRIC = "tablet_needs_biometric"
+
+
+class ApprovalKeyRefused(ValueError):
+    """The PC will not take this approval key; ``code`` is the plain reason the route sends back."""
+
+    def __init__(self, refusal: KeyRefusal):
+        super().__init__(refusal.value)
+        self.code = refusal.value
+
+
+class KeyStage(enum.Enum):
+    STAGED = "staged"                  # waiting for the owner's press at the PC
+    ALREADY_ACTIVE = "already_active"
+
+
+@dataclass(frozen=True)
+class ApprovalKey:
+    """A device's active approval key: P-256 SPKI (base64) and whether the owner's fingerprint is requested on
+    every use. ``attested`` stays False until the hardware proof is checked, so no screen may say "enforced"."""
+    spki: str
+    biometric: bool
+    attested: bool
+
+    @property
+    def key_id(self) -> str:
+        return spki_id(base64.b64decode(self.spki))
+
+
+def canonical_spki(spki_der: bytes) -> bytes:
+    """The one DER form of a P-256 public key (uncompressed point), whatever encoding it arrived in, so the same
+    key always has the same bytes and the same id. Raises ValueError for anything that is not a P-256 key."""
+    from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
+    return _load_pub(spki_der).public_bytes(Encoding.DER, PublicFormat.SubjectPublicKeyInfo)
+
+
+def approval_key(dev: Optional[dict]) -> Optional[ApprovalKey]:
+    """The active approval key, or None while the owner has not pressed its card."""
+    if not dev or not dev.get("approval_spki"):
+        return None
+    return ApprovalKey(dev["approval_spki"], bool(dev.get("approval_biometric")), bool(dev.get("approval_attested")))
+
+
+def _clear_approval_key(dev: dict) -> None:
+    for field in APPROVAL_FIELDS + ("approval_pending",):
+        dev.pop(field, None)
+
+
+def stage_approval_key(device_id: str, spki_der: bytes, biometric: bool) -> Tuple[KeyStage, str]:
+    """Hold a device's approval key until the owner presses its card at the PC (``activate_approval_key``).
+    Returns what happened and the key's id. Refused: a key that is not P-256, the session key itself in any
+    encoding (a signature from it must never count as an approval), and a tablet key that does not ask for the
+    fingerprint. Guarded by tests/unit/test_tv_pc_approve_key.py."""
+    try:
+        canonical = canonical_spki(spki_der)
+    except Exception:
+        raise ApprovalKeyRefused(KeyRefusal.BAD_KEY)
+    with _LOCK:
+        body = _load()
+        dev = body["devices"].get(str(device_id))
+        if dev is None:
+            raise ApprovalKeyRefused(KeyRefusal.UNKNOWN_DEVICE)
+        if canonical_spki(base64.b64decode(dev["spki"])) == canonical:
+            raise ApprovalKeyRefused(KeyRefusal.SESSION_KEY_REUSED)
+        if dev.get("kind") == "tablet" and not biometric:
+            raise ApprovalKeyRefused(KeyRefusal.TABLET_NEEDS_BIOMETRIC)
+        key_id = spki_id(canonical)
+        active = approval_key(dev)
+        if active and active.key_id == key_id and active.biometric == bool(biometric):
+            dev.pop("approval_pending", None)
+            _save(body)
+            return KeyStage.ALREADY_ACTIVE, key_id
+        dev["approval_pending"] = {"spki": base64.b64encode(canonical).decode("ascii"), "biometric": bool(biometric)}
+        _save(body)
+    return KeyStage.STAGED, key_id
+
+
+def can_approve(dev: Optional[dict]) -> bool:
+    """A device approves only with the right AND an active key: a right without a key never approves.
+    Guarded by test_a_right_without_a_key_cannot_approve."""
+    return bool(dev) and has_right(dev, APPROVAL_RIGHT) and approval_key(dev) is not None
+
+
+def clear_pending_key(device_id: str) -> None:
+    """Drop a staged key that has no card to press. Guarded by test_a_registered_key_always_has_a_card_on_the_screen."""
+    with _LOCK:
+        body = _load()
+        dev = body["devices"].get(str(device_id))
+        if dev is not None and dev.pop("approval_pending", None) is not None:
+            _save(body)
+
+
+def expire_pending_key_cards(device_id: str, note: str) -> int:
+    """Take the device's unpressed pc_approve key cards off the screen (never approves one). Guarded by
+    test_a_new_key_replaces_the_pending_card, test_the_active_key_registered_again_takes_a_pending_card_away and
+    test_withdrawing_the_right_takes_its_pending_card_away."""
+    from agent_friday.services import approvals
+
+    def key_card(rec: dict) -> bool:
+        payload = rec.get("payload") or {}
+        return (rec.get("kind") == RIGHT_CARD_KIND and payload.get("device_id") == str(device_id)
+                and payload.get("right") == APPROVAL_RIGHT and "key_id" in payload)
+    return approvals.expire_matching(key_card, "tv_gateway", note)
+
+
+MAX_BAD_SIGNATURES = 5
+
+
+def note_bad_signature(device_id: str) -> int:
+    """Count one failed approval signature; at MAX_BAD_SIGNATURES withdraw the right (and with it the key).
+    Returns the count now. Guarded by test_the_fifth_bad_signature_withdraws_the_right."""
+    with _LOCK:
+        body = _load()
+        dev = body["devices"].get(str(device_id))
+        if dev is None:
+            return 0
+        dev["approval_fail_count"] = int(dev.get("approval_fail_count") or 0) + 1
+        count = dev["approval_fail_count"]
+        _save(body)
+    if count >= MAX_BAD_SIGNATURES:
+        set_right(device_id, APPROVAL_RIGHT, False)
+    return count
+
+
+def clear_bad_signatures(device_id: str) -> None:
+    """A good signature starts the count again. Guarded by test_a_good_signature_resets_the_count."""
+    with _LOCK:
+        body = _load()
+        dev = body["devices"].get(str(device_id))
+        if dev is not None and dev.get("approval_fail_count"):
+            dev["approval_fail_count"] = 0
+            _save(body)
+
+
+def pending_approval_key(device_id: str) -> Optional[ApprovalKey]:
+    dev = get_device(device_id) or {}
+    pend = dev.get("approval_pending")
+    return ApprovalKey(pend["spki"], bool(pend["biometric"]), False) if pend else None
+
+
+def activate_approval_key(device_id: str, key_id: str, biometric: bool) -> bool:
+    """Make the staged key active, only if it is still the key AND the fingerprint choice the owner's card named.
+    The caller is the card's decision hook (pairing._on_right_decision); guarded by
+    tests/unit/test_tv_pc_approve_key.py, which also pins who calls it."""
+    with _LOCK:
+        body = _load()
+        dev = body["devices"].get(str(device_id))
+        pend = (dev or {}).get("approval_pending")
+        if (not pend or spki_id(base64.b64decode(pend["spki"])) != key_id
+                or bool(pend["biometric"]) != bool(biometric)):
+            return False
+        dev.update(approval_spki=pend["spki"], approval_biometric=pend["biometric"], approval_attested=False,
+                   approval_fail_count=0)
+        dev.pop("approval_pending")
+        _save(body)
+    return True
 
 
 def list_devices() -> list:
@@ -258,7 +547,10 @@ def remove_device(device_id: str) -> bool:
             if did == device_id:
                 _SESSIONS.pop(h, None)
         _persist_sessions()
-        return gone
+    if gone:
+        expire_pending_key_cards(device_id, "the device was removed")
+        _expire_reconfirm_cards(device_id, "the device was removed")
+    return gone
 
 
 def stop_all() -> int:
@@ -291,6 +583,105 @@ def session_message(nonce: str, device_id: str) -> bytes:
     return SESSION_CONTEXT + nonce.encode("ascii") + b"|" + device_id.encode("ascii")
 
 
+class ReconfirmNeeded(Exception):
+    """A device past its reconfirm date asked for a session. Raised only after it signed the challenge."""
+
+    def __init__(self, device_id: str, days: int = RECONFIRM_DAYS):
+        super().__init__("the owner has not kept this device paired")
+        self.device_id, self.days = device_id, days
+
+
+def reconfirm_state(dev: dict) -> str:
+    """``ok``, ``due`` (inside the last RECONFIRM_WARN_DAYS) or ``overdue`` (past the date)."""
+    due = dev.get("reconfirm_by")
+    if due is None:
+        return "ok"
+    left = float(due) - time.time()
+    if left <= 0:
+        return "overdue"
+    return "due" if left <= RECONFIRM_WARN_DAYS * 86400 else "ok"
+
+
+_RECONFIRM_ASKED: dict = {}            # device id -> when its card was last raised
+
+
+def request_reconfirm(dev: dict) -> Optional[str]:
+    """Raise the screen-only "Keep this device paired?" card, at most once per RECONFIRM_ASK_EVERY_S.
+    Returns the card id, or None when one was raised lately or the card could not be made."""
+    now = time.time()
+    with _LOCK:
+        if now - _RECONFIRM_ASKED.get(dev["id"], 0.0) < RECONFIRM_ASK_EVERY_S:
+            return None
+    try:
+        from agent_friday.services import approvals
+        waiting = [c for c in approvals.list_approvals(status="pending", kind=RECONFIRM_CARD_KIND)
+                   if (c.get("payload") or {}).get("device_id") == str(dev["id"])]
+        if waiting:                                    # one card at a time per device, whatever a restart forgot
+            return waiting[0].get("approval_id")
+        name = plain_name(dev.get("name"))
+        what = RECONFIRM_KIND_WORDS.get(str(dev.get("kind") or "").lower(), "device")
+        days = reconfirm_days(dev.get("kind"))
+        due = float(dev.get("reconfirm_by") or now)
+        when = day_text(due)
+        # create_approval returns the newest card ever made for a subject, decided or not, so the subject names
+        # the ask window too: a later due date, or a re-ask after a decline, gets a fresh card.
+        card = approvals.create_approval(
+            kind=RECONFIRM_CARD_KIND, subject_type="device_reconfirm",
+            subject_id="%s@%d" % (dev["id"], int(now // RECONFIRM_ASK_EVERY_S)),
+            title='Keep "%s" (a %s) paired?' % (name, what),
+            description=("Press Approve to keep \"%s\", a %s, paired with Friday for %d more days. %s It keeps every "
+                         "right it has now. If you do not recognise it, or no longer use it, press Decline or "
+                         "remove it under Paired devices."
+                         % (name, what, days,
+                            ("It stops connecting on %s unless you keep it." % when) if due > now else
+                            ("It stopped connecting on %s." % when))),
+            action_description="Keep a paired %s for %d more days" % (what, days),
+            payload={"device_id": str(dev["id"]), "origin": "tv_gateway"},
+            requested_by="tv_gateway", force_gate=True)
+        with _LOCK:
+            _RECONFIRM_ASKED[dev["id"]] = now          # only once a card exists, so a failure is tried again
+        return card.get("approval_id")
+    except Exception:
+        return None
+
+
+def day_text(ts: float) -> str:
+    """A date for the owner's screen in the PC's own language: "Friday 5 December" (no leading zero)."""
+    local = time.localtime(ts)
+    return "%s %d %s" % (time.strftime("%A", local), local.tm_mday, time.strftime("%B", local))
+
+
+def plain_name(name) -> str:
+    """A device's name for the owner's screen: printable characters only, no quotes or angle brackets, one line.
+    The name was chosen by the device, and rows stored before names were cleaned may hold anything."""
+    kept = "".join(c if c.isprintable() and c not in _NAME_DROPPED else " " for c in str(name or ""))
+    return " ".join(kept.split())[:60] or "device"
+
+
+_NAME_DROPPED = frozenset(['"', "<", ">", "`", chr(92)])
+
+
+def reconfirm(device_id: str, approval_id: str = "") -> bool:
+    """The owner's press on the card: 30 more days from now. Only the card's decision hook calls this."""
+    with _LOCK:
+        body = _load()
+        dev = body["devices"].get(str(device_id))
+        if dev is None:
+            return False
+        dev["reconfirm_by"] = time.time() + reconfirm_days(dev.get("kind")) * 86400
+        _save(body)
+        _RECONFIRM_ASKED.pop(str(device_id), None)
+    _receipt("device_reconfirmed", dev, approval_id=approval_id)
+    return True
+
+
+def _expire_reconfirm_cards(device_id: str, note: str) -> int:
+    from agent_friday.services import approvals
+    return approvals.expire_matching(
+        lambda rec: rec.get("kind") == RECONFIRM_CARD_KIND
+        and (rec.get("payload") or {}).get("device_id") == str(device_id), "tv_gateway", note)
+
+
 def open_session(device_id: str, nonce: str, signature_der: bytes) -> Optional[str]:
     """Return a session token if the device signed this live challenge, else None."""
     from cryptography.exceptions import InvalidSignature
@@ -308,6 +699,12 @@ def open_session(device_id: str, nonce: str, signature_der: bytes) -> Optional[s
         pub.verify(signature_der, session_message(nonce, dev["id"]), ec.ECDSA(hashes.SHA256()))
     except (InvalidSignature, ValueError, TypeError):
         return None
+    # Only after a good signature, so nobody else can ask whether a device has lapsed.
+    state = reconfirm_state(dev)
+    if state != "ok":
+        request_reconfirm(dev)
+        if state == "overdue":
+            raise ReconfirmNeeded(dev["id"], reconfirm_days(dev.get("kind")))
     token = SESSION_PREFIX + secrets.token_urlsafe(32)
     with _LOCK:
         _restore_sessions()
@@ -346,6 +743,9 @@ def check_session(token: str) -> Optional[dict]:
         if dev is None:                      # removed: the session dies with it
             _SESSIONS.pop(h, None)
             return None
+        if reconfirm_state(dev) == "overdue":    # the owner has not kept it: the session ends at the date
+            _SESSIONS.pop(h, None)
+            return None
         return dev
 
 
@@ -363,11 +763,13 @@ def _touch(device_id: str) -> None:
 
 
 def _reset_for_tests() -> None:
-    global _RESTORED
+    global _RESTORED, _WINDOW_UNTIL
     with _LOCK:
+        _WINDOW_UNTIL = 0.0
         _SESSIONS.clear()
         _CHALLENGES.clear()
         _RESTORED = False
+        _RECONFIRM_ASKED.clear()
         try:
             _sessions_path().unlink(missing_ok=True)
         except Exception:

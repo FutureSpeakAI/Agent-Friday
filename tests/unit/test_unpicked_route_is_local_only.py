@@ -422,7 +422,7 @@ def test_firecrawl_is_held(real_settings, monkeypatch):
     _no_network(monkeypatch)
     from agent_friday.services import firecrawl as fc
     monkeypatch.setattr(fc, "configured", lambda: True)
-    monkeypatch.setattr(fc, "api_key", lambda: "fc-test")  # pragma: allowlist secret
+    monkeypatch.setattr(fc, "key_stand_in", lambda: "fc-test")  # pragma: allowlist secret
     assert fc.search("x")["error"] == _web_text()
     assert fc.scrape("https://example.com")["error"] == _web_text()
     assert fc.credits()["error"] == _web_text()

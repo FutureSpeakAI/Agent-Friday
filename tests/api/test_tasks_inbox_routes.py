@@ -54,14 +54,22 @@ def test_turning_it_on_with_no_page_at_all_is_refused(client, ti):
     assert ti.fake.lists == {}
 
 
-def test_a_press_on_this_pc_turns_it_on(client, ti):
+def _already_on(ti, level="short"):
+    """The settings an earlier build wrote (the mirror is retired; it can no longer be turned on)."""
+    ti._write_config({"enabled": True, "account_id": "acct1", "list_id": "list1", "list_title": "Friday",
+                      "text_level": level, "enabled_at": 1.0, "instance": "i1"})
+    ti.fake.lists["list1"] = {"id": "list1", "title": "Friday", "items": {}}
+
+
+def test_even_a_press_on_this_pc_no_longer_turns_it_on(client, ti):
     r = _enable(client, desk_headers())
-    assert r.status_code == 200, r.get_json()
-    assert ti.config()["enabled"] and len(ti.fake.lists) == 1
+    assert r.status_code == 400, r.get_json()
+    assert "no longer" in (r.get_json().get("message") or "").lower()
+    assert not ti.config().get("enabled") and ti.fake.lists == {}
 
 
 def test_more_text_to_google_needs_the_press_and_less_does_not(client, ti):
-    assert _enable(client, desk_headers(), "short").status_code == 200
+    _already_on(ti)
     r = client.post("/api/tasks-inbox/level", json={"text_level": "full"}, headers=page_headers())
     assert r.status_code == 403 and ti.config()["text_level"] == "short"
     r = client.post("/api/tasks-inbox/level", json={"text_level": "minimal"}, headers=page_headers())
@@ -71,7 +79,7 @@ def test_more_text_to_google_needs_the_press_and_less_does_not(client, ti):
 
 
 def test_turning_it_off_is_open_and_deleting_the_list_needs_the_press(client, ti):
-    assert _enable(client, desk_headers()).status_code == 200
+    _already_on(ti)
     r = client.post("/api/tasks-inbox/disable", json={"remove_list": True}, headers=page_headers())
     assert r.status_code == 403 and len(ti.fake.lists) == 1
     r = client.post("/api/tasks-inbox/disable", json={"remove_list": False}, headers=page_headers())
@@ -83,6 +91,6 @@ def test_the_page_reads_what_a_tick_does(client, ti):
     r = client.get("/api/tasks-inbox", headers=page_headers())
     assert r.status_code == 200
     body = r.get_json()
-    assert body["enabled"] is False and body["text_level"] is None
-    assert "approves nothing" in body["honest_limit"]
-    assert any("Nothing is approved" in w for w in body["what_a_tick_does"])
+    assert body["enabled"] is False and body["text_level"] is None and body["retired"] is True
+    assert "no longer mirrors approvals" in body["honest_limit"]
+    assert body["what_a_tick_does"] and all("tray" in w for w in body["what_a_tick_does"])
