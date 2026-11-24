@@ -122,6 +122,51 @@ def test_a_cycle_through_two_priors_freezes_instead_of_looping():
     assert s.frozen and s.head == "b"
 
 
+def test_a_new_head_on_a_reconciled_fork_freezes_again():
+    s = StageHeads(P)
+    s.apply(T(GENESIS, "a"))
+    s.apply(T(GENESIS, "b"))
+    assert s.reconcile("carol", "a") is None and not s.frozen
+    assert s.apply(T(GENESIS, "c")) is Outcome.CONFLICT
+    assert s.frozen and s.kept_heads() == {"a", "b", "c"}
+
+
+def test_a_reconcile_that_would_close_a_cycle_is_refused():
+    s = StageHeads(P)
+    for t in (T(GENESIS, "a"), T("a", "b"), T("b", "a")):
+        s.apply(t)
+    assert s.reconcile("carol", "a") is ReconcileRefusal.CLOSES_A_CYCLE and s.frozen
+    s.apply(T("b", "c"))
+    assert s.reconcile("carol", "a") is ReconcileRefusal.CLOSES_A_CYCLE and s.frozen
+    assert s.reconcile("carol", "c") is None
+    assert s.head == "c" and not s.frozen
+
+
+HEADS = (GENESIS, "a", "b", "c")
+ALL_TRANSITIONS = [T(p, n) for p in HEADS for n in HEADS if n not in (GENESIS, p)]
+
+
+def test_every_small_set_in_every_order_gives_one_state_and_a_reconcile_that_succeeds_moves_on():
+    """Every set of up to three transitions over four heads, in every order, then reconciles to the smallest kept head
+    until none is accepted: one state per set, and a reconcile that returns None always moves the head off the fork."""
+    for size in (1, 2, 3):
+        for chosen_set in itertools.combinations(ALL_TRANSITIONS, size):
+            results = set()
+            for order in itertools.permutations(chosen_set):
+                s = StageHeads(P)
+                for t in order:
+                    s.apply(t)
+                trail = [(s.head, s.frozen, s.kept_heads())]
+                for kept in sorted(s.kept_heads()):
+                    fork = s.head
+                    refusal = s.reconcile("carol", kept)
+                    if refusal is None:
+                        assert s.head != fork, (order, kept)
+                    trail.append((refusal, s.head, s.frozen, s.kept_heads()))
+                results.add(tuple(trail))
+            assert len(results) == 1, (chosen_set, results)
+
+
 def test_nothing_advances_a_frozen_stage():
     s = StageHeads(P)
     s.apply(T(GENESIS, "a"))
