@@ -186,3 +186,32 @@ def test_a_slow_section_never_holds_the_list(client, monkeypatch):
     gate.set()
     ws_summary.settle(2.0)
     assert _live(Enrolled(client))["news"]["text"] == NEWS[0]["title"], "the slow line lands for the next read"
+
+
+def test_a_read_that_breaks_never_wedges_its_workspace(client, monkeypatch):
+    real = ws_summary._compute
+
+    def breaks(ws, now):
+        raise RuntimeError("outside the try")
+    monkeypatch.setattr(ws_summary, "_compute", breaks)
+    assert _live(Enrolled(client))["news"] is None
+    ws_summary.settle(2.0)
+    monkeypatch.setattr(ws_summary, "_compute", real)
+    ws_summary.forget()
+    assert _live(Enrolled(client))["news"]["text"] == NEWS[0]["title"], "the next read tries again"
+
+
+def test_a_line_is_read_on_a_thread_that_never_holds_up_shutdown(client, monkeypatch):
+    import threading
+    seen = []
+    monkeypatch.setattr(ws_news, "pages",
+                        lambda sensitivity: seen.append(threading.current_thread().daemon) or [dict(r) for r in NEWS])
+    _live(Enrolled(client))
+    assert seen == [True]
+
+
+def test_an_event_time_with_an_offset_is_that_instant(client, monkeypatch):
+    rows = [{"ref": "event:a", "title": "Past", "line": "a", "when": "2000-01-01T09:00:00+05:00"},
+            {"ref": "event:b", "title": "Ahead", "line": "b", "when": "2999-01-01T09:00:00-08:00"}]
+    monkeypatch.setattr(ws_calendar, "pages", lambda sensitivity: [dict(r) for r in rows])
+    assert _live(Enrolled(client))["calendar"]["text"] == "Ahead · b"
