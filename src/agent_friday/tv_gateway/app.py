@@ -27,10 +27,22 @@ OPEN_PATHS = frozenset({"/tv/v1/hello", "/tv/v1/session/challenge", "/tv/v1/sess
 MAIN_APP_HEADERS = ("X-Friday-Token", "X-Friday-Observer", "Cookie")
 
 _RATE = 30            # open-path requests per client per minute
+_AUTH_RATE = 600      # requests per paired device per minute (an app that polls stays far below it)
+
+# Body, depth and connection limits (threat assessment 2026-11-21, fix 3).
+MAX_OPEN_BODY_BYTES = 16 * 1024          # a body on a path anyone may reach (pair/start ...)
+MAX_JSON_BODY_BYTES = 2 * 1024 * 1024    # a JSON body from a paired device
+RAW_BODY_PATHS = frozenset({"/tv/v1/stt", "/tv/v1/channels"})   # audio and channel uploads check their own size
+MAX_JSON_DEPTH = 32
+MAX_PER_SOURCE = 16                      # connections held at once by one address
+MAX_CONNECTIONS = 96                     # connections held at once, all addresses
+IDLE_TIMEOUT_S = 20                      # a connection that sends nothing for this long is closed
+_BODY_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
 
 
 class _Bucket:
-    def __init__(self):
+    def __init__(self, rate: int = _RATE):
+        self._rate = rate
         self._hits = defaultdict(deque)
         self._lock = threading.Lock()
 
@@ -40,18 +52,90 @@ class _Bucket:
             q = self._hits[key]
             while q and now - q[0] > 60:
                 q.popleft()
-            if len(q) >= _RATE:
+            if len(q) >= self._rate:
                 return False
             q.append(now)
             return True
 
+    def wait_s(self, key: str) -> int:
+        """Whole seconds until this key may ask again (at least 1)."""
+        with self._lock:
+            q = self._hits.get(key)
+            return max(1, int(60 - (time.monotonic() - q[0]) + 1)) if q else 1
+
 
 _BUCKET = _Bucket()
+_AUTH_BUCKET = _Bucket(_AUTH_RATE)
+
+
+def _check_depth(text) -> None:
+    """ValueError for JSON nested deeper than MAX_JSON_DEPTH. Brackets inside strings are not depth."""
+    if isinstance(text, (bytes, bytearray)):
+        text = bytes(text).decode("utf-8", "replace")
+    if text.count("[") + text.count("{") <= MAX_JSON_DEPTH:
+        return
+    depth, in_string, escaped, backslash = 0, False, False, chr(92)
+    for ch in text:
+        if in_string:
+            if escaped:
+                escaped = False
+            elif ch == backslash:
+                escaped = True
+            elif ch == '"':
+                in_string = False
+        elif ch == '"':
+            in_string = True
+        elif ch in "[{":
+            depth += 1
+            if depth > MAX_JSON_DEPTH:
+                raise ValueError("JSON nested too deeply")
+        elif ch in "]}":
+            depth -= 1
+
+
+def _mark_too_deep() -> None:
+    try:
+        from flask import g
+        g.json_too_deep = True
+    except RuntimeError:                 # outside a request: nothing to mark
+        pass
+
+
+def json_was_too_deep() -> bool:
+    """True when this request's body was refused for nesting deeper than MAX_JSON_DEPTH."""
+    try:
+        from flask import g
+        return bool(getattr(g, "json_too_deep", False))
+    except RuntimeError:
+        return False
+
+
+def _bounded_json_provider(app):
+    from flask.json.provider import DefaultJSONProvider
+
+    class _BoundedJSON(DefaultJSONProvider):
+        def loads(self, s, **kwargs):
+            try:
+                _check_depth(s)
+            except ValueError:
+                # get_json(silent=True) reads this as "no JSON"; a route that answers too-deep JSON with its own rule
+                # (pc_userws: a 422) asks json_was_too_deep().
+                _mark_too_deep()
+                raise
+            return super().loads(s, **kwargs)
+
+    return _BoundedJSON(app)
 
 
 def _refuse(status: int, reason: str, **extra) -> Response:
     resp = jsonify({"ok": False, "error": reason, **extra})
     resp.status_code = status
+    return resp
+
+
+def _slow_down(bucket: "_Bucket", key: str) -> Response:
+    resp = _refuse(429, "slow down", code="rate_limited")
+    resp.headers["Retry-After"] = str(bucket.wait_s(key))
     return resp
 
 
@@ -66,6 +150,7 @@ def create_app(tailnet: bool = False) -> Flask:
     app = Flask("agent_friday.tv_gateway")
     app.config["SESSION_COOKIE_NAME"] = "__tv_gateway_unused"
     app.config["TAILNET"] = bool(tailnet)
+    app.json = _bounded_json_provider(app)
 
     @app.before_request
     def _gate():
@@ -79,9 +164,17 @@ def create_app(tailnet: bool = False) -> Flask:
                 return _refuse(403, "pairing is only done from your home network", code="pairing_lan_only")
             if not tn.is_tailnet_address(request.remote_addr or ""):
                 return _refuse(403, "this door is only for devices on your tailnet", code="not_tailnet")
+        if request.method in _BODY_METHODS and request.path not in RAW_BODY_PATHS:
+            limit = MAX_OPEN_BODY_BYTES if request.path in OPEN_PATHS else MAX_JSON_BODY_BYTES
+            if (request.content_length or 0) > limit:
+                return _refuse(413, "that request is too big", code="body_too_large")
+            if request.content_length is None and "chunked" in request.headers.get("Transfer-Encoding", "").lower():
+                request.max_content_length = limit + 1       # a chunked body has no length to check: read one past
+                if len(request.get_data(cache=True)) > limit:
+                    return _refuse(413, "that request is too big", code="body_too_large")
         if request.path in OPEN_PATHS:
             if not _BUCKET.allow(request.remote_addr or "?"):
-                return _refuse(429, "slow down")
+                return _slow_down(_BUCKET, request.remote_addr or "?")
             return None
         dev = device_pairing.check_session(_bearer())
         if dev is None:
@@ -89,7 +182,13 @@ def create_app(tailnet: bool = False) -> Flask:
             # day gone by). Open a new one (challenge, then open); only a refusal THERE means unpaired.
             return _refuse(401, "device session required", code="session_required", action="open_session")
         g.device = dev
+        if not _AUTH_BUCKET.allow(str(dev.get("id"))):
+            return _slow_down(_AUTH_BUCKET, str(dev.get("id")))
         return None
+
+    @app.errorhandler(413)
+    def _too_big(e):
+        return _refuse(413, "that request is too big", code="body_too_large")
 
     @app.after_request
     def _headers(resp):
@@ -121,8 +220,12 @@ def create_app(tailnet: bool = False) -> Flask:
             sig = base64.b64decode(str(body.get("sig", "")), validate=True)
         except Exception:
             return _refuse(400, "bad signature encoding")
-        token = device_pairing.open_session(str(body.get("device_id", "")),
-                                            str(body.get("nonce", "")), sig)
+        try:
+            token = device_pairing.open_session(str(body.get("device_id", "")),
+                                                str(body.get("nonce", "")), sig)
+        except device_pairing.ReconfirmNeeded as e:
+            return _refuse(403, "This device's %d days are up. Ask the owner to press Approve on the Keep this "
+                                "device paired card on the PC, then try again." % e.days, code="reconfirm_needed")
         if token is None:
             return _refuse(401, "not paired, or the challenge was wrong or used", code="not_paired_or_bad_challenge")
         from agent_friday.tv_gateway import tailnet as tn
@@ -311,6 +414,8 @@ def create_app(tailnet: bool = False) -> Flask:
     pc_chats.register(app)                   # start a PC chat from a device (POST /tv/v1/chats); projects
     from agent_friday.tv_gateway import ws_content
     ws_content.register(app)                 # list, search, item and changes of a workspace, from its device block
+    from agent_friday.tv_gateway import ws_view
+    ws_view.register(app)                    # a workspace as an A2UI document, and the one-tap signed edit
     from agent_friday.tv_gateway import ws_graph
     ws_graph.register(app)                   # the knowledge graph by level of detail
     from agent_friday.tv_gateway import pc_orbs
@@ -349,19 +454,75 @@ def one_address(host: str) -> str:
     return str(ip)
 
 
+def make_bounded_server(host: str, port: int, app, ssl_context=None):
+    """The gateway's listener: services/pooled_server (a fixed worker pool, the TLS handshake and every read in
+    a worker under a timeout, a full queue answered 503) with a cap per source address and in all, and an idle
+    time of IDLE_TIMEOUT_S. A connection over a cap is answered 503 at once and closed."""
+    import socket
+    from agent_friday.services import pooled_server as ps
+
+    class _GatewayServer(ps.PooledWSGIServer):
+        def __init__(self, *a, **kw):
+            self._held = {}
+            self._held_lock = threading.Lock()
+            super().__init__(*a, **kw)
+
+        def process_request(self, request, client_address):
+            source = str(client_address[0])
+            with self._held_lock:
+                over = (len(self._held) >= MAX_CONNECTIONS
+                        or sum(1 for src in self._held.values() if src == source) >= MAX_PER_SOURCE)
+                if not over:
+                    self._held[id(request)] = source
+            if over:
+                self.stats.rejected += 1
+                try:
+                    request.settimeout(0.2)
+                    request.sendall(ps._BUSY_503)
+                    request.shutdown(socket.SHUT_WR)        # read what the client sent, or its reset eats the 503
+                    request.settimeout(0.05)
+                    request.recv(65536)
+                except OSError:
+                    pass
+                try:
+                    super().shutdown_request(request)
+                except OSError:
+                    pass
+                return
+            super().process_request(request, client_address)
+
+        def finish_request(self, request, client_address):
+            request.settimeout(IDLE_TIMEOUT_S)
+            super().finish_request(request, client_address)
+
+        def shutdown_request(self, request):
+            with self._held_lock:
+                self._held.pop(id(request), None)
+            super().shutdown_request(request)
+
+    return _GatewayServer(host, int(port), ps.per_request_context(app), ssl_context=ssl_context)
+
+
+def close_server(srv) -> None:
+    """Stop serving and release the port and the worker pool."""
+    for step in ("shutdown", "server_close"):
+        try:
+            getattr(srv, step)()
+        except Exception:
+            pass
+
+
 def start(host: str, port: int) -> dict:
     """Serve the gateway over TLS on host:port. Refuses wildcard addresses:
     the gateway binds the one LAN address it was given, never every adapter."""
     global _SERVER
     host = one_address(host)
-    from werkzeug.serving import make_server
     from agent_friday.tv_gateway import tls
     with _SRV_LOCK:
         if _SERVER is not None:
-            _SERVER.shutdown()
+            close_server(_SERVER)
             _SERVER = None
-        srv = make_server(host, int(port), create_app(), threaded=True,
-                          ssl_context=tls.server_context())
+        srv = make_bounded_server(host, int(port), create_app(), ssl_context=tls.server_context())
         threading.Thread(target=srv.serve_forever, name="tv-gateway", daemon=True).start()
         _SERVER = srv
         _log.info("TV gateway listening on %s:%s", host, srv.port)
@@ -372,7 +533,7 @@ def stop() -> None:
     global _SERVER
     with _SRV_LOCK:
         if _SERVER is not None:
-            _SERVER.shutdown()
+            close_server(_SERVER)
             _SERVER = None
 
 

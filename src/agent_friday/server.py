@@ -202,7 +202,7 @@ ROUTE_MODULES = [
     'connect_services', 'connectors', 'contacts', 'content_pipeline', 'context', 'conversations', 'control', 'core_memory', 'core_routes', 'desktop',
     'costs', 'creations', 'creative_pipeline', 'crew', 'crew_rooms', 'defederation', 'doctor', 'documents', 'domains', 'dreaming', 'ext_security', 'federation',
     'finance_health', 'futurespeak', 'goals', 'gmail_send', 'google', 'google_accounts', 'hooks', 'import_staging', 'inbox_cleanup', 'insights',
-    'instructions', 'intelligence', 'jobs', 'lanes', 'knowledge_graph', 'laya_learning', 'laya_settings', 'learning', 'ledger', 'library', 'liveness', 'local_address', 'locks', 'media', 'meetings', 'memory_forget', 'memory_proposals',
+    'instructions', 'intelligence', 'jobs', 'lanes', 'liquid_views', 'knowledge_graph', 'laya_learning', 'laya_settings', 'learning', 'ledger', 'library', 'liveness', 'local_address', 'locks', 'media', 'meetings', 'memory_forget', 'memory_proposals',
     'memtrace', 'messages', 'models_screen', 'news', 'notifications', 'orchestrator', 'owner_security', 'ownership', 'persona', 'phone',
     'platform', 'podcasts', 'privacy_consent', 'privacy_map', 'projects', 'remote_image', 'research', 'residency', 'scheduler', 'seat_gate',
     'setup_chat', 'sites', 'skills', 'soul', 'startup_report', 'studio_files', 'tasks', 'tasks_inbox', 'todos', 'traces',
@@ -1385,6 +1385,15 @@ if __name__ == '__main__':
         _load_recent_session_summary_on_startup()
     except Exception as _sm_err:
         print(f"  Session memory: skipped ({_sm_err})")
+
+    # Count this start as a session (services/personality_state.begin_session).
+    try:
+        from agent_friday.services import personality_state
+        _ps = personality_state.begin_session()
+        if _ps:
+            print(f"  Personality: session {_ps['session_count']}, maturity {_ps['maturity']:.0%}")
+    except Exception as _ps_err:
+        print(f"  Personality: skipped ({_ps_err})")
 
     # Behavioral anomaly monitor — initialise the singleton before first request.
     if _HAS_BEHAVIORAL_MONITOR:

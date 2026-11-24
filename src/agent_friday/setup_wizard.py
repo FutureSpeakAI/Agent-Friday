@@ -1701,15 +1701,12 @@ def _persist(config: dict):
     # Persist scene preference
     idx = config.get("preferred_scene_index", -1)
     if idx >= 0:
-        pfile = FRIDAY_DIR / "personality.json"
-        pdata = {}
-        if pfile.exists():
-            try:
-                pdata = json.loads(pfile.read_text("utf-8"))
-            except Exception:
-                pass
-        pdata["preferred_scene_index"] = idx
-        pfile.write_text(json.dumps(pdata, indent=2), encoding="utf-8")
+        # Through personality.json's one writer: atomic, keeps the session count, leaves an unreadable file alone.
+        from agent_friday.services import personality_state
+        try:
+            personality_state.update({"preferred_scene_index": idx})
+        except (OSError, ValueError) as exc:
+            print(f"  Scene choice not saved: personality.json was not written ({type(exc).__name__}).")
 
     # Write start.bat
     _write_start_bat(config)

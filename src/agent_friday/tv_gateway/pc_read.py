@@ -508,4 +508,14 @@ def _verb_entry(v: dict, block: Optional[dict]) -> dict:
 def _ws_entry(w: dict) -> dict:
     out = {k: w[k] for k in _WS_FIELDS if k in w}
     out["boundary"] = (w.get("boundary") or {}).get("kind", "native")
+    # which renderer the device uses: "a2ui" only where /view answers (contract draft 3, section 4), so the phone
+    # never opens an A2UI view the PC then refuses. tests/unit/test_tv_ws_view.py:
+    # test_the_workspace_list_marks_the_a2ui_ones, test_the_list_says_a2ui_only_where_the_view_answers
+    from agent_friday.tv_gateway import ws_content
+    try:
+        a2ui = ws_content.view_block(str(w.get("id") or "")) is not None
+    except Exception as e:
+        _log.warning("workspace list: view of %s unreadable: %s", w.get("id"), type(e).__name__)
+        a2ui = False
+    out["renderer"] = "a2ui" if a2ui else "legacy"
     return out

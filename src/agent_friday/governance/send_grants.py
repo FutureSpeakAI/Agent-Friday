@@ -382,7 +382,7 @@ def changed(g: dict) -> str:
 def create(*, scope: str, recipients, actions=("send_email",), schedule_id: str = "",
            skill: str = "", created_by: str = "owner", note: str = "",
            skill_hash: str = "", limits: Optional[dict] = None,
-           carried: Optional[dict] = None) -> dict:
+           carried: Optional[dict] = None, browse_domains=None) -> dict:
     """Make a standing send grant. Owner-only: called from the owner's
     authenticated Settings route, never from a tool. A job grant records the
     fingerprint of the job as it is now; a skill grant that of the skill
@@ -430,11 +430,14 @@ def create(*, scope: str, recipients, actions=("send_email",), schedule_id: str 
         record["expires_at"] = time.time() + float(expires_in)
     if scope not in SCOPES:
         raise _Refused("scope must be one of: " + ", ".join(SCOPES))
-    acts = sorted({str(a) for a in actions or []})
-    if not acts or any(a not in SEND_ACTIONS for a in acts):
+    browse = sorted({str(d).strip().lower() for d in browse_domains or [] if str(d).strip()})
+    if browse and scope != "skill":
+        raise _Refused("only a skill can be approved to browse named domains")
+    acts = [] if browse and not recipients else sorted({str(a) for a in actions or []})
+    if (not acts and not browse) or any(a not in SEND_ACTIONS for a in acts):
         raise _Refused("actions must be among: " + ", ".join(SEND_ACTIONS))
-    rcpts = normalize_recipients(recipients)
-    if not rcpts:
+    rcpts = normalize_recipients(recipients) if recipients else []
+    if not rcpts and not browse:
         raise _Refused("a pre-approval names at least one recipient (or @domain)")
     if scope == "job" and not schedule_id:
         raise _Refused("a job pre-approval names the scheduled job")
@@ -456,6 +459,7 @@ def create(*, scope: str, recipients, actions=("send_email",), schedule_id: str 
          "revoked_at": None, "revoked_by": None, "uses": 0, "last_used_at": None,
          **({"job_hash": job_hash} if scope == "job" else {}),
          **({"skill_hash": skill_hash} if scope == "skill" else {}),
+         **({"browse_domains": browse} if browse else {}),
          # the grant record's own fields (governance/grant_record, NS-30.12-1)
          **record}
     carry_log = {}
@@ -557,6 +561,42 @@ def create_for_skill(name: str, seen_recipients, created_by: str = "owner",
                   skill_hash=skill_registry.fingerprint(sk), limits=limits, carried=carried)
 
 
+def create_browse_grant(name: str, seen_domains, created_by: str = "owner") -> dict:
+    """Approve, once, the web domains a skill declares it reads: only if the list the owner saw (`seen_domains`,
+    shown on the skill's approval card) is exactly what the skill declares now. The grant is bound to the skill's
+    fingerprint, so an edit to its procedure or permissions ends it, and it covers browsing only while the skill is
+    in use in the turn (`skill_browse_covers`). It never covers a send."""
+    from agent_friday import skill_registry
+    sk = skill_registry.get_skill(name)
+    if sk is None:
+        raise _Refused("no skill called %r" % name)
+    declared = skill_registry.browse_domains(sk)
+    if not declared:
+        raise _Refused("the skill %r declares no web domains" % name)
+    seen = sorted({str(d).strip().lower() for d in seen_domains or [] if str(d).strip()})
+    if seen != declared:
+        raise SkillChanged("%s now asks to browse %s, not what you saw. Nothing was approved; look again and "
+                           "approve if you still want to." % (sk.name, ", ".join(declared)), {"browse_web": declared})
+    return create(scope="skill", skill=sk.name, actions=(), recipients=[], created_by=created_by,
+                  note="the web domains %s declares it reads" % sk.name,
+                  skill_hash=skill_registry.fingerprint(sk), browse_domains=declared)
+
+
+def skill_browse_covers(ctx, host: str) -> str:
+    """The id of the live skill grant that lets the skill in use in this turn read `host` (a declared domain or a
+    subdomain of one), or "". The skill must be the one approved, unchanged since: a pending, testing or edited
+    skill has no such grant. It is owner-trusted text, not outside content, for this one question."""
+    host = str(host or "").strip().lower().rstrip(".")
+    if not host:
+        return ""
+    for g in _live_trusted():
+        doms = g.get("browse_domains") or []
+        if (g.get("scope") == "skill" and doms and _in_scope(g, ctx)
+                and any(host == d or host.endswith("." + d) for d in doms)):
+            return str(g["grant_id"])
+    return ""
+
+
 def reapprove(grant_id: str, seen_recipients=None, by: str = "owner") -> dict:
     """One press, from Settings: approve a job or skill grant again for the
     job or skill as it is now (the old grant is revoked). A skill is
@@ -568,6 +608,9 @@ def reapprove(grant_id: str, seen_recipients=None, by: str = "owner") -> dict:
         raise _Refused("that pre-approval is not in force, so there is nothing to re-approve")
     if old.get("scope") not in ("skill", "job"):
         raise _Refused("only a job or skill pre-approval is re-approved")
+    if old.get("browse_domains"):
+        # A site approval is approved again from the skill's own row (create_browse_grant), never as a send.
+        raise _Refused("approve the skill's sites again from its row in Settings")
     limits = _carried_limits(old)
     try:
         carried = _carried_uses(old)
@@ -900,9 +943,11 @@ def _current_turn(ctx=None) -> Optional[str]:
     one and a task alike."""
     try:
         from agent_friday.governance import outside_content
-        return outside_content.turn_id(ctx)
+        t = outside_content.turn_id(ctx)
     except Exception:
-        return None
+        t = None
+    # A chat turn with no plan id still has the id prepare_confirmation_ctx stamps on every turn.
+    return t or ((ctx or {}).get("confirm_turn") or None)
 
 
 def note_skill_read(name: str, ctx, fingerprint: str = "") -> None:
@@ -952,6 +997,10 @@ def approved_skill_grant(name: str, fingerprint: str) -> str:
     if not name or not fingerprint:
         return ""
     for g in _live_trusted():
+        # A site approval (browse_domains, no send actions) vouches for browsing only, never for the skill's
+        # text as a send procedure.
+        if g.get("browse_domains") or not g.get("actions"):
+            continue
         if (g.get("scope") == "skill" and g.get("skill") == name
                 and g.get("skill_hash") == fingerprint):
             return str(g["grant_id"])

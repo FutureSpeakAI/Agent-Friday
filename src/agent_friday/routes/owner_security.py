@@ -314,6 +314,11 @@ def security_keystore_wrap():
                                                     "unlock the keys. Save the passphrase in Settings "
                                                     "first, then lock the keys."}), 400
     previous = (ks.describe() or {}).get("wrap")
+    if previous == "passphrase" and wrap == "passphrase" and ks.unwrapping_passphrase() == pw:
+        # already locked with THIS passphrase (the one Friday resolves): nothing to change, and a failed second attempt must
+        # not be able to move the store off it. A store wrapped under another kept passphrase is rewrapped below
+        # (tests/api/test_owner_security_routes.py)
+        return jsonify({"ok": True, **keystore_status()})
     try:
         # removing the passphrase goes to the default wrap (Windows protection where there is any), not to a plain key
         ks.set_wrap(wrap if wrap == "passphrase" else "default", pw if wrap == "passphrase" else "")
