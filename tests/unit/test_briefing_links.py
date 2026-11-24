@@ -448,6 +448,21 @@ def test_a_known_address_holding_an_emphasis_mark_is_never_cut_by_emphasis_opene
     assert bl.strip_unknown_links(final, known) == final
 
 
+#: Everything that can stand right before a known address or a typed <address>: each punctuation character and
+#: runs of one to three backslashes (an odd run escapes what follows).
+BEFORE = sorted(set(string.punctuation) | {"\\\\", "\\\\\\"})
+
+
+@pytest.mark.parametrize("before", BEFORE)
+@pytest.mark.parametrize("form", ["%s", "<%s>"])
+@pytest.mark.parametrize("placement", GLUED_PLACEMENTS)
+def test_whatever_stands_before_a_known_address_it_renders_only_known_links(before, form, placement):
+    url = CAL[0]["url"]
+    got, known, final = _pipeline(placement % (before + form % url), bl.collect(calendar=CAL))
+    assert set(_live_links(final, known)) <= known, final
+    assert bl.strip_unknown_links(final, known) == final
+
+
 @pytest.mark.parametrize("tail", GLUED_TAILS)
 @pytest.mark.parametrize("placement", GLUED_PLACEMENTS)
 def test_an_unknown_tail_glued_to_a_known_address_never_renders_as_a_link(tail, placement):
@@ -504,9 +519,13 @@ def _live_links(text, known):
     Code spans are not left out: no address may stand in one either."""
     links = [m.group(1) for m in re.finditer(r"\[web:([^\]\s]+)\]", text)]
     # Angle autolinks first, as marked parses them: each is its address, ended at the ">", and no other autolink
-    # runs inside one.
-    links += [m.group(1) for m in re.finditer(r"<((?:https?|ftp)://[^\s<>]*)>", text)]
-    scanned = re.sub(r"<(?:https?|ftp)://[^\s<>]*>", lambda m: " " * len(m.group(0)), text)
+    # runs inside one. A "<" after an odd run of backslashes is escaped: a literal "<", no autolink.
+    angles = [m for m in re.finditer(r"<((?:https?|ftp)://[^\s<>]*)>", text)
+              if (len(text[:m.start()]) - len(text[:m.start()].rstrip("\\"))) % 2 == 0]
+    links += [m.group(1) for m in angles]
+    scanned = text
+    for m in angles:
+        scanned = scanned[:m.start()] + " " * (m.end() - m.start()) + scanned[m.end():]
     for m in re.finditer(r"\]\(", scanned):
         i = j = m.end()
         depth = 0
