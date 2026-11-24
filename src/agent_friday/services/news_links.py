@@ -24,11 +24,21 @@ import re
 _CITE_RE = re.compile(r"\[\s*([A-Z]\d{1,3}(?:\s*[,;]\s*[A-Z]\d{1,3})*)\s*\]")
 _MD_LINK_RE = re.compile(r"\[([^\]\n]{1,300})\]\((https?://[^)\s]+)\)")
 _BARE_URL_RE = re.compile(r"(?<![(\[])\bhttps?://[^\s)\]>\"'\x00]+")
-#: Where a known address standing in the text may end: a run of closing punctuation, brackets, quotes or emphasis at
-#: most, then a space, the end, or a "<". A renderer links an address up to the next space or "<", so anything
-#: else glued on, after a bracket too ("K)evil.example"), makes the whole run another address: it is not set aside,
-#: and goes with the unknown ones.
-_KNOWN_END = r"""(?=[.,;:!?*_~'"`)\]>]*(?:[ \t\r\n]|$|<))"""
+#: What marked (gfm, as ui_parts/app.html renders a briefing) trims off the end of an address it links: these
+#: characters, and a ")" that closes nothing in the address.
+_TRIMMED = "?!.,:;*_'\"~"
+
+
+def _linked(run: str) -> str:
+    """The address marked links when it meets `run` (an address and everything glued to it, up to a space)."""
+    while run:
+        if run[-1] in _TRIMMED:
+            run = run[:-1]
+        elif run[-1] == ")" and run.count(")") > run.count("("):
+            run = run[:-1]
+        else:
+            break
+    return run
 _MARK = re.compile("\x00(\\d+)\x00")
 
 
@@ -48,7 +58,10 @@ def set_aside_known(text: str, known, kept: list) -> str:
         if span in text:
             text = text.replace(span, mark(span))
     for url in ordered:
-        text = re.sub(re.escape(url) + _KNOWN_END, lambda m: mark(m.group(0)), text)
+        # Everything glued to the address, up to a space (or a mark), is what marked would link; it stands alone
+        # only when that is exactly the address. "K)evil.example", "K<@evil.example" and "K]x" are other addresses.
+        text = re.sub(re.escape(url) + "[^\\s\x00]*",
+                      lambda m, url=url: mark(m.group(0)) if _linked(m.group(0)) == url else m.group(0), text)
     return text
 
 
