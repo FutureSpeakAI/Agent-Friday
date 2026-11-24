@@ -329,3 +329,32 @@ def test_the_final_pass_can_run_twice_without_changing_the_text_again():
     known = {"https://gazette.example.test/budget"}
     once = bl.strip_unknown_links(text, known)
     assert bl.strip_unknown_links(once, known) == once and "a &lt; b" in once
+
+
+# -- round 8: a known address with round brackets in it ------------------------------------------------------------
+
+PAREN_NEWS = "https://en.wikipedia.example.test/wiki/Mercury_(planet)"
+PAREN_CAL = "https://calendar.example.test/e(1)"
+
+
+def test_a_known_link_with_round_brackets_in_its_address_survives_every_pass_and_nothing_is_counted():
+    from agent_friday.services import news_links
+    stories = [{"id": "N1", "title": "Mercury news", "source": "Example Wiki", "url": PAREN_NEWS}]
+    src = bl.collect(news=stories, calendar=[{"id": "C1", "title": "Planning", "url": PAREN_CAL}])
+    got = bl.validate("## News\n- Mercury news. [N1]\n## Calendar\n- Planning at ten. [C1]\n"
+                      "## Notes\n- Typed: [Mercury](%s)\n" % PAREN_NEWS, src)
+    assert got.dropped_total == 0
+    known = bl.known_links(src)
+    body = news_links.attach_links(got.text, stories, keep=known)          # the order news_engine assembles in
+    final = bl.strip_unknown_links(body, known | {PAREN_NEWS})
+    assert final.count("](%s)" % PAREN_NEWS) == 3                           # cited, typed, and in Sources
+    assert "([Calendar event](%s))" % PAREN_CAL in final
+    leftover = final.replace("](%s)" % PAREN_NEWS, "](N)").replace("](%s)" % PAREN_CAL, "](C)")
+    assert "planet" not in leftover and "e(1" not in leftover          # no address cut short and left as text
+    assert bl.strip_unknown_links(final, known | {PAREN_NEWS}) == final
+
+
+def test_a_known_target_set_aside_is_never_swallowed_by_an_unknown_one_before_it():
+    text = "[a](https://evil.example.test/x [b](%s) then)" % PAREN_CAL
+    out = bl.strip_unknown_links(text, {PAREN_CAL})
+    assert "evil.example.test" not in out and "](%s)" % PAREN_CAL in out and out.count("](") == 1
