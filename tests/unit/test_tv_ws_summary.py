@@ -242,3 +242,26 @@ def test_a_hung_read_costs_one_list_its_budget_and_no_more(client, monkeypatch):
     assert len(calls) == 2, "a read stuck past HUNG_S no longer blocks a fresh one"
     gate.set()
     ws_summary.settle(2.0)
+
+
+def test_a_read_given_up_on_never_overwrites_the_newer_line(client, monkeypatch):
+    import threading
+    gate, calls = threading.Event(), []
+
+    def pages(sensitivity):
+        calls.append(1)
+        if len(calls) == 1:
+            gate.wait(5)
+            return [{"ref": "news:old", "title": "OLD", "when": "2026-11-24T08:00:00Z"}]
+        return [{"ref": "news:new", "title": "NEW", "when": "2026-11-24T09:00:00Z"}]
+    monkeypatch.setattr(ws_news, "pages", pages)
+    monkeypatch.setattr(ws_summary, "BUDGET_S", 0.3)
+    dev = Enrolled(client)
+    _live(dev)                                           # the first read hangs
+    monkeypatch.setattr(ws_summary, "_clock", lambda: ws_summary._clock_real() + ws_summary.HUNG_S + 1)
+    assert _live(dev)["news"]["text"] == "NEW", "a fresh read replaces the stuck one"
+    gate.set()
+    ws_summary.settle(2.0)
+    import time
+    time.sleep(0.2)                                      # the given-up read's thread finishes its finally
+    assert _live(dev)["news"]["text"] == "NEW", "the late OLD answer is not kept over the newer one"
