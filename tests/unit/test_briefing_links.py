@@ -552,6 +552,75 @@ def _live_links(text, known):
     return links
 
 
+#: Text a pass takes away, standing between a backslash and a known address: once it goes, the backslash is right
+#: before the address.
+REMOVABLE = ["()", "( )", "(())", "www.evil.example.test ", "https://evil.example.test", "[x](https://evil.example.test)"]
+
+
+@pytest.mark.parametrize("backslashes", ["\\", "\\\\\\"])
+@pytest.mark.parametrize("mid", REMOVABLE)
+@pytest.mark.parametrize("form", ["%s", "<%s>"])
+@pytest.mark.parametrize("placement", GLUED_PLACEMENTS)
+def test_a_known_address_left_after_a_backslash_by_a_removal_renders_only_known_links(backslashes, mid, form,
+                                                                                     placement):
+    url = CAL[0]["url"]
+    got, known, final = _pipeline(placement % (backslashes + mid + form % url), bl.collect(calendar=CAL))
+    assert set(_live_links(final, known)) <= known, final
+    assert bl.strip_unknown_links(final, known) == final
+
+
+@pytest.mark.parametrize("url", ["https://a.example.test/a)(b", "https://a.example.test/a)", "https://a.example.test/(a",
+                                 "https://a.example.test/a b", "https://a.example.test/a>b"])
+def test_a_source_address_marked_would_not_link_whole_is_no_link(url):
+    """A link target marked would end early (brackets out of order, a space, an angle bracket) is never written:
+    the item has no working link, so it is dropped and counted."""
+    src = bl.collect(calendar=[{"id": "C1", "title": "Standup", "url": url}])
+    got, known, final = _pipeline("## Calendar\n- Standup [C1]\n", src)
+    assert known == set() and got.dropped_total == 1 and not _live_links(final, known), final
+
+
+# -- FOLLOW-UPS (PR #1115 body): a known link dropped or shown oddly, never an unknown link live --------------------
+
+@pytest.mark.xfail(strict=True, reason="follow-up: a known address after a backslash goes rather than stays")
+def test_follow_up_an_escaped_known_address_stays_linked():
+    url = CAL[0]["url"]
+    _, known, final = _pipeline("## Tasks\n- See \\%s\n" % url, bl.collect(calendar=CAL))
+    assert url in _live_links(final, known)
+
+
+@pytest.mark.xfail(strict=True, reason="follow-up: a known address that ends in what marked trims goes")
+def test_follow_up_a_known_address_ending_in_a_trimmed_character_stays_linked():
+    url = "https://calendar.example.test/e*1*"
+    src = bl.collect(calendar=[{"id": "C1", "title": "Standup", "url": url}])
+    _, known, final = _pipeline("## Tasks\n- See %s\n" % url, src)
+    assert url in _live_links(final, known)
+
+
+@pytest.mark.xfail(strict=True, reason="follow-up: a source address with brackets out of order is no link at all")
+def test_follow_up_a_source_address_with_brackets_out_of_order_is_still_linked():
+    src = bl.collect(calendar=[{"id": "C1", "title": "Standup", "url": "https://a.example.test/a)(b"}])
+    got, known, final = _pipeline("## Calendar\n- Standup [C1]\n", src)
+    assert got.dropped_total == 0
+
+
+@pytest.mark.xfail(strict=True, reason="follow-up: a link whose label is its own address loses the label")
+def test_follow_up_a_link_labelled_with_its_own_address_keeps_the_label():
+    url = CAL[0]["url"]
+    assert bl.strip_unknown_links("[%s](%s)" % (url, url), {url}) == "[%s](%s)" % (url, url)
+
+
+@pytest.mark.xfail(strict=True, reason="follow-up: a known address in a code span shows as <address>")
+def test_follow_up_a_known_address_in_a_code_span_is_shown_as_typed():
+    url = CAL[0]["url"]
+    assert bl.strip_unknown_links("`%s`" % url, {url}) == "`%s`" % url
+
+
+@pytest.mark.xfail(strict=True, reason="follow-up: speakable leaves ')>' of <address_(x)> in spoken text")
+def test_follow_up_speech_drops_an_angle_bracketed_address_whole():
+    from agent_friday.services.start_my_day import speakable
+    assert ">" not in speakable("See <https://calendar.example.test/e_(1)> now.")
+
+
 def test_a_known_story_link_with_empty_brackets_keeps_them_in_the_sources_list():
     from agent_friday.services import news_links
     url = "https://news.example.test/story()"
