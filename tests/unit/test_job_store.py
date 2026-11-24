@@ -344,11 +344,12 @@ SAME_JOB_SPLITS = [("Store #12, Austin, TX", "Store 12, Austin, TX"), ("İzmir",
                    ("NYC", "New York, NY"), ("Bengaluru", "Bangalore"), ("Zürich", "Zurich"),
                    ("New York", "New York, NY"), ("Ft. Worth, TX", "Fort Worth, TX"),
                    ("Singapore, Singapore", "Singapore"), ("Bangalore, Karnataka, India", "Bangalore, India"),
-                   ("EMEA - London", "London, UK"),
-                   ("תֵּל אָבִיב", "תל אביב")]
+                   ("EMEA - London", "London, UK"), ("Austin, TX 78701-1234", "Austin, TX 78701"),
+                   ("Austin, TX, 78701", "Austin, Texas 78701"),
+                   ("\u05ea\u05bc\u05b5\u05dc \u05d0\u05b8\u05d1\u05b4\u05d9\u05d1", "\u05ea\u05dc \u05d0\u05d1\u05d9\u05d1")]
 #: FOLLOW-UPS (PR #1110 body): one title spelled two ways (a "#", an emoji presentation selector, a skin tone) that
 #: the company+title+location key keeps as two records. A duplicate, never a wrong merge. xfail(strict) so a fix shows.
-SAME_TITLE_SPLITS = [("Engineer #2", "Engineer 2"), ("Engineer ❤", "Engineer ❤️"),
+SAME_TITLE_SPLITS = [("Engineer #2", "Engineer 2"), ("Engineer \u2764", "Engineer \u2764\ufe0f"),
                      ("Engineer \U0001f44d", "Engineer \U0001f44d\U0001f3fd")]
 
 
@@ -367,6 +368,16 @@ def test_follow_up_one_title_spelled_two_ways_is_one_record(_home, first, second
     js.upsert(listing(first, url="https://jobs.example.test/a", location="Austin, TX"), days(-3))
     js.upsert(listing(second, url="https://jobs.example.test/b", location="Austin, TX"), days(-2))
     assert len(stored(_home)) == 1
+
+
+@pytest.mark.xfail(strict=True, reason="follow-up: a careers URL points at its first record only (safe side)")
+def test_follow_up_a_second_store_spelled_another_way_joins_its_own_record(_home):
+    url = "https://careers.example.test/acme"
+    js.upsert(listing("Store Associate", url=url, location="Austin, TX 78701", external_id="A-1"), days(-4))
+    js.upsert(listing("Store Associate", url=url, location="Austin, TX 78745", external_id="B-2"), days(-3))
+    js.upsert(listing("Store Associate", url=url, location="Austin, Texas 78745", source="feed-c", external_id="C-3"),
+              days(-2))
+    assert len(stored(_home)) == 2
 
 
 @pytest.mark.parametrize("first, second", TWO_PLACES + [(b, a) for a, b in TWO_PLACES])
