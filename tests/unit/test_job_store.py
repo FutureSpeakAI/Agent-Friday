@@ -190,7 +190,7 @@ PLACES = {
     "newcastle nsw": ("Australia, NSW, Newcastle",),
 }
 #: Two places that share an unknown region, a prefix, or nothing the tables know: always two records.
-TWO_PLACES = [("東京, 日本", "大阪, 日本"), ("東京, Japan", "大阪, Japan"), ("Киев, Ukraine", "Львов, Ukraine"),
+TWO_PLACES = [("Mexico, Mexico", "Remote - Mexico"), ("TX 78701", "TX 75001"), ("東京, 日本", "大阪, 日本"), ("東京, Japan", "大阪, Japan"), ("Киев, Ukraine", "Львов, Ukraine"),
               ("Москва", "Санкт-Петербург"), ("서울", "부산"), ("東京", "Austin, TX"), ("Remote - US", "東京"),
               ("תל אביב", "חיפה"), ("Zürich", "Zug"), ("New York", "Remote - US"), ("Washington", "Remote - US"), ("Quebec", "Remote - Canada"),
               ("Remote - US", "Remote - CA"), ("Remote (US)", "Remote (DE)"), ("Remote - US", "Remote - IN"),
@@ -218,6 +218,24 @@ def test_every_pair_of_place_spellings_on_one_url_is_one_posting_exactly_when_it
     assert len(stored(_home)) == (1 if same else 2)
     # one place closes once; two places: the first closing never takes the other with it
     assert [j["location"] for j in js.list_recent(NOW)] == ([] if same else [second[1]])
+
+
+#: FOLLOW-UPS (PR #1110 body): one job spelled two ways that the place rule keeps as two records. Each costs a
+#: duplicate in Career Ops, never a wrong merge; the rule fails apart on purpose. xfail(strict) so a fix shows.
+SAME_JOB_SPLITS = [("Toronto, CA", "Toronto, ON"), ("Paris, FR", "Paris, France"), ("Washington, D.C.", "Washington, DC"),
+                   ("Remote in Austin, TX", "Austin, TX"), ("NYC", "New York, NY"), ("Bengaluru", "Bangalore"),
+                   ("Zürich", "Zurich"), ("New York", "New York, NY"), ("Ft. Worth, TX", "Fort Worth, TX"),
+                   ("Singapore, Singapore", "Singapore"), ("Bangalore, Karnataka, India", "Bangalore, India"),
+                   ("EMEA - London", "London, UK")]
+
+
+@pytest.mark.xfail(strict=True, reason="follow-up: one job spelled two ways stays two records (safe side)")
+@pytest.mark.parametrize("first, second", SAME_JOB_SPLITS)
+def test_follow_up_one_job_spelled_two_ways_is_one_record(_home, first, second):
+    url = "https://careers.example.test/acme"
+    js.upsert(listing("Software Engineer", url=url, location=first, source="feed-a", external_id="A-1"), days(-3))
+    js.upsert(listing("Software Engineer", url=url, location=second, source="feed-b", external_id="B-2"), days(-2))
+    assert len(stored(_home)) == 1
 
 
 @pytest.mark.parametrize("first, second", TWO_PLACES + [(b, a) for a, b in TWO_PLACES])
