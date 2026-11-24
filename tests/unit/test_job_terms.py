@@ -153,7 +153,8 @@ def test_the_terms_module_never_reaches_the_network_or_a_journal():
     imported = {a.name for n in ast.walk(tree) if isinstance(n, ast.Import) for a in n.names}
     imported |= {f"{n.module}.{a.name}" for n in ast.walk(tree) if isinstance(n, ast.ImportFrom) for a in n.names}
     assert imported <= {"__future__.annotations", "re", "dataclasses.dataclass", "enum.Enum",
-                        "agent_friday.services.economic_schedule"}, imported
+                        "agent_friday.services.economic_schedule",
+                        "agent_friday.services.peer_wire_v2"}, imported
 
 
 def test_the_schedule_must_be_for_this_job_and_stage():
