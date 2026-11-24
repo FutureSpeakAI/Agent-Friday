@@ -80,6 +80,7 @@ def test_each_entry_carries_the_fingerprint_and_version_of_its_snapshot(app_id):
     ("a release key", lambda f: f.update(release_signing="release_key")),
     ("a new minimum Android", lambda f: f.update(min_sdk=33)),
     ("version reporting added", lambda f: f["pairing"].update(reports_app_version=True)),
+    ("a new gateway surface", lambda f: f["routes"]["gateway"].append("payments")),
 ])
 def test_an_app_change_without_a_reviewed_entry_does_not_load(what, change):
     with pytest.raises(eco.EcosystemError, match="facts changed"):
@@ -110,6 +111,7 @@ def test_shipped_needs_evidence_that_is_in_the_snapshot():
     (lambda f: f["capabilities"]["actions"]["verbs"].pop("phone.call"), "verb:actions/phone.call"),
     (lambda f: f["capabilities"]["actions"]["verbs"].update({"calendar.add": "N"}), "verb:actions/calendar.add"),
     (lambda f: f["pairing"].update(gateway=False), "pairing:gateway"),
+    (lambda f: f["routes"]["gateway"].remove("workspaces"), "route:gateway/workspaces"),
 ])
 def test_a_claim_loses_its_footing_when_the_app_drops_what_it_rested_on(gone, named):
     """Even with the fingerprint refreshed, the entry cannot keep saying it."""
@@ -129,7 +131,9 @@ def test_built_but_off_must_say_until_when():
 
 @pytest.mark.parametrize("key,holds", [
     ("permission:android.permission.RECORD_AUDIO", True), ("permission:android.permission.READ_SMS", False),
-    ("service:BIND_QUICK_SETTINGS_TILE", True), ("service:BIND_APPWIDGET", False),
+    ("service:BIND_QUICK_SETTINGS_TILE", True), ("service:BIND_APPWIDGET", True),
+    ("service:BIND_REMOTEVIEWS", False),
+    ("route:gateway/workspaces", True), ("route:gateway/payments", False), ("route:phone_link/chats", False),
     ("capability:talk", True), ("capability:widget", False),
     ("verb:actions/timer.start", True), ("verb:actions/door.unlock", False), ("verb:talk/timer.start", False),
     ("verb:actions/forbidden", False),
@@ -302,7 +306,6 @@ FORBIDDEN = (
      "asking for a PIN or code"),
     (re.compile(r"(?:turn|switch) (?:off|on) kids mode|(?:leave|exit|enter) kids mode", re.I),
      "an instruction to change kids mode"),
-    (re.compile(r"add a device|/pairing", re.I), "a pairing control this build does not have"),
 )
 
 
@@ -317,8 +320,7 @@ def test_nothing_rendered_or_stored_carries_an_address_a_false_claim_or_a_reques
 
 @pytest.mark.parametrize("bad", [
     "Connect to 192.168.1.20 first.", "Scan the QR on the PC.", "Get it from the Play Store.",
-    "Tell me the six digits.", "Switch off kids mode first.", r"Copy it to C:\Users\someone.",
-    'Type "Friday, add a device" here.'])
+    "Tell me the six digits.", "Switch off kids mode first.", r"Copy it to C:\Users\someone."])
 def test_the_forbidden_patterns_catch_what_they_exist_for(bad):
     assert any(pattern.search(bad) for pattern, _ in FORBIDDEN)
 
@@ -333,22 +335,104 @@ def test_every_store_mention_says_it_is_not_there():
     assert mentions > 8
 
 
-def test_pairing_says_the_pc_side_is_off_with_no_switch_before_any_other_step():
-    """True of this build: nothing in the product switches the device gateway on. When a caller
-    of set_gateway appears anywhere in the package or its pages, this fails and the steps are rewritten."""
-    package = Path(eco.__file__).resolve().parents[1]
-    callers = []
-    for folder in (package, REPO / "static"):
-        for file in folder.rglob("*"):
+GATEWAY_APPS = ("phone", "tablet", "tv")
+
+
+def _package_sources(*folders):
+    for folder in folders:
+        for file in sorted(folder.rglob("*")):
             if file.suffix in (".py", ".html", ".js") and file.is_file():
-                text = file.read_text(encoding="utf-8", errors="replace")
-                if "set_gateway(" in text.replace("def set_gateway(", "") or "/api/pairing-window" in text:
-                    callers.append(file.name)
-    assert callers == [], callers
-    for app_id in ("phone", "tablet", "tv"):
+                yield file, file.read_text(encoding="utf-8", errors="replace")
+
+
+def _served_by_the_gateway() -> str:
+    from agent_friday import tv_gateway
+    return "\n".join(text for _, text in _package_sources(Path(tv_gateway.__file__).parent))
+
+
+def test_pairing_says_the_pc_side_is_off_with_no_switch_before_any_other_step():
+    """True of this build: nothing in the product switches the device gateway on. A change that adds a
+    caller of set_gateway makes the first pairing step false, so it fails here until that step is rewritten
+    in resources/ecosystem/ecosystem.json."""
+    package = Path(eco.__file__).resolve().parents[1]
+    callers = [file.name for file, text in _package_sources(package, REPO / "static")
+               if "set_gateway(" in text.replace("def set_gateway(", "")]
+    assert callers == [], f"the gateway has a switch now; rewrite the first pairing step: {callers}"
+    for app_id in GATEWAY_APPS:
         first = eco.app(app_id).pair.steps[0].text
         assert "device gateway on this PC" in first and "no switch for it in the app yet" in first
-        assert "no switch for it in the app yet" in eco.info(app_id, "limits")
+
+
+@pytest.mark.parametrize("app_id", GATEWAY_APPS)
+def test_pairing_is_opened_by_the_owner_at_this_pc_before_the_device_asks(app_id):
+    """tv_gateway/pairing refuses pair/start outside a window the owner opened (device_pairing.pairing_window)."""
+    from agent_friday.routes import control
+    from agent_friday.services import add_device_command
+    texts = [s.text for s in eco.app(app_id).pair.steps]
+    opened = next(i for i, t in enumerate(texts) if "Open pairing on this PC" in t)
+    asked = next(i for i, t in enumerate(texts) if "six digits" in t)
+    assert 0 < opened < asked
+    step = texts[opened]
+    said = re.search(r'type "([^"]+)"', step).group(1)
+    assert add_device_command.is_add_device(said)
+    assert add_device_command.WINDOW_S == 300 and "five minutes" in step
+    assert "/pairing" in step and "'/pairing'" in Path(control.__file__).read_text(encoding="utf-8")
+    assert "only be opened from this PC itself" in step
+    assert not re.search(r"\bsay\b", step), "the spoken command is not built; the steps name typing only"
+
+
+@pytest.mark.parametrize("app_id", eco.APP_IDS)
+def test_a_gateway_surface_a_shipped_claim_rests_on_is_one_this_pc_serves(app_id):
+    """The app asking for a surface is half of it; the claim also needs this PC to answer there."""
+    served = _served_by_the_gateway()
+    raw = _raw(app_id)
+    for claim in raw["capabilities"] + raw["install"] + [raw["pair"]]:
+        for key in claim.get("evidence", []):
+            if claim.get("status") == "shipped" and key.startswith("route:gateway/"):
+                name = key.split("/", 1)[1]
+                assert f'"/tv/v1/{name}' in served, f"{app_id}: {key} is not served by tv_gateway"
+
+
+def test_the_served_check_tells_a_surface_this_pc_has_from_one_it_lacks():
+    served = _served_by_the_gateway()
+    assert '"/tv/v1/workspaces' in served and '"/tv/v1/chats' in served
+    assert '"/tv/v1/payments' not in served
+
+
+@pytest.mark.parametrize("app_id", ("phone", "tablet"))
+def test_the_phone_and_tablet_are_said_to_open_chats_workspaces_and_a_widget(app_id):
+    caps = {c.id: c for c in eco.app(app_id).capabilities}
+    assert {caps[i].status for i in ("chats", "workspaces", "widget")} == {"shipped"}
+    overview = eco.info(app_id)
+    assert "open the chats you have had with me on this PC" in overview
+    assert "open workspaces from this PC" in overview and "home-screen widget" in overview
+    # The PC's voice on a device is asked for by no installed build, so it is not said as working.
+    assert not eco.app(app_id).facts.holds("route:gateway/voice")
+    assert caps["pc_voice"].status == "planned"
+    assert "A live spoken conversation in this PC's own voice isn't built yet" in overview
+
+
+def test_the_watch_is_said_to_reach_this_pc_through_the_phone_and_never_on_its_own():
+    watch = eco.app("watch")
+    assert watch.pair.method == "phone_link"
+    assert not watch.facts.holds("pairing:gateway")
+    assert not [r for r in watch.facts.routes if r.startswith("gateway/")]
+    assert watch.facts.holds("route:phone_link/item") and watch.facts.holds("route:phone_link/chats")
+    assert "pair the phone with this PC first" in watch.pair.steps[0].text
+    assert eco.sees(watch)[0] == eco.PHONE_LINK_TURN
+    everything = "\n".join(eco.info("watch", topic) for topic in eco.TOPICS)
+    assert "helper program" not in everything
+    assert "It cannot approve anything through the phone." in everything
+    assert "through your phone" in everything
+
+
+@pytest.mark.parametrize("app_id,noun", [("phone", "phone"), ("tablet", "tablet"), ("tv", "TV")])
+def test_the_keep_paired_question_is_stated_with_the_gateways_own_number_of_days(app_id, noun):
+    from agent_friday.services import device_pairing
+    days = device_pairing.reconfirm_days(app_id)
+    assert (device_pairing.RECONFIRM_DAYS, device_pairing.RECONFIRM_DAYS_TV) == (30, 90)
+    assert f"Every {days} days I ask you on this PC whether to keep the {noun} paired." in eco.info(app_id, "limits")
+    assert "whether to keep" not in eco.info("watch", "limits")
 
 
 def test_the_tv_entry_states_the_kids_mode_rule_and_pairs_behind_the_pin():
