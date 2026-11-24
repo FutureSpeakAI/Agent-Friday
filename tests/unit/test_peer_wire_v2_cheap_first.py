@@ -2,7 +2,8 @@
 
 A spy replaces terms_hash, the first content check verify_event runs on a job.offer. An event that
 fails one of those three cheap checks must be refused with that check's code without the spy being
-called. Not covered here: the order of the type, role and share-sum checks among themselves."""
+called. Not covered here: where the role and share-sum checks sit. They read the terms without hashing them, so
+moving either ahead of a cheap check would not call the spy and these tests would still pass."""
 from __future__ import annotations
 
 import copy
