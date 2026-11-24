@@ -141,6 +141,8 @@ def _load() -> dict:
         raw = path().read_text(encoding="utf-8")
     except FileNotFoundError:
         return {"v": 1, "jobs": {}, "aliases": {}}
+    except (OSError, UnicodeDecodeError) as exc:       # locked, not permitted, or not text: unreadable, never empty
+        raise StoreUnreadable("job_store.json could not be read") from exc
     try:
         data = json.loads(raw)
     except ValueError as exc:
@@ -167,16 +169,20 @@ def _save(data: dict) -> None:
 
 
 def _contradicts(record: dict, listing: dict) -> bool:
-    """True when both name a company and a title and they differ: then a shared URL is a careers page that lists
-    several postings, not one posting."""
+    """True when both name a company and a title and they differ, or both name a location and it differs: then a
+    shared URL is a careers page that lists several postings, not one posting. A location is part of what makes a
+    posting distinct (make_keys keys on it), so one role in two cities is two postings."""
     mine = (_words(record.get("company")), _words(record.get("title")))
     theirs = (_words(listing.get("company")), _words(listing.get("title")))
-    return all(mine) and all(theirs) and mine != theirs
+    if all(mine) and all(theirs) and mine != theirs:
+        return True
+    here, there = _words(record.get("location")), _words(listing.get("location"))
+    return bool(here and there and here != there)
 
 
 def _find(data: dict, keys: List[str], listing: dict) -> Optional[dict]:
     """The record the listing is a sighting of. A feed id or company+title+location match is enough; a URL match
-    only when the company and title do not contradict the record's."""
+    only when the company, title and location do not contradict the record's (_contradicts)."""
     url = normalize_url(listing.get("url") or listing.get("source_url"))
     url_key = _hash("u|%s" % url) if url else None
     for key in keys:
