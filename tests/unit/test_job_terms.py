@@ -192,6 +192,18 @@ def test_an_amount_that_is_not_a_whole_number_of_units_is_named(edit):
     assert jt.Mismatch.UNITS_NOT_WHOLE in run(w)
 
 
+@pytest.mark.parametrize("shares,expected", [
+    ([{"beneficiary": "editor", "role": "creator", "units": "99"},
+      {"beneficiary": "editor", "role": "creator", "units": 1}], jt.Mismatch.UNITS_NOT_WHOLE),
+    ([{"beneficiary": None, "role": "creator", "units": 99},
+      {"beneficiary": "operator", "role": "operator", "units": 1}], jt.Mismatch.SCHEDULE_SHARES),
+], ids=["text-units-same-row-key", "missing-beneficiary"])
+def test_rows_that_cannot_be_ordered_against_each_other_are_named_not_raised(shares, expected):
+    w = world()
+    w["terms"]["shares"] = shares
+    assert expected in run(w)
+
+
 @pytest.mark.parametrize("schedule", [{}, {"awards": [{"gross_units": 1.5}]}, "not a schedule"])
 def test_a_schedule_with_no_hash_is_reported_not_raised(schedule):
     w = world()
