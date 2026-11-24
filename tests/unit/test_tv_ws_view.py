@@ -137,9 +137,9 @@ def test_a_pc_that_cannot_read_its_wiki_is_503(client, monkeypatch):
 def test_the_workspace_list_marks_the_a2ui_ones(client):
     dev = Enrolled(client)
     rows = dev.get("/tv/v1/workspaces").get_json()["workspaces"]
-    kn = next(w for w in rows if w.get("id") == "knowledge")
-    assert kn.get("renderer") == "a2ui"
-    assert all(w.get("renderer") in (None, "legacy") for w in rows if w.get("id") != "knowledge")
+    a2ui = {w["id"] for w in rows if w.get("renderer") == "a2ui"}
+    assert a2ui == {"knowledge", "futurespeak"}, "the workspaces with a builtin document and a device block"
+    assert all(w.get("renderer") == "legacy" for w in rows if w["id"] not in a2ui)
 
 
 def test_the_list_says_a2ui_only_where_the_view_answers(client, monkeypatch):
