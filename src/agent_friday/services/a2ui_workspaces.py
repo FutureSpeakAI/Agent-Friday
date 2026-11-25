@@ -111,6 +111,7 @@ _STRUCTURE = frozenset({"id", "component", "children", "style", "kind", "destina
 
 
 def _words(value):
+    """Every string a person could read in a component. Dict keys are not words: no renderer draws a key."""
     if isinstance(value, str):
         yield value
     elif isinstance(value, dict):
@@ -129,17 +130,17 @@ def check_document(ws: str, doc) -> list:
     tests/unit/test_tv_ws_view_documents.py: test_data_in_a_document_he_approves_only_ever_comes_from_a_binding,
     test_a_card_word_anywhere_in_the_document_is_refused."""
     store._validated(doc, doc_ctx(ws))
-    for message in doc:
-        for c in ((message.get("createSurface") or {}).get("components") or []) if isinstance(message, dict) else []:
-            if not isinstance(c, dict):
-                continue
-            for prop in _DATA_PROPS & c.keys():
-                v = c[prop]
-                if not (isinstance(v, dict) and set(v) == {"@path"}):
-                    raise store.ViewRefused("V7", "%s: %s must come from a binding" % (c.get("id"), prop))
-            for text in _words(c):
-                if hit := prof.reserved_hit(text, CARD_STRINGS):
-                    raise store.ViewRefused("V11", "%s uses reserved word %r" % (c.get("id"), hit))
+    # the profile's own flattened list: components from createSurface AND every later updateComponents
+    for c in prof.check(doc, doc_ctx(ws))["components"]:
+        if not isinstance(c, dict):
+            continue
+        for prop in _DATA_PROPS & c.keys():
+            v = c[prop]
+            if not (isinstance(v, dict) and set(v) == {"@path"}):
+                raise store.ViewRefused("V7", "%s: %s must come from a binding" % (c.get("id"), prop))
+        for text in _words(c):
+            if hit := prof.reserved_hit(text, CARD_STRINGS):
+                raise store.ViewRefused("V11", "%s uses reserved word %r" % (c.get("id"), hit))
     return doc
 
 

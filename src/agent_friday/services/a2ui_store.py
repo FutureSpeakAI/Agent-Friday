@@ -276,7 +276,13 @@ def restore(view_id: str, version_id: str, *, base_rev: str, by: str, ctx: Optio
         _validated(target["doc"], ctx or _default_ctx(previous))
         versions = [dict(v, undone=True) if v["id"] == version_id else v for v in previous["versions"]]
         versions.append(_snapshot(previous, KIND_RESTORE))
-        return {**previous, **{k: target[k] for k in PROVENANCE if k in target},
+        # a version written before versions carried provenance is Friday's own: never his approval, never inherited
+        provenance = {"authorship": target.get("authorship", previous.get("authorship")),
+                      "model_authored": bool(target.get("model_authored", False))}
+        if "approved_by" in target:
+            provenance["approved_by"] = target["approved_by"]
+        rest = {k: v for k, v in previous.items() if k != "approved_by"}
+        return {**rest, **provenance,
                 "doc": target["doc"], "customization": target["customization"],
                 "label": target.get("label") or previous.get("label"), "versions": versions[-MAX_VERSIONS:],
                 "updated_by": by}
