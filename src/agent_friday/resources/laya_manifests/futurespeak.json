@@ -6,6 +6,12 @@
  "held": null,
  "spoken_words": {"router_extra": []},
  "nav": {"key": null, "keys": ["site_id", "account_id", "domain", "preview_build_id"], "sections": []},
+ "device": {"expose": true, "sensitivity": "personal",
+  "sections": {"projects": {"view": "list", "kind": "project", "label": "Projects"}},
+  "kinds": {"project": {"roles": {"title": "name", "line": "deploy, branch and changes", "when": "last change",
+                                 "state": "deploy", "thumb": null},
+                        "item_view": "reader", "search": true, "preview": false, "stream": false,
+                        "offline": "never", "row_verbs": [], "item_verbs": [], "new_verb": null}}},
  "objects": [
   {
    "kind": "site",

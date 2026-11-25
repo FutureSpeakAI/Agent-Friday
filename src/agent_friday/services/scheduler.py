@@ -2899,7 +2899,8 @@ def _register_default_builtin_tasks():
 _AFTERNOON_BRIEFING_JOB = _JobPromptJob(
     name="Afternoon briefing",
     instructions="You write the owner's afternoon briefing from the live data "
-                 "you are given.")
+                 "you are given. Whether Gmail and Google Calendar are connected is stated in that data, read "
+                 "live; say they are not connected only when it says so.")
 
 
 @visible_job('Afternoon briefing', kind='briefing', workspace='news')
@@ -2946,9 +2947,8 @@ def _afternoon_briefing_job():
     from agent_friday.services.news_engine import _finish_briefing
     content = _finish_briefing(content)
     date_str = datetime.now().strftime("%Y-%m-%d")
-    briefings_dir = FRIDAY_DIR / "wiki" / "briefings"
-    briefings_dir.mkdir(parents=True, exist_ok=True)
-    (briefings_dir / f"{date_str}.md").write_text(content, encoding="utf-8")
+    from agent_friday.services import briefing_files
+    briefing_files.write(date_str, content)
     try:
         _notify_briefing(date_str)
     except Exception:

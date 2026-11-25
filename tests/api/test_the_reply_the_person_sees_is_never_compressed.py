@@ -12,8 +12,11 @@ The unit rule is in tests/unit/test_compressor_leaves_conversation_text_alone.py
 import re
 import types
 
-from tests.api.test_eval_weekend_plan_calendar_text import (  # noqa: F401 - fixtures and the scripted model
-    _model, _turn, cloud_only, _fresh_confirmations)
+from tests.api import test_eval_weekend_plan_calendar_text as weekend
+
+# The scripted model and turn helper, and the fixtures pytest finds by name in this module (autouse included).
+_model, _turn = weekend._model, weekend._turn
+cloud_only, _fresh_confirmations = weekend.cloud_only, weekend._fresh_confirmations
 
 FIRST_MESSAGE = "Tell me about the river city and the people who live there, and what it was like when the harbor was built."
 REPLY = ("You are a journalist, after all, and the story that you are telling is about the city that was built on the river. "
@@ -65,7 +68,7 @@ def _text_of(content):
     return "".join(b.get("text", "") for b in content if isinstance(b, dict) and b.get("type") == "text")
 
 
-def test_the_reply_and_the_history_the_model_is_sent_are_exactly_as_written(cloud_only, monkeypatch):  # noqa: F811 - pytest fixture
+def test_the_reply_and_the_history_the_model_is_sent_are_exactly_as_written(cloud_only, monkeypatch):
     comp = _squeezing_compressor(monkeypatch)
     _model(monkeypatch, call_tools=False, final=REPLY)
     first = _turn(cloud_only, FIRST_MESSAGE)
