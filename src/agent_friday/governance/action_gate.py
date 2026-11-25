@@ -433,6 +433,9 @@ INTERNAL_TOOLS = frozenset({
     # The companion apps: reads Friday's own shipped notes about the phone,
     # tablet, watch and TV apps. Nothing leaves the PC and nothing changes.
     "ecosystem_info",
+    # Paired devices: reads the PC's own signed device list and says kind,
+    # pairing time and last sign-in. No device name, key or token is returned.
+    "devices_status",
 })
 
 #: Classified by argument: run_command by its command, content_create_post by

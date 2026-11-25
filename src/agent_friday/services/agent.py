@@ -11619,6 +11619,23 @@ CLAUDE_TOOLS.append({
 CLAUDE_TOOL_HANDLERS["ecosystem_info"] = _tool_ecosystem_info
 TOOL_RINGS["ecosystem_info"] = 0
 
+
+def _tool_devices_status(inp):
+    from agent_friday.services import device_awareness as _da
+    return _da.tool_devices_status(inp)
+
+
+CLAUDE_TOOLS.append({
+    "name": "devices_status",
+    "description": ("Read-only (Ring 0): which companion devices are paired with this PC right now: kind, "
+                    "whether each is connected now or when it last signed in. Use before saying "
+                    "anything about paired devices. It cannot pair, remove or change a device."),
+    "input_schema": {"type": "object", "properties": {
+        "kind": {"type": "string", "enum": ["phone", "tablet", "tv", "watch"]}}},
+})
+CLAUDE_TOOL_HANDLERS["devices_status"] = _tool_devices_status
+TOOL_RINGS["devices_status"] = 0
+
 try:        # registers the decision hook that starts an approved website task
     from agent_friday.services import web_tasks as _web_tasks
     _web_tasks.register_hooks()
