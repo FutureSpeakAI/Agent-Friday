@@ -1,0 +1,54 @@
+{
+  "app": "watch",
+  "facts": {
+    "abis": [],
+    "application_id": "ai.futurespeak.friday.watch",
+    "bound_services": [],
+    "capabilities": {},
+    "debug_suffix": ".debug",
+    "features_required": [
+      "android.hardware.type.watch"
+    ],
+    "form": null,
+    "min_sdk": 30,
+    "pairing": {
+      "declares_kind": null,
+      "discovery": false,
+      "gateway": false,
+      "relay": true,
+      "reports_app_version": false
+    },
+    "permissions": [
+      "android.permission.ACCESS_NETWORK_STATE",
+      "android.permission.INTERNET",
+      "android.permission.POST_NOTIFICATIONS",
+      "android.permission.RECORD_AUDIO",
+      "android.permission.VIBRATE"
+    ],
+    "release_signing": "none",
+    "routes": {
+      "gateway": [],
+      "phone_link": [
+        "card",
+        "cards",
+        "chat",
+        "chats",
+        "item",
+        "ping",
+        "reply",
+        "settings",
+        "voice"
+      ]
+    },
+    "target_sdk": 35,
+    "version_code": 1,
+    "version_name": "0.1.0-hack"
+  },
+  "fingerprint": "de61aa10e150ea6299792782373b27f1c6791b44e2a66e64063751eb3aa5e006",
+  "schema": 1,
+  "source": {
+    "commit": null,
+    "ref": "working tree",
+    "repo": "friday-watch"
+  }
+}

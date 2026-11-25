@@ -11597,6 +11597,28 @@ CLAUDE_TOOLS.append({
 CLAUDE_TOOL_HANDLERS["web_task_start"] = _tool_web_task_start
 TOOL_RINGS["web_task_start"] = 2
 
+
+# ── Companion apps (services/ecosystem.py): what exists, how to install and
+#    pair each, what a device can see. Read-only; the text is rendered from
+#    resources/ecosystem, never composed by the model.
+
+def _tool_ecosystem_info(inp):
+    from agent_friday.services import ecosystem as _eco
+    return _eco.tool_ecosystem_info(inp)
+
+
+CLAUDE_TOOLS.append({
+    "name": "ecosystem_info",
+    "description": ("Read-only (Ring 0): the facts about Friday's companion apps (Android phone, tablet, "
+                    "TV, Wear OS watch): what works today, how to install, how to pair, what a device can "
+                    "see, known limits. Use before saying anything about these apps; give steps as written."),
+    "input_schema": {"type": "object", "properties": {
+        "app": {"type": "string", "enum": ["phone", "tablet", "tv", "watch"]},
+        "topic": {"type": "string", "enum": ["overview", "install", "pair", "sees", "limits"]}}},
+})
+CLAUDE_TOOL_HANDLERS["ecosystem_info"] = _tool_ecosystem_info
+TOOL_RINGS["ecosystem_info"] = 0
+
 try:        # registers the decision hook that starts an approved website task
     from agent_friday.services import web_tasks as _web_tasks
     _web_tasks.register_hooks()

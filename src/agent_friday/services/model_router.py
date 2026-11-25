@@ -3845,6 +3845,15 @@ def _get_friday_system_prompt(keywords='', workspace='', *, provider,
             prefix += "\n== WHAT YOU ACTUALLY ARE ==\n" + _acct + "\n"
     except Exception:
         pass
+    # The companion apps (phone, tablet, TV, watch): which exist and what state
+    # each is in, rendered from resources/ecosystem so she states nothing about
+    # them from memory. In the head, so the voice front's digest carries it too
+    # (tests/unit/test_ecosystem_knowledge.py).
+    try:
+        from agent_friday.services import ecosystem as _eco
+        prefix += _eco.prompt_section()
+    except Exception:
+        pass
     # A local seat is told, in one line, which model it is, its window, what it
     # cannot do and that the conversation stays on this PC. Only a provider the
     # egress gate itself treats as local gets the line, so the privacy claim is

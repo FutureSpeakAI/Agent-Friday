@@ -1,0 +1,165 @@
+{
+  "app": "tablet",
+  "facts": {
+    "abis": [
+      "arm64-v8a"
+    ],
+    "application_id": "ai.futurespeak.friday.phone.flagship",
+    "bound_services": [
+      "BIND_APPWIDGET",
+      "BIND_NOTIFICATION_LISTENER_SERVICE",
+      "BIND_QUICK_SETTINGS_TILE",
+      "BIND_VOICE_INTERACTION"
+    ],
+    "capabilities": {
+      "actions": {
+        "owner_only": true,
+        "verbs": {
+          "alarm.cancel": "A2",
+          "alarm.list": "A0",
+          "alarm.set": "A0",
+          "app.open": "A0",
+          "battery.read": "A0",
+          "calendar.add": "A2",
+          "calendar.say": "A0",
+          "contacts.say": "A0",
+          "delete": "A2",
+          "dnd.say": "A0",
+          "dnd.set": "A0",
+          "forbidden": "N",
+          "location.near": "A0",
+          "location.where": "A0",
+          "maps.navigate": "A0",
+          "media.key": "A0",
+          "media.playing": "A0",
+          "message.send": "A2",
+          "notification.reply": "A2",
+          "notifications.read": "A0",
+          "notifications.say": "A0",
+          "phone.call": "A2",
+          "phone.dial": "A0",
+          "ringer.set": "A0",
+          "ringer.silent": "A0",
+          "screen.autobrightness": "A0",
+          "screen.brightness": "A0",
+          "screen.rotate": "A0",
+          "screen.timeout": "A0",
+          "setting.change": "A2",
+          "sms.draft": "A0",
+          "spend": "A2",
+          "timer.start": "A0",
+          "torch.set": "A0",
+          "volume.set": "A0"
+        },
+        "version": 1
+      },
+      "arcade": {
+        "owner_only": false,
+        "verbs": {},
+        "version": 1
+      },
+      "calendar": {
+        "owner_only": true,
+        "verbs": {},
+        "version": 1
+      },
+      "lanes": {
+        "owner_only": true,
+        "verbs": {},
+        "version": 1
+      },
+      "link": {
+        "owner_only": false,
+        "verbs": {},
+        "version": 1
+      },
+      "needs_you": {
+        "owner_only": false,
+        "verbs": {},
+        "version": 1
+      },
+      "receipts": {
+        "owner_only": false,
+        "verbs": {
+          "talk.answer": "A0",
+          "talk.view": "A0"
+        },
+        "version": 1
+      },
+      "talk": {
+        "owner_only": false,
+        "verbs": {},
+        "version": 1
+      }
+    },
+    "debug_suffix": ".debug",
+    "features_required": [],
+    "form": "tablet",
+    "min_sdk": 31,
+    "pairing": {
+      "declares_kind": "by_form",
+      "discovery": false,
+      "gateway": true,
+      "relay": true,
+      "reports_app_version": false
+    },
+    "permissions": [
+      "android.permission.ACCESS_COARSE_LOCATION",
+      "android.permission.ACCESS_FINE_LOCATION",
+      "android.permission.ACCESS_LOCAL_NETWORK",
+      "android.permission.ACCESS_NOTIFICATION_POLICY",
+      "android.permission.CALL_PHONE",
+      "android.permission.CAMERA",
+      "android.permission.INTERNET",
+      "android.permission.POST_NOTIFICATIONS",
+      "android.permission.READ_ASSIST_STRUCTURE_SCREEN_CONTENT",
+      "android.permission.READ_CALENDAR",
+      "android.permission.READ_CONTACTS",
+      "android.permission.RECORD_AUDIO",
+      "android.permission.REQUEST_INSTALL_PACKAGES",
+      "android.permission.USE_BIOMETRIC",
+      "android.permission.WRITE_CALENDAR",
+      "android.permission.WRITE_SETTINGS",
+      "com.android.alarm.permission.SET_ALARM"
+    ],
+    "release_signing": "none",
+    "routes": {
+      "gateway": [
+        "approvals",
+        "chats",
+        "connectors",
+        "evolution",
+        "graph",
+        "hello",
+        "inherit",
+        "jobs",
+        "media",
+        "messages",
+        "model",
+        "models",
+        "orbs",
+        "pair",
+        "phone",
+        "projects",
+        "providers",
+        "stop-everything",
+        "stt",
+        "tts",
+        "voices",
+        "wiki",
+        "workspaces"
+      ],
+      "phone_link": []
+    },
+    "target_sdk": 37,
+    "version_code": 62,
+    "version_name": "0.12.29-workspaces"
+  },
+  "fingerprint": "427e287e0cc7fd4136dbbe6453e95d581f5323edc1f81b5d6afe11f7cdadb4bb",
+  "schema": 1,
+  "source": {
+    "commit": "c35ce65a619976cae8e22c4fbd77bbdc90114bf9",
+    "ref": "ws/vc62-tablet",
+    "repo": "friday-phone"
+  }
+}
