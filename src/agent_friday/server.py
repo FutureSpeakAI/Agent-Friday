@@ -198,6 +198,7 @@ from flask import Blueprint as _Blueprint
 # drifts from the actual routes/ directory, so it can't silently go stale.
 ROUTE_MODULES = [
     'actions', 'agent_workspaces', 'activity', 'ai_history_import', 'first_synthesis', 'arbiter', 'artifacts', 'avatar', 'codebases', 'publish', 'ambient',
+    'briefing_sections',
     'browser', 'budget_policy', 'calendar', 'channels', 'chat', 'cloud_voice_routes', 'code', 'compute',
     'connect_services', 'connectors', 'contacts', 'content_pipeline', 'context', 'conversations', 'control', 'core_memory', 'core_routes', 'desktop',
     'costs', 'creations', 'creative_pipeline', 'crew', 'crew_rooms', 'defederation', 'doctor', 'documents', 'domains', 'dreaming', 'ext_security', 'federation',

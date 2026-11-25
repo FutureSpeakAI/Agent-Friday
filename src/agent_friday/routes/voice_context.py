@@ -229,31 +229,45 @@ def workspace_voice_context(workspace):
 
 @voice_context_bp.route('/api/voice/start-my-day')
 def voice_start_my_day():
-    """Assemble the sequential morning voice briefing (calendar → email → news → tasks).
+    """The morning voice briefing, spoken from today's WRITTEN briefing (services/start_my_day).
 
-    Returns {status, label, prompt}. Reuses the same live-data gatherer the
-    News "Generate Briefing" button uses so the spoken briefing reflects today,
-    not a stale cached context.
+    Uses today's stored briefing when it was generated within the last six hours, else runs the one briefing
+    generator (routes/news.generate_briefing: format skill, section skills, link check, generation stamp, written
+    through briefing_files) and uses what it wrote. Returns {status, label, prompt, briefing} where briefing names
+    the file the News workspace opens beside the voice: {date, filename, generated_at, made_now}; briefing is null
+    only when no written briefing could be made, and then the prompt says so before anything else.
     """
-    try:
-        from agent_friday.services.news_links import for_speech
-        ctx = for_speech(_gather_live_briefing_context())
-    except Exception as e:
-        # The model must be able to say a source failed; it gets the message
-        # only (docs/security/codeql-dismissals.md).
-        from agent_friday.user_errors import message_only
-        ctx = f"(could not load all live data: {message_only(e)})"
+    from agent_friday.services import start_my_day
+    now = datetime.now()
     tasks = _vc_tasks()
-    prompt = (
-        "[START MY DAY — the user asked for their morning voice briefing.]\n\n"
-        "Here is today's live data:\n\n"
-        + (ctx or "(no live data available)")
-        + (("\n\n" + tasks) if tasks else "")
-        + "\n\nDeliver a spoken morning briefing in this exact order, conversationally "
-          "and concisely: first what's on my calendar today (most important first), "
-          "then any email that needs my attention, then the top news relevant to me, "
-          "then my active tasks and commitments. End with one proactive suggestion for "
-          "the day. Speak naturally in short sentences — no markdown — and pause between "
-          "sections so I can interrupt."
-    )
-    return jsonify({"status": "ok", "label": "Start My Day", "prompt": prompt})
+    made_now = False
+    reason = ""
+    with start_my_day.GENERATING:              # a second press waits, then finds what the first one wrote
+        found = start_my_day.fresh(now)
+        if found is None:
+            from agent_friday.routes.news import generate_briefing
+            result = generate_briefing()
+            response, code = result if isinstance(result, tuple) else (result, result.status_code)
+            body = response.get_json(silent=True) or {}
+            if code == 200 and body.get("status") == "ok":
+                found = start_my_day.fresh(datetime.now())
+                made_now = found is not None
+                reason = "" if found else "it was written without its generation time"
+            else:
+                reason = str(body.get("message") or "the briefing generator failed")[:200]
+    if found is None:
+        try:
+            from agent_friday.services.news_links import for_speech
+            ctx = for_speech(_gather_live_briefing_context())
+        except Exception as e:
+            # The model must be able to say a source failed; it gets the message
+            # only (docs/security/codeql-dismissals.md).
+            from agent_friday.user_errors import message_only
+            ctx = f"(could not load all live data: {message_only(e)})"
+        return jsonify({"status": "ok", "label": "Start My Day", "briefing": None,
+                        "prompt": start_my_day.failed_prompt(reason, ctx, tasks)})
+    return jsonify({"status": "ok", "label": "Start My Day",
+                    "prompt": start_my_day.spoken_prompt(found, datetime.now(), tasks),
+                    "briefing": {"date": found.path.stem[:10], "filename": found.path.name,
+                                 "generated_at": found.generated_at.isoformat(timespec="minutes"),
+                                 "made_now": made_now}})

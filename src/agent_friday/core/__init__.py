@@ -3064,6 +3064,10 @@ DEFAULT_SETTINGS = {
     # day) shows (unified-shell.md §10.4): "smart" when it is useful, "always"
     # whenever no workspace is open, "never" only when asked (show_my_day).
     "landing_mode": "smart",
+    # The skills Start My Day's briefing runs as sections (services/briefing_sections): an ordered list of
+    # {skill, heading, days ("daily", "fri-sun", "mon,wed"), enabled}. None means the default: events-horizon every
+    # day and family-outing Friday to Sunday. A skill that is not installed or approved shows "Didn't run: ...".
+    "briefing_sections": None,
     # Start-screen countdowns the owner hid: countdown id -> epoch seconds when that countdown passes, after which
     # the entry is dropped (a yearly one comes back next year). Written by the start screen's hide control.
     "dismissed_countdowns": {},
