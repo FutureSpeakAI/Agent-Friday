@@ -17,6 +17,7 @@ import pytest
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 node = shutil.which("node")
+NEEDS_NODE = pytest.mark.skipif(not node, reason="node is not on PATH; Q3 exception, expires 2027-05-25")
 NL = chr(10)
 PAGES = ("index.html", "ui_parts/app.html")
 
@@ -75,7 +76,7 @@ console.log(JSON.stringify(HREFS.map(h => fridaySanitizeMarkup('<a href="' + h.r
 """
 
 
-@pytest.mark.skipif(not node, reason="node is not on PATH")
+@NEEDS_NODE
 def test_the_sanitizer_hands_back_an_address_as_the_browser_would_read_it(tmp_path):
     """Written escaped (as marked writes it) or raw, each address comes back as the same escaped href."""
     script = tmp_path / "k.js"
@@ -96,7 +97,7 @@ console.log(JSON.stringify({out, keep}));
 """
 
 
-@pytest.mark.skipif(not node, reason="node is not on PATH")
+@NEEDS_NODE
 def test_hostile_markup_is_reduced_to_inert_text(tmp_path):
     script = tmp_path / "h.js"
     script.write_text(HARNESS.replace("CODE", _code("index.html")).replace(
@@ -116,7 +117,7 @@ def test_hostile_markup_is_reduced_to_inert_text(tmp_path):
     assert "<p>hi</p>" in keep
 
 
-@pytest.mark.skipif(not node, reason="node is not on PATH")
+@NEEDS_NODE
 def test_a_html_document_reply_is_shown_as_source(tmp_path):
     code = _code("index.html")
     rd = _slice("index.html", "function renderFridayMarkdown(", NL + "if")

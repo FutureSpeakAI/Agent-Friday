@@ -13,6 +13,16 @@ import pytest
 
 from agent_friday.services import briefing_links as bl
 
+
+#: Q3 exception: the follow-up xfails below are approved by Stephen's triage rule for PR #1115 (2026-11-24): a
+#: verified link dropped or shown oddly is a follow-up, never a blocker. Each must be fixed or re-approved by then.
+FOLLOW_UP_EXPIRES = "2027-05-25"
+
+
+def follow_up(why):
+    return pytest.mark.xfail(strict=True, reason="follow-up: %s; Q3 exception, expires %s" % (why, FOLLOW_UP_EXPIRES))
+
+
 NEWS = [{"id": "N1", "title": "Council passes the budget", "source": "Example Gazette",
          "url": "https://gazette.example.test/budget"},
         {"id": "N2", "title": "Storm warning for the coast", "source": "Coast Daily",
@@ -611,14 +621,14 @@ def test_a_source_address_marked_would_not_link_whole_is_no_link(url):
 
 # -- FOLLOW-UPS (PR #1115 body): a known link dropped or shown oddly, never an unknown link live --------------------
 
-@pytest.mark.xfail(strict=True, reason="follow-up: a known address after a backslash goes rather than stays")
+@follow_up("a known address after a backslash goes rather than stays")
 def test_follow_up_an_escaped_known_address_stays_linked():
     url = CAL[0]["url"]
     _, known, final = _pipeline("## Tasks\n- See \\%s\n" % url, bl.collect(calendar=CAL))
     assert url in _live_links(final, known)
 
 
-@pytest.mark.xfail(strict=True, reason="follow-up: a known address that ends in what marked trims goes")
+@follow_up("a known address that ends in what marked trims goes")
 def test_follow_up_a_known_address_ending_in_a_trimmed_character_stays_linked():
     url = "https://calendar.example.test/e*1*"
     src = bl.collect(calendar=[{"id": "C1", "title": "Standup", "url": url}])
@@ -626,20 +636,20 @@ def test_follow_up_a_known_address_ending_in_a_trimmed_character_stays_linked():
     assert url in _live_links(final, known)
 
 
-@pytest.mark.xfail(strict=True, reason="follow-up: a source address with brackets out of order is no link at all")
+@follow_up("a source address with brackets out of order is no link at all")
 def test_follow_up_a_source_address_with_brackets_out_of_order_is_still_linked():
     src = bl.collect(calendar=[{"id": "C1", "title": "Standup", "url": "https://a.example.test/a)(b"}])
     got, known, final = _pipeline("## Calendar\n- Standup [C1]\n", src)
     assert got.dropped_total == 0
 
 
-@pytest.mark.xfail(strict=True, reason="follow-up: a link whose label is its own address loses the label")
+@follow_up("a link whose label is its own address loses the label")
 def test_follow_up_a_link_labelled_with_its_own_address_keeps_the_label():
     url = CAL[0]["url"]
     assert bl.strip_unknown_links("[%s](%s)" % (url, url), {url}) == "[%s](%s)" % (url, url)
 
 
-@pytest.mark.xfail(strict=True, reason="follow-up: a known address in a code span shows as <address>")
+@follow_up("a known address in a code span shows as <address>")
 def test_follow_up_a_known_address_in_a_code_span_is_shown_as_typed():
     url = CAL[0]["url"]
     assert bl.strip_unknown_links("`%s`" % url, {url}) == "`%s`" % url
@@ -654,7 +664,7 @@ def test_a_known_address_holding_a_pipe_never_renders_a_cut_link_in_a_table(row)
     assert not _live_links(final, known), final
 
 
-@pytest.mark.xfail(strict=True, reason="follow-up: a source address with a character beyond plain URL ones is no link")
+@follow_up("a source address with a character beyond plain URL ones is no link")
 @pytest.mark.parametrize("url", ["https://calendar.example.test/x?eid=1|2", "https://calendar.example.test/a\\_b",
                                  "https://calendar.example.test/caf\u00e9", "https://news.example.test/?a=1&amp;b=2"])
 def test_follow_up_a_source_address_beyond_plain_url_characters_is_still_linked(url):
@@ -663,19 +673,19 @@ def test_follow_up_a_source_address_beyond_plain_url_characters_is_still_linked(
     assert got.dropped_total == 0
 
 
-@pytest.mark.xfail(strict=True, reason="follow-up: speakable leaves ')>' of <address_(x)> in spoken text")
+@follow_up("speakable leaves ')>' of <address_(x)> in spoken text")
 def test_follow_up_speech_drops_an_angle_bracketed_address_whole():
     from agent_friday.services.start_my_day import speakable
     assert ">" not in speakable("See <https://calendar.example.test/e_(1)> now.")
 
 
-@pytest.mark.xfail(strict=True, reason="follow-up: a known link with a title shows as text around a bare <address>")
+@follow_up("a known link with a title shows as text around a bare <address>")
 def test_follow_up_a_known_link_with_a_title_keeps_it():
     url = CAL[0]["url"]
     assert bl.strip_unknown_links('[x](%s "t")' % url, {url}) == '[x](%s "t")' % url
 
 
-@pytest.mark.xfail(strict=True, reason="follow-up: a known address inside its own link's label becomes a nested link")
+@follow_up("a known address inside its own link's label becomes a nested link")
 def test_follow_up_a_known_address_inside_its_own_link_label_is_not_nested():
     url = CAL[0]["url"]
     assert bl.strip_unknown_links("[a %s b](%s)" % (url, url), {url}) == "[a %s b](%s)" % (url, url)

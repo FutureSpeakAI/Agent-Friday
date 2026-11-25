@@ -7,6 +7,7 @@ to a temporary folder, so it can never touch the owner's home.
 
     FRIDAY_HOME=<scratch> python tests/app/helpers/seed_start_my_day.py
 """
+import importlib
 import os
 import sys
 import tempfile
@@ -18,8 +19,8 @@ if not home or not Path(home).resolve().is_relative_to(Path(tempfile.gettempdir(
     sys.exit("FRIDAY_HOME must be a scratch folder under the temp directory")
 sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "src"))
 
-from agent_friday.services import briefing_files  # noqa: E402
-from agent_friday.services import news_engine as ne  # noqa: E402
+briefing_files = importlib.import_module("agent_friday.services.briefing_files")
+ne = importlib.import_module("agent_friday.services.news_engine")
 
 DRAFT = """# Briefing for today
 ## Today's Calendar
