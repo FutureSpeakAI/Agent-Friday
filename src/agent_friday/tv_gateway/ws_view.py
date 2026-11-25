@@ -36,8 +36,10 @@ SIGN_PREFIX = "wsview:"
 
 
 def proposal_fp(ws: str, base_rev: str, change) -> str:
+    """sha256 of the canonical JSON of {ws, base_rev, change}. Raises ValueError (UnicodeEncodeError is one) for a body
+    that has no canonical bytes: a lone surrogate, NaN or Infinity; _body refuses those first."""
     canon = json.dumps({"ws": ws, "base_rev": base_rev, "change": change}, sort_keys=True, separators=(",", ":"),
-                       ensure_ascii=False)
+                       ensure_ascii=False, allow_nan=False)
     return hashlib.sha256(canon.encode("utf-8")).hexdigest()
 
 
@@ -73,6 +75,12 @@ def _body() -> tuple:
     base_rev, change = body.get("base_rev"), body.get("change")
     if not isinstance(base_rev, str) or not base_rev or len(base_rev) > 128 or not isinstance(change, dict):
         raise Rejected(Refusal.BAD_REQUEST, "send {base_rev, change}")
+    try:
+        proposal_fp("", base_rev, change)
+    except ValueError:
+        # test_tv_ws_view.py: test_a_challenge_that_cannot_be_fingerprinted_is_refused_not_a_crash,
+        # test_a_signed_proposal_that_cannot_be_fingerprinted_is_refused_before_its_nonce
+        raise Rejected(Refusal.BAD_REQUEST, "that change has no canonical form (a lone surrogate, NaN or Infinity)")
     return body, base_rev, change
 
 
