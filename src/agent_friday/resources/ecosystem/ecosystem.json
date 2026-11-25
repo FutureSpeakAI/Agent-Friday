@@ -25,7 +25,7 @@
         "You can talk or type to me from anywhere in the house, and I answer from this PC.",
         "Once you allow it to read this PC and, separately, to approve, each on this PC's screen, the phone can approve most of what I ask. Some requests are only ever approved on this PC's own screen.",
         "It can do things on the phone itself when you ask, such as timers, calendar entries and starting a call.",
-        "Once you allow it to read this PC, on this PC's screen, your chats with me and your workspaces here open on the phone."
+        "Once you allow it to read this PC, on this PC's screen, your chats with me, your projects and your workspaces here open on the phone."
       ],
       "capabilities": [
         {
@@ -44,6 +44,14 @@
           "status": "shipped",
           "evidence": [
             "route:gateway/chats"
+          ]
+        },
+        {
+          "id": "projects",
+          "text": "open your projects from this PC, each with its chats and files listed, once you allow it to read this PC, on this PC's screen",
+          "status": "shipped",
+          "evidence": [
+            "route:gateway/projects"
           ]
         },
         {
@@ -236,7 +244,7 @@
       "adds": [
         "The same app as the phone, laid out for a larger screen.",
         "You can talk or type to me from the sofa or the kitchen, and I answer from this PC.",
-        "Once you allow it to read this PC, on this PC's screen, your chats with me and your workspaces here open on the tablet."
+        "Once you allow it to read this PC, on this PC's screen, your chats with me, your projects and your workspaces here open on the tablet."
       ],
       "capabilities": [
         {
@@ -255,6 +263,14 @@
           "status": "shipped",
           "evidence": [
             "route:gateway/chats"
+          ]
+        },
+        {
+          "id": "projects",
+          "text": "open your projects from this PC, each with its chats and files listed, once you allow it to read this PC, on this PC's screen",
+          "status": "shipped",
+          "evidence": [
+            "route:gateway/projects"
           ]
         },
         {

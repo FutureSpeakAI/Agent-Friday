@@ -423,10 +423,8 @@ def generate_briefing():
         content = _finish_briefing(content)
 
         date_str = datetime.now().strftime('%Y-%m-%d')
-        briefings_dir = FRIDAY_DIR / "wiki" / "briefings"
-        briefings_dir.mkdir(parents=True, exist_ok=True)
-        out_path = briefings_dir / f"{date_str}.md"
-        out_path.write_text(content, encoding='utf-8')
+        from agent_friday.services import briefing_files
+        out_path = briefing_files.write(date_str, content)
 
         _notify_briefing(date_str, manual=True)
         _vj.set_result(content)

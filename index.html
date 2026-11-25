@@ -17569,6 +17569,11 @@ function ConversationWindow({
      The event carries no content: it says which conversation moved, and the
      transcript is re-read from the store, so what renders is always what was
      actually written. */
+  // A device turn that lands while this window's own turn streams is re-read when that turn ends, never under
+  // its stream (test_a_device_turn_never_rereads_under_a_desktop_stream).
+  const loadingRef = useRef(false);
+  loadingRef.current = loading;
+  const rereadAfterTurn = useRef(false);
   useEffect(() => {
     if (!cid) return;
     let es = null, stopped = false;
@@ -17580,12 +17585,18 @@ function ConversationWindow({
       if (stopped) return;
       let m = null;
       try { m = JSON.parse(e.data); } catch (_) { return; }
-      if (!m || (m.type !== 'approval_result' && m.type !== 'codebase_run')) return;
+      // conversation_changed: a turn from the owner's phone, tablet or watch landed in this chat
+      // (tv_gateway/owner_turn.announce_changed); test_open_desktop_chats_reread_on_conversation_changed.
+      if (!m || (m.type !== 'approval_result' && m.type !== 'codebase_run' && m.type !== 'conversation_changed')) return;
       if (m.conversation_id && m.conversation_id !== cid) return;
+      if (m.type === 'conversation_changed' && loadingRef.current) { rereadAfterTurn.current = true; return; }
       openConvQuiet(cid);
     };
     return () => { stopped = true; try { es && es.close(); } catch (_) {} };
   }, [cid]);
+  useEffect(() => {
+    if (!loading && rereadAfterTurn.current && cid) { rereadAfterTurn.current = false; openConvQuiet(cid); }
+  }, [loading, cid]);
   const openConvQuiet = id => apiFetch('/api/conversations/' + encodeURIComponent(id) + '/messages')
     .then(r => r.json())
     .then(d => {
@@ -19348,6 +19359,7 @@ function CareerWS() {
   const [reportContent, setReportContent] = useState('');
   const [evalUrl, setEvalUrl] = useState('');
   const [engineJobs, setEngineJobs] = useState([]);
+  const [archiveJobs, setArchiveJobs] = useState([]);
   const [coStatus, setCoStatus] = useState(null);
   const [coPath, setCoPath] = useState('');
   const [loadError, setLoadError] = useState('');
@@ -19396,7 +19408,7 @@ function CareerWS() {
     const requests = [['Career setup', '/api/career-ops/status', d => {
       setCoStatus(d);
       setCoPath(d.configured ? d.path : '');
-    }], ['Tracker', '/api/career-ops/tracker', setTracker], ['Reports', '/api/career-ops/reports', d => setReports(d.reports || [])], ['Pipeline', '/api/career-ops/pipeline', d => setPipeline(d.content || '')], ['Curated jobs', '/api/jobs', d => setJobs(d.content || d.raw || '')], ['Job scanner', '/api/pipeline/jobs', d => setEngineJobs(d.jobs || [])]];
+    }], ['Tracker', '/api/career-ops/tracker', setTracker], ['Reports', '/api/career-ops/reports', d => setReports(d.reports || [])], ['Pipeline', '/api/career-ops/pipeline', d => setPipeline(d.content || '')], ['Curated jobs', '/api/jobs', d => setJobs(d.content || d.raw || '')], ['Job scanner', '/api/career/jobs?view=recent', d => setEngineJobs(d.jobs || [])], ['Job archive', '/api/career/jobs?view=archive', d => setArchiveJobs(d.jobs || [])]];
     const results = await Promise.allSettled(requests.map(async ([label, url, save]) => {
       const d = await careerRequest(url);
       save(d);
@@ -19500,11 +19512,16 @@ function CareerWS() {
     if (d.status !== 'ok' || !d.slug) throw new Error('The workflow was not saved.');
     setNotice(d.created ? 'Career search added to Workflows. Open it to review the steps and run or schedule it.' : 'Career search is already in Workflows. Your saved steps are unchanged.');
   });
+  const jobDay = s => {
+    const d = s ? new Date(s) : null;
+    return d && !isNaN(d) ? d.toLocaleDateString() : '';
+  };
   const engineScan = () => perform('Scanning jobs', async () => {
-    await careerRequest('/api/pipeline/scan', {});
-    const d = await careerRequest('/api/pipeline/jobs');
-    setEngineJobs(d.jobs || []);
-    setNotice('Job scanner refreshed.');
+    const r = await careerRequest('/api/pipeline/scan', {});
+    const [a, b] = await Promise.all([careerRequest('/api/career/jobs?view=recent'), careerRequest('/api/career/jobs?view=archive')]);
+    setEngineJobs(a.jobs || []);
+    setArchiveJobs(b.jobs || []);
+    setNotice(r.scanned > 0 ? 'Job scanner refreshed.' : 'The scanner checked nothing: no job feed is connected, so no new listings can arrive.');
   });
   const engineApply = id => perform('Preparing application', async () => {
     const d = await careerRequest('/api/pipeline/jobs/' + encodeURIComponent(id) + '/apply', {});
@@ -19918,7 +19935,7 @@ function CareerWS() {
       fontSize: 12,
       color: '#aaa'
     }
-  }, "Job Scanner engine \u2014 ", engineJobs.length, " tracked. Scoring, dedup and resume A/B variants run locally. ", fridayName(), " prepares applications; you submit them."), /*#__PURE__*/React.createElement("button", {
+  }, "Job Scanner \u2014 ", engineJobs.length, " open and recently seen. Scoring, dedup and resume A/B variants run locally. ", fridayName(), " prepares applications; you submit them."), /*#__PURE__*/React.createElement("button", {
     className: "btn",
     style: {
       fontSize: 11
@@ -19932,12 +19949,13 @@ function CareerWS() {
       textAlign: 'center',
       padding: 20
     }
-  }, "No tracked jobs yet. Scan Now checks the scanner\u2019s configured keyword sets."), engineJobs.map((j, i) => /*#__PURE__*/React.createElement("div", {
-    key: j.job_id || i,
+  }, "No open, recently seen jobs. Closed and expired ones are in the archive below."), engineJobs.map((j, i) => /*#__PURE__*/React.createElement("div", {
+    key: j.key || j.job_id || i,
     className: "card",
     style: {
       marginBottom: 4
-    }
+    },
+    "data-testid": "career-recent-job"
   }, /*#__PURE__*/React.createElement("div", {
     style: {
       display: 'flex',
@@ -19965,7 +19983,7 @@ function CareerWS() {
       fontSize: 10,
       color: '#999'
     }
-  }, j.location, j.remote ? ' · remote' : '', " \xB7 score ", (j.relevance_score || 0).toFixed(2))), /*#__PURE__*/React.createElement("button", {
+  }, j.location, j.remote ? ' · remote' : '', j.status === 'applied' ? ' · applied' : '', " \xB7 score ", (j.score || 0).toFixed(2), " \xB7 seen ", jobDay(j.last_seen))), j.job_id && /*#__PURE__*/React.createElement("button", {
     className: "btn",
     style: {
       fontSize: 10,
@@ -19973,7 +19991,38 @@ function CareerWS() {
     },
     disabled: disabled,
     onClick: () => engineApply(j.job_id)
-  }, "Prepare"))))), view === 'overview' && /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
+  }, "Prepare")))), archiveJobs.length > 0 && /*#__PURE__*/React.createElement("div", {
+    "data-testid": "career-job-archive",
+    style: {
+      marginTop: 12
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "card-title"
+  }, "Archive \xB7 closed or no longer listed (", archiveJobs.length, ")"), archiveJobs.map((j, i) => /*#__PURE__*/React.createElement("div", {
+    key: j.key || i,
+    className: "card",
+    style: {
+      marginBottom: 4,
+      opacity: 0.75
+    },
+    "data-testid": "career-archived-job"
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 12,
+      whiteSpace: 'nowrap',
+      overflow: 'hidden',
+      textOverflow: 'ellipsis'
+    }
+  }, j.title, " ", /*#__PURE__*/React.createElement("span", {
+    style: {
+      color: '#888'
+    }
+  }, "@ ", j.company)), /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 10,
+      color: '#999'
+    }
+  }, j.status === 'expired' ? 'expired' : 'closed', " ", jobDay(j.closed_at || j.last_seen), j.close_reason ? ' · ' + j.close_reason : ''))))), view === 'overview' && /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
     className: "fr-comp-career-stages",
     style: {
       display: 'flex',
@@ -70691,6 +70740,12 @@ function App() {
      default -- patching only the other one left the common case unfixed.
      The event carries no content: it says which conversation moved, and the
      transcript is re-read, so what renders is what was actually written. */
+  const dockReread = useRef(null);
+  const dockRereadAfterTurn = useRef(null);
+  // true from the moment this chat's own turn starts until it ends (set with chatLoad in setTurnBusy, so no
+  // render gap); a device turn's re-read waits for it (tests/app/specs/device_turn_rereads_dock.spec.ts)
+  const dockLoading = useRef(false);
+  dockLoading.current = chatLoad;
   useEffect(() => {
     if (!convId) return;
     let es = null, stopped = false;
@@ -70723,8 +70778,18 @@ function App() {
         } catch (_) {}
         return;
       }
-      if (!ev || ev.type !== 'approval_result') return;
+      // conversation_changed: a turn from the owner's phone, tablet or watch landed in this chat
+      // (tv_gateway/owner_turn.announce_changed); test_open_desktop_chats_reread_on_conversation_changed.
+      if (!ev || (ev.type !== 'approval_result' && ev.type !== 'conversation_changed')) return;
+      // the list moves too: a chat a device started or continued rises to the top of the sidebar
+      if (ev.type === 'conversation_changed') refreshConvs();
       if (ev.conversation_id && ev.conversation_id !== convId) return;
+      // a desktop turn streaming here: re-read when it ends, never under its stream
+      // (test_a_device_turn_never_rereads_under_a_desktop_stream)
+      if (ev.type === 'conversation_changed' && dockLoading.current) { dockRereadAfterTurn.current = convId; return; }
+      dockReread.current && dockReread.current();
+    };
+    dockReread.current = () => {
       const refreshEpoch = chatEpoch.current;
       apiFetch('/api/conversations/' + encodeURIComponent(convId) + '/messages')
         .then(r => r.json()).then(d => {
@@ -70741,8 +70806,14 @@ function App() {
           })));
         }).catch(() => {});
     };
-    return () => { stopped = true; try { es && es.close(); } catch (_) {} };
+    return () => { stopped = true; dockReread.current = null; try { es && es.close(); } catch (_) {} };
   }, [convId]);
+  useEffect(() => {
+    if (!chatLoad && dockRereadAfterTurn.current && dockRereadAfterTurn.current === convId) {
+      dockRereadAfterTurn.current = null;
+      dockReread.current && dockReread.current();
+    }
+  }, [chatLoad, convId]);
 
   const convIdRef = useRef(null);
   useEffect(() => {
@@ -74528,7 +74599,7 @@ function App() {
       throw new Error('Open this codebase’s conversation before asking.');
     }
     const setTurnMsgs = value => { if (ownsTurn()) setChatMsgs(previous => ownsTurn() ? (typeof value === 'function' ? value(previous) : value) : previous); };
-    const setTurnBusy = value => { if (ownsTurn()) setChatLoad(value); };
+    const setTurnBusy = value => { if (ownsTurn()) { dockLoading.current = value; setChatLoad(value); } };
     const setTurnPause = value => { if (ownsTurn()) setPausePending(value); };
 
     /* A key never leaves the chat box. The same shapes the setup chat checks

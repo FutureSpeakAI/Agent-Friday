@@ -403,6 +403,45 @@ def messages(cid: str, limit: int | None = None) -> list[dict]:
     return out[-limit:] if limit else out
 
 
+TAIL_BYTES = 64 * 1024
+
+
+def last_message(cid: str) -> dict | None:
+    """The newest message, as ``messages(cid)[-1]`` would give it, reading only the end of the file: a chat list
+    of a hundred long chats costs a hundred small reads, not a hundred transcripts.
+    Held by test_the_last_message_is_read_from_the_tail (tests/unit/test_tv_chats_both_ways.py)."""
+    from agent_friday.services import off_record as _off
+    recalled = _off.recalled(cid)
+    if recalled:
+        return recalled[-1]
+    try:
+        p = _dir(cid) / "messages.jsonl"
+    except ValueError:
+        return None
+    try:
+        size = p.stat().st_size
+        with open(p, "rb") as fh:
+            fh.seek(max(0, size - TAIL_BYTES))
+            tail = fh.read()
+    except OSError:
+        return None
+    lines = tail.split(b"\n")
+    if size > TAIL_BYTES:
+        lines = lines[1:]                     # the first piece may start mid-line
+    for raw in reversed(lines):
+        raw = raw.strip()
+        if not raw:
+            continue
+        try:
+            return json.loads(raw.decode("utf-8"))
+        except Exception:
+            continue                          # one bad line never costs the thread
+    if size > TAIL_BYTES:                     # a last message longer than the tail: read it the long way
+        out = _stored_messages(cid)
+        return out[-1] if out else None
+    return None
+
+
 def _stored_messages(cid: str) -> list[dict]:
     try:
         p = _dir(cid) / "messages.jsonl"
