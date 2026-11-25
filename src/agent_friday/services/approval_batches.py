@@ -15,8 +15,10 @@ What a batch does and does not do:
   an action was added, decided elsewhere or expired since the card was drawn, the id no longer
   matches and nothing is decided: you are shown the new card instead.
 * Only (kind, policy class) pairs on ``BATCHABLE_KINDS`` batch, never money, never a connector action,
-  never a card that only a click on screen may approve, and never a card with no trusted source. Taint
-  cards wait for NA-4's own safety review. A batch shows every item in full.
+  never a card that only a click on screen may approve, and never a card with no trusted source. Of the
+  taint cards (a tool call that used details from outside content) only internal wiki edits batch
+  (``BATCHABLE_TAINTED_TOOLS``), so one request that edits the wiki several times is one tray card; every
+  other taint card stays single. A batch shows every item in full, with the provenance of each.
 * Declining a batch is always allowed and declines exactly the listed actions.
 """
 from __future__ import annotations
@@ -29,13 +31,17 @@ _log = logging.getLogger("friday.approval_batches")
 
 #: Approval kinds that may be shown together, with the policy classes each is allowed to carry. An
 #: approval outside this table stays one card per action. A kind is added only after its cards have been
-#: reviewed as a batch: ``tainted_action`` (details from outside content) waits for NA-4's own safety
-#: review, and ``governed_action`` / ``tool_confirm`` cover connector and payment-named tools whose class
-#: is only a label, so they stay single too.
+#: reviewed as a batch: ``tainted_action`` batches only for the tools in ``BATCHABLE_TAINTED_TOOLS``, and
+#: ``governed_action`` / ``tool_confirm`` cover connector and payment-named tools whose class is only a
+#: label, so they stay single.
 BATCHABLE_KINDS: Dict[str, frozenset] = {
     "media_diet_rule": frozenset({"internal", "outward"}),
     "career_tracker_update": frozenset({"internal", "outward"}),
+    "tainted_action": frozenset({"internal"}),
 }
+#: The only tools whose taint cards batch: edits to the owner's own wiki. Each edit still needs its own
+#: approval underneath (tests/unit/test_approval_batches_wiki_edits.py).
+BATCHABLE_TAINTED_TOOLS = frozenset({"correct_wiki", "propose_wiki_update"})
 #: Classes that are never batched, whatever the kind.
 NEVER_BATCH_CLASSES = frozenset({"spend", "irreversible", "external_message", "law1_block"})
 #: Kinds whose payload carries the conversation and task the action came from, written by the server
@@ -82,6 +88,9 @@ def batchable(rec: dict) -> bool:
     cls = str(rec.get("policy_class") or "")
     if cls in NEVER_BATCH_CLASSES or cls not in allowed:
         return False                         # an allowlist of (kind, class) pairs, not a keyword guess
+    tool = str((rec.get("payload") or {}).get("tool") or "")
+    if rec.get("kind") == "tainted_action" and tool not in BATCHABLE_TAINTED_TOOLS:
+        return False                         # a taint card batches only for a wiki edit
     if int(rec.get("cost_estimate_mψ") or 0) > 0 or _connector_tool(rec):
         return False                         # money and connector actions are one action at a time
     return source_of(rec) is not None
@@ -130,7 +139,7 @@ def plan(records: List[dict]) -> Dict[str, Any]:
 def sentence(kind: str, count: int) -> str:
     """One plain line for the batch card."""
     if kind == "tainted_action":
-        return "%d actions use details that came from outside content: review them together." % count
+        return "%d wiki edits use details that came from outside content: review them together." % count
     return "%d %s approvals are waiting: review them together." % (count, str(kind).replace("_", " "))
 
 

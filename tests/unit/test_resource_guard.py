@@ -102,8 +102,13 @@ def test_on_a_github_runner_the_guard_neither_caps_nor_refuses(monkeypatch):
 
 
 def test_the_root_conftest_loads_the_guard_for_every_invocation():
-    text = (ROOT / "conftest.py").read_text(encoding="utf-8")
-    assert 'pytest_plugins = ["pytest_resource_guard"]' in text
+    """The root conftest's pytest_plugins names the resource guard (beside any other root plugin, such as the real-root
+    guard): read as Python, so adding a second plugin to the list does not read as dropping this one."""
+    import ast
+    tree = ast.parse((ROOT / "conftest.py").read_text(encoding="utf-8"))
+    plugins = [ast.literal_eval(node.value) for node in tree.body if isinstance(node, ast.Assign)
+               and any(isinstance(t, ast.Name) and t.id == "pytest_plugins" for t in node.targets)]
+    assert plugins and "pytest_resource_guard" in plugins[-1], plugins
 
 
 def test_a_real_run_asking_for_four_workers_gets_two(tmp_path):

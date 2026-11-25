@@ -3068,6 +3068,9 @@ DEFAULT_SETTINGS = {
     # {skill, heading, days ("daily", "fri-sun", "mon,wed"), enabled}. None means the default: events-horizon every
     # day and family-outing Friday to Sunday. A skill that is not installed or approved shows "Didn't run: ...".
     "briefing_sections": None,
+    # Start-screen countdowns the owner hid: countdown id -> epoch seconds when that countdown passes, after which
+    # the entry is dropped (a yearly one comes back next year). Written by the start screen's hide control.
+    "dismissed_countdowns": {},
     # Big mode (hand-cursor.md §2): large targets when hand tracking is on. auto | on | off.
     "big_mode": "auto",
     # Claude Sonnet 5 is the default orchestrator — best cost/quality ratio for
@@ -5359,6 +5362,7 @@ OWN_PAGE_ENDPOINTS = frozenset({
     "core_routes.serve_friday_live",
     "doctor.doctor_page",
     "ledger.ledger_page",
+    "liquid_views.liquid_view_page",   # the desktop's A2UI workspace page (routes/liquid_views.py); same-origin fetch only
     "login",
 })
 

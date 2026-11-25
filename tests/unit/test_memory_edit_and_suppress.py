@@ -478,3 +478,14 @@ def test_a_rule_keeps_at_most_64_words():
     text = " ".join("zq" + chr(97 + i // 26) + chr(97 + i % 26) + "x" for i in range(80))
     rule = ms.add_rule(text)["rule"]
     assert rule and len(rule["words"]) == ms.MAX_WORDS == 64
+
+
+@pytest.fixture(autouse=True)
+def _a_local_reader():
+    """These tests are about whose words may change a line, not about who may see it: the reader is a model KNOWN to be on
+    this PC. An unknown reader is not local, and under a gated posture it is told the lines are withheld (the visibility
+    rule is held by tests/unit/test_core_memory_one_visibility_rule.py)."""
+    from agent_friday.services import agent as _agent
+    tok = _agent._CURRENT_PROVIDER.set("local")
+    yield
+    _agent._CURRENT_PROVIDER.reset(tok)

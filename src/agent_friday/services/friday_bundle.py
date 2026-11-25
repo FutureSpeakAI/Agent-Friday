@@ -666,7 +666,7 @@ def create(out: Path, passphrase: str, *, home: Optional[Path] = None,
                     src = home / Path(*rel.parts)
                     name = "home/" + rel.as_posix()
                     lname = rel.as_posix().lower()
-                    if lname in ("mcp_servers.json", "settings.json", "config.yaml"):
+                    if lname in ("mcp_servers.json", "settings.json", "config.yaml", "security/keystore.json"):
                         try:
                             raw = src.read_bytes()
                         except OSError:
@@ -674,6 +674,15 @@ def create(out: Path, passphrase: str, *, home: Optional[Path] = None,
                             continue
                         if lname == "mcp_servers.json":
                             data, reconnect_mcp = _scrub_mcp(raw)
+                        elif lname == "security/keystore.json":
+                            # a Windows-account wrap cannot be opened on another PC: the bundle (sealed with its own
+                            # passphrase) carries the key in the portable form, and the PC that restores it wraps it
+                            # again at its next start (services/keystore.portable_bytes, migrate_default_wrap)
+                            from agent_friday.services import keystore as _keystore
+                            data = _keystore.portable_bytes(raw)
+                            if data is None:
+                                vanished.append(rel.as_posix())
+                                continue
                         else:
                             data = _scrub_settings(raw, yaml_file=lname.endswith(".yaml"))
                         _add_bytes(tar, name, data, time.time())

@@ -149,3 +149,26 @@ def test_append_hands_back_the_entry_as_the_caller_wrote_it():
     assert e["rec"]["summary"] == "Created " + CANARY and e["rec"]["items"][0]["path"] == CANARY
     assert L.entry_ok(e, L._key()), "the returned entry still hashes as the line that was written"
     assert b"CANARY-31ab" not in _live_bytes()
+
+
+def test_grant_recipients_are_hidden_and_a_lost_sidecar_never_unrevokes_a_grant():
+    # critic's residual on 2ac67421c: send_grants writes recipients (contact addresses) through keyword arguments, which the
+    # literal-dict key guard cannot see; the revocation reader matches grant_id and event only
+    from agent_friday.governance import send_grants
+    addr = "canary-9f2a@example.test"
+    send_grants._log("used", grant_id="g-1", by="friday", action="send", recipients=[addr])
+    send_grants._log("revoked", grant_id="g-1", by="owner")
+    assert b"canary-9f2a" not in _live_bytes()
+    sidecar = L.ledger_dir() / L.TEXTS_NAME
+    if sidecar.exists():
+        sidecar.unlink()
+    L._TEXTS.clear()
+    assert "g-1" in send_grants._revoked_in_log()
+
+
+def test_a_refused_skill_grant_does_not_put_its_addresses_on_the_ledger():
+    # critic on cdf91da9c: send_grants' "refused" row writes seen= and declared= (the same addresses) under other keys
+    from agent_friday.governance import send_grants
+    addr = "canary-4c7d@example.test"
+    send_grants._log("refused", by="owner", skill="weekly-report", seen=[addr], declared=[addr, "other@example.test"])
+    assert b"canary-4c7d" not in _live_bytes() and b"other@example" not in _live_bytes()

@@ -64,7 +64,8 @@ def _receipt(kind: str, dev: dict, rec: dict, **extra) -> None:
     key = device_pairing.approval_key(dev)
     device_pairing._receipt(kind, dev, approval_id=rec.get("approval_id"), card_kind=rec.get("kind"),
                             device_name=dev.get("name"), key_id=key.key_id if key else None,
-                            biometric=bool(key and key.biometric), attested=False, via=tailnet.via(), **extra)
+                            biometric=bool(key and key.biometric), unlock=key.unlock if key else None, attested=False,
+                            via=tailnet.via(), **extra)
 
 
 def _owner_device() -> Optional[Response]:

@@ -131,6 +131,38 @@ def _desk_object(path: str, params: dict, area: str, key: str) -> Tuple[Optional
     return data, None
 
 
+LAST_MAX = 140
+
+
+def _last_message(cid: str) -> Optional[dict]:
+    """The chat's newest message as a short preview (who, a line of words, when), read from the end of the desktop's
+    own store (conversations.last_message: the tail of the file, never the whole transcript); None when it has none or
+    cannot say. A row without it is still a row."""
+    if not ID_PATTERN.match(str(cid or "")):
+        return None
+    try:
+        from agent_friday.services import conversations
+        m = conversations.last_message(cid)
+    except Exception:
+        return None
+    if not isinstance(m, dict):
+        return None
+    text = hide_host_paths(" ".join(str(m.get("text") or "").split())) or ""
+    return {"role": "friday" if m.get("role") == "friday" else ("user" if m.get("role") == "user" else "system"),
+            "text": text[:LAST_MAX], "at": m.get("ts")}
+
+
+def _chat_row(conv: dict, project_names: dict) -> dict:
+    """One row of the device's chat list: the desktop's own summary, plus what a phone list shows and the
+    desktop sidebar reads from elsewhere: the last message and the project's name.
+    Held by test_a_chat_row_carries_its_last_message_and_project_name (tests/unit/test_tv_chats_both_ways.py)."""
+    row = dict(conv)
+    row["last"] = _last_message(conv.get("id"))
+    pid = conv.get("project")
+    row["project_name"] = project_names.get(pid) if pid else None
+    return row
+
+
 def _job_row(task: dict) -> dict:
     return {k: task[k] for k in JOB_FIELDS if k in task}
 
@@ -181,7 +213,9 @@ def register(app: Flask) -> None:
             rows = [c for c in rows if (c.get("last_active_at") or 0) > since]
         limit, offset = _int("limit", CHATS_PAGE, CHATS_PAGE_MAX) or CHATS_PAGE, _int("offset", 0, 1_000_000)
         nxt = offset + limit if offset + limit < len(rows) else None
-        return _page_out({"status": "ok", "conversations": rows[offset:offset + limit], "total": len(rows),
+        names = {p.get("id"): p.get("name") for p in data.get("projects") or [] if isinstance(p, dict)}
+        page = [_chat_row(c, names) for c in rows[offset:offset + limit]]
+        return _page_out({"status": "ok", "conversations": page, "total": len(rows),
                           "offset": offset, "next_offset": nxt, "main_id": data.get("main_id")})
 
     @app.get("/tv/v1/chats/<cid>")
@@ -468,10 +502,20 @@ def _verb_entry(v: dict, block: Optional[dict]) -> dict:
     gate = v.get("gate") or {}
     return {"id": v.get("id"), "label": (v.get("ui") or {}).get("control") or v.get("id"), "group": v.get("group"),
             "gate_class": gate.get("class") or "outward", "card": gate.get("card") or "required",
-            "placed": ws_device.placement(v.get("id"), block)}
+            "placed": ws_device.placement(v.get("id"), block), "args": ws_device.args_of(v.get("id"), block)}
 
 
 def _ws_entry(w: dict) -> dict:
     out = {k: w[k] for k in _WS_FIELDS if k in w}
     out["boundary"] = (w.get("boundary") or {}).get("kind", "native")
+    # which renderer the device uses: "a2ui" only where /view answers (contract draft 3, section 4), so the phone
+    # never opens an A2UI view the PC then refuses. tests/unit/test_tv_ws_view.py:
+    # test_the_workspace_list_marks_the_a2ui_ones, test_the_list_says_a2ui_only_where_the_view_answers
+    from agent_friday.tv_gateway import ws_content
+    try:
+        a2ui = ws_content.view_block(str(w.get("id") or "")) is not None
+    except Exception as e:
+        _log.warning("workspace list: view of %s unreadable: %s", w.get("id"), type(e).__name__)
+        a2ui = False
+    out["renderer"] = "a2ui" if a2ui else "legacy"
     return out

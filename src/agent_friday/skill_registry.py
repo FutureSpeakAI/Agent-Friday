@@ -268,6 +268,21 @@ def send_permissions(skill) -> dict:
     return out
 
 
+_HOST_RE = re.compile(r"^(?=.{4,253}\Z)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,24}\Z")
+
+
+def browse_domains(skill) -> list:
+    """The web domains a skill declares it reads (`permissions: {browse_web: [do512.com, ...]}`), as plain
+    lower-case host names. No wildcard, address, port or path counts; the owner sees this list once, when the
+    skill is approved (governance/send_grants.create_browse_grant)."""
+    out = []
+    for d in (getattr(skill, "permissions", None) or {}).get("browse_web") or []:
+        host = str(d or "").strip().lower()
+        if _HOST_RE.match(host) and host not in out:
+            out.append(host)
+    return sorted(out)
+
+
 def refused_send_permissions(skill) -> list:
     """What a skill declares that can never be pre-approved, each with the
     plain reason ([{"action", "recipient", "why"}]), so Settings can say so

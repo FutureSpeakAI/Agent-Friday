@@ -287,9 +287,38 @@ def _full_message(target: str, items: List[str], need: int) -> str:
             f"Current entries:\n{listing}")
 
 
+#: the visibility error: one wording, returned by every tool that would otherwise say the line is not there
+WITHHELD_ERROR = "withheld from this model; edit it on the desktop or switch to a local model."
+_CITATION = re.compile(r"\s*\[correction(?::\d{4}-\d{2}-\d{2})?\]\s*$")
+
+
+def user_lines_visible(provider=None, model: str = "", origin: str = "") -> bool:
+    """THE rule: may the model reading this turn see the lines about the owner? The prompt builder
+    (model_router.memory_head_blocks) and the memory tools (core_memory_tools) both ask this and nothing else.
+
+    Yes for a reader that is KNOWN to be on this PC (and whose answer stays here: not a phone or channel origin), and for any
+    reader when the owner's vault posture is ungated (privacy/vault_policy.resolve(): vault_local_only False, the owner's own
+    choice). No otherwise, and no when the posture cannot be read: it fails closed."""
+    try:
+        from agent_friday.privacy import vault_policy
+        from agent_friday.privacy.vault_access import LOCAL_PROVIDERS
+        from agent_friday.services.local_only_guard import is_cloud_model_tag
+        from agent_friday.services.library.tools import REMOTE_ORIGINS
+        local = (str(provider or "").strip().lower() in LOCAL_PROVIDERS and not is_cloud_model_tag(model)
+                 and str(origin or "") not in REMOTE_ORIGINS)
+        if local:
+            return True
+        return not vault_policy.resolve(announce=False).local_only
+    except Exception:
+        return False
+
+
 def _match(items: List[str], old: str):
-    """(index, None) for the one entry `old` identifies, or (None, error)."""
-    o = _clean(old).lower()
+    """(index, None) for the one entry `old` identifies, or (None, error).
+
+    The card shows a corrected line with a trailing "[correction:DATE]" that the file does not hold; `old` copied from the
+    card carries it, so it is dropped before matching."""
+    o = _clean(_CITATION.sub("", str(old or ""))).lower()
     if not o:
         return None, "say which entry: pass part of its text as old"
     exact = [i for i, e in enumerate(items) if e.lower() == o]
