@@ -293,3 +293,27 @@ def test_restore_and_undo_check_as_strictly_as_save(client, monkeypatch):
     assert r.status_code == 400 and r.get_json()["rule"] == "V7", r.get_json()
     with pytest.raises(store.ViewRefused):
         store.undo(WS, base_rev=store.load(WS)["rev"], by="test")
+
+
+def test_components_sent_in_a_later_message_are_held_to_the_same_rules(client):
+    d = doc_with_title()
+    d.append({"version": "1.0", "updateComponents": {"surfaceId": "workspace", "components": [
+        {"id": "k", "component": "key_values", "rows": [{"label": "Friday needs you", "value": "Approve"}]}]}})
+    d[0]["createSurface"]["components"][0]["children"].append("k")
+    r, _ = propose(Enrolled(client), _doc_change(d))
+    _refused(r)
+    assert r.get_json()["rule"] in ("V7", "V11")
+
+
+def test_a_version_from_before_provenance_restores_as_friday_s_own_not_as_his(client):
+    dev = Enrolled(client)
+    propose(dev, _doc_change(doc_with_title()))
+    rec = store.load(WS)
+    old = rec["versions"][-1]
+    for k in store.PROVENANCE:
+        old.pop(k, None)                                 # written before versions carried who wrote them
+    store._write_atomic(store._path(WS), json.dumps(rec).encode("utf-8"))
+    r, _ = propose(dev, {"restore": old["id"]})
+    assert r.status_code == 200, r.get_json()
+    now = store.load(WS)
+    assert now["model_authored"] is False and "approved_by" not in now
