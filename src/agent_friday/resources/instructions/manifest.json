@@ -44,9 +44,9 @@
       "title": "Connectors",
       "slot": "always_on",
       "order": 4,
-      "version": 1,
-      "sha256": "8ac655be45d36880dff8f8d862f54192e6fdcf92100412058f7e23afda31d633",
-      "chars": 729,
+      "version": 2,
+      "sha256": "87bd27ddf3bd9c79ecf1123646f735ad84d833bcc2b1e6eb380da496a758fb51",
+      "chars": 815,
       "locked": false,
       "owner": "shipped"
     },
@@ -123,7 +123,7 @@
       "owner": "shipped"
     }
   ],
-  "core_sha256": "df22ad66550b1b0534f567aba20e1feb2ad2efc278812f52a279737f60467761",
+  "core_sha256": "aa07e8c86b27ecc4c7f9c8f085adb287ef416a682cb72594d83384be5b2ece14",
   "policies": [
     {
       "id": "policy/action_permission",
