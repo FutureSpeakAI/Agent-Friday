@@ -104,8 +104,8 @@ RIGHT_NOTES = {
     "tv_brain": "have me propose actions on the device, which it still asks about on its own screen",
     "studio": "start Studio jobs on this PC's paid providers, outside the daily spend stop, each showing its cost first",
     "tv_channels": "share its channels with this PC",
-    "pc_read": ("read your chats, workspaces, jobs, media and approval cards on this PC, and take app "
-                "updates from it"),
+    "pc_read": ("read your chats, projects, workspaces, jobs, media and approval cards on this PC, and take "
+                "app updates from it"),
     "pc_act": ("start, stop, resume or re-run jobs on this PC, and change media, wiki pages and your own "
                "workspaces"),
     "pc_approve": ("approve most of my requests, one at a time, signed on the unlocked device (some are "
