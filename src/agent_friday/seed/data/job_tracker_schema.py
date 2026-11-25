@@ -252,6 +252,12 @@ class JobTracker:
             self._save_unlocked()
             return listing
 
+    def job_id_for(self, dedup_key: str) -> Optional[str]:
+        """The id of the job this tracker holds for dedup_key, or None."""
+        if not self._loaded:
+            self.load()
+        return self._dedup_index.get(dedup_key) if dedup_key else None
+
     def get_job(self, job_id: str) -> Optional[JobListing]:
         if not self._loaded:
             self.load()
