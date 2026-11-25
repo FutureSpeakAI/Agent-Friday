@@ -41,7 +41,9 @@ OLD_CONSTANT_SHA256 = "6c4f77dbf77812667d1d3d7dd9f5e9487ebeae142e76c5f107832d6a1
 #: 85_task_delegation v2 (2026-10-20): "Started — track it in the task tray
 #: (bottom-right)." became "Started — follow it on its task card in System."
 #: because there is no task tray any more; a task's controls are on its card.
-SHIPPED_CORE_SHA256 = "df22ad66550b1b0534f567aba20e1feb2ad2efc278812f52a279737f60467761"
+#: 40_connectors v2 (2026-11-22): "These may not be CONNECTED yet on this machine" became "Whether Google is CONNECTED
+#: on this machine is in CAPABILITY STATE, read live": a briefing repeated the old sentence while both accounts worked.
+SHIPPED_CORE_SHA256 = "aa07e8c86b27ecc4c7f9c8f085adb287ef416a682cb72594d83384be5b2ece14"
 
 UNLOCKED = "50_say_before_acting"
 LOCKED = "20_autonomous_operation"

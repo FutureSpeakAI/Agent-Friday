@@ -265,6 +265,26 @@ def dedup_key(listing: JobListing, strategies: Sequence[str]) -> str:
 Fetcher = Callable[[str], List[Dict[str, Any]]]
 
 
+def _sighting(listing: JobListing, tracker_job_id: Optional[str]) -> Dict[str, Any]:
+    """The job store's view of one sighting, carrying the id the tracker holds for it so Prepare finds the job."""
+    return {"job_id": tracker_job_id, "title": listing.title, "company": listing.company,
+            "location": listing.location, "remote": listing.remote, "source": listing.source,
+            "external_id": listing.external_id, "url": listing.source_url, "posted_at": listing.posted_at,
+            "closes_at": listing.raw.get("closes_at"), "score": listing.relevance_score}
+
+
+def _record_sightings(sightings: List[Dict[str, Any]]) -> None:
+    """Tell the job store these postings were seen now, so the Career panel can tell what is open and recent from
+    what has gone. A failure is logged and never stops the scan."""
+    if not sightings:
+        return
+    try:
+        from agent_friday.services import job_store
+        job_store.upsert_many(sightings, datetime.now())
+    except Exception:
+        log.exception("could not record sightings in the job store")
+
+
 def default_fetcher(url: str) -> List[Dict[str, Any]]:
     """
     Default fetch — returns an empty list and logs the URL.
@@ -402,6 +422,7 @@ def scan(*, config: Optional[Dict[str, Any]] = None,
     sent_today = _priority_sent_today()
 
     new_priority: List[Dict[str, Any]] = []
+    sightings: List[Dict[str, Any]] = []
 
     for raw in raw_results:
         try:
@@ -413,6 +434,8 @@ def scan(*, config: Optional[Dict[str, Any]] = None,
                                         if k.lower() in (listing.title or "").lower()]
             listing.dedup_key = dedup_key(listing, dedup_keys)
             inserted = tracker.add_job(listing)
+            tracker_job_id = inserted.job_id if inserted else tracker.job_id_for(listing.dedup_key)
+            sightings.append(_sighting(listing, tracker_job_id))
             if inserted is None:
                 result["deduped"] += 1
                 continue
@@ -429,6 +452,7 @@ def scan(*, config: Optional[Dict[str, Any]] = None,
             log.exception("error processing raw posting")
             result["errors"].append(f"process error: {e}")
 
+    _record_sightings(sightings)
     result["notifications_sent"] = len(new_priority)
     _bump_priority_counter(len(new_priority))
     result["duration_ms"] = int((time.monotonic() - started) * 1000)
