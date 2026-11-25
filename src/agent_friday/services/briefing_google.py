@@ -62,17 +62,20 @@ def sentence(service: str, current: str) -> str:
 
 
 def recover(service: str) -> Tuple[Optional[List[Dict[str, Any]]], str]:
-    """After the legacy fetch failed: ``(items, "")`` from the connected accounts when they answer, else
-    ``(None, sentence)`` for the live state. ``items`` use the briefing builders' own keys."""
+    """After the legacy fetch failed: ``(items, "")`` from the connected accounts when they answer (``[]`` when
+    they were read without error and hold nothing), else ``(None, sentence)`` for the live state. ``items`` use the
+    briefing builders' own keys."""
     current = state(service)
     if current == CONNECTED:
         try:
             from agent_friday.services import google_accounts
             if service == "calendar":
-                items = google_accounts.merged_calendar(2).get("events") or []
+                result = google_accounts.merged_calendar(2)
+                items = result.get("events") or []
             else:
-                items = google_accounts.merged_gmail(12).get("messages") or []
-            if items:
+                result = google_accounts.merged_gmail(12)
+                items = result.get("messages") or []
+            if items or (result.get("accounts") and not result.get("errors")):
                 return items, ""
         except Exception:
             pass
