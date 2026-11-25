@@ -87,12 +87,25 @@ def test_the_states_and_their_sentences(google):
 
 
 def test_connected_but_unreadable_says_so_and_never_says_not_connected(google, monkeypatch):
-    monkeypatch.setattr(google_accounts, "merged_calendar", lambda days=2: {"events": []})
+    failed = [{"account_id": "a1", "label": "Work", "error": "HttpError 503"}]
+    monkeypatch.setattr(google_accounts, "merged_calendar",
+                        lambda days=2: {"accounts": [{"id": "a1"}], "events": [], "errors": failed})
     items, note = bg.recover("calendar")
     assert items is None and "connected but could not be read" in note
     text = news_engine._gather_live_briefing_context()
     assert "Google Calendar is connected but could not be read just now." in text
     assert "Google Calendar is not connected" not in text
+
+
+def test_a_connected_account_read_with_nothing_in_it_is_an_empty_day_not_a_failed_read(google, monkeypatch):
+    """Read fine and empty is "nothing today", never "could not be read"."""
+    read = {"accounts": [{"id": "a1"}], "errors": []}
+    monkeypatch.setattr(google_accounts, "merged_calendar", lambda days=2: dict(read, events=[]))
+    monkeypatch.setattr(google_accounts, "merged_gmail", lambda *a, **k: dict(read, messages=[]))
+    assert bg.recover("calendar") == ([], "") and bg.recover("gmail") == ([], "")
+    text = news_engine._gather_live_briefing_context()
+    assert "could not be read" not in text
+    assert "No events scheduled" in text and "No email in the last 24 hours." in text
 
 
 def test_when_google_really_is_not_connected_the_briefing_says_so(google):
