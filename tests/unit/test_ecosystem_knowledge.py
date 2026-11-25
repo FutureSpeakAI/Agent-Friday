@@ -421,11 +421,14 @@ def test_the_served_check_tells_a_surface_this_pc_has_from_one_it_lacks():
 
 
 @pytest.mark.parametrize("app_id", ("phone", "tablet"))
-def test_the_phone_and_tablet_are_said_to_open_chats_workspaces_and_a_widget(app_id):
+def test_the_phone_and_tablet_are_said_to_open_chats_projects_workspaces_and_a_widget(app_id):
+    """The projects claim rests on /tv/v1/projects, which the phone's chats sheet reads for the project list and
+    one project's chats and files (friday-phone chats/PcProjects, ChatsSheet) and which the gateway read-guards."""
     caps = {c.id: c for c in eco.app(app_id).capabilities}
-    assert {caps[i].status for i in ("chats", "workspaces", "widget")} == {"shipped"}
+    assert {caps[i].status for i in ("chats", "projects", "workspaces", "widget")} == {"shipped"}
     overview = eco.info(app_id)
     assert "open the chats you have had with me on this PC" in overview
+    assert "open your projects from this PC" in overview
     assert "open workspaces from this PC" in overview and "home-screen widget" in overview
     # A live call in the PC's voice is asked for by no installed build, so it is not said as working.
     assert not eco.app(app_id).facts.holds("route:gateway/voice")
@@ -456,8 +459,9 @@ READ_SAID = re.compile(r"allow(?: it|ed) to read this PC")
 #: Read-guarded surfaces an app asks for that no sentence in the file talks about. A new one fails
 #: test_every_read_guarded_surface_an_app_uses_is_claimed_with_the_press_or_listed until it is decided.
 UNCLAIMED_READS = {"jobs", "media", "orbs", "evolution", "connectors", "providers", "graph", "events"}
-NEEDS_ROUTE = {"chats": "route:gateway/chats", "workspaces": "route:gateway/workspaces",
-               "approve": "route:gateway/approvals", "pc_update": "route:gateway/phone"}
+NEEDS_ROUTE = {"chats": "route:gateway/chats", "projects": "route:gateway/projects",
+               "workspaces": "route:gateway/workspaces", "approve": "route:gateway/approvals",
+               "pc_update": "route:gateway/phone"}
 
 
 def _shipped_claims(raw):
@@ -472,7 +476,7 @@ def _shipped_claims(raw):
 
 def test_the_read_guarded_surfaces_are_found_from_the_gateways_own_code():
     guarded = _read_guarded_surfaces()
-    assert {"chats", "workspaces", "approvals", "phone", "jobs"} <= guarded
+    assert {"chats", "projects", "workspaces", "approvals", "phone", "jobs"} <= guarded
     assert not guarded & {"messages", "pair", "hello", "inherit", "session"}
 
 
@@ -514,9 +518,9 @@ def test_every_read_guarded_surface_an_app_uses_is_claimed_with_the_press_or_lis
 def test_the_lines_about_what_a_device_adds_carry_the_same_condition():
     for app_id in ("phone", "tablet"):
         for line in eco.app(app_id).adds:
-            if re.search(r"chats|workspaces|approve", line):
+            if re.search(r"chats|projects|workspaces|approve", line):
                 assert READ_SAID.search(line), line
-    assert "read your chats, workspaces, jobs, media and approval cards on this PC" in eco.RIGHT_NOTES["pc_read"]
+    assert "read your chats, projects, workspaces, jobs, media and approval cards on this PC" in eco.RIGHT_NOTES["pc_read"]
 
 
 def test_the_watch_chat_list_is_said_to_wait_on_the_phones_read_press():
