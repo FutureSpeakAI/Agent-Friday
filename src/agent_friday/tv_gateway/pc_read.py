@@ -267,6 +267,12 @@ def register(app: Flask) -> None:
             reg_all = reg.registry()
             held = {w["id"] for w in reg.all_workspaces() if reg.is_held(w)}
             shown = [_ws_entry(w) for w in reg.all_workspaces() if w["id"] not in held]
+            if request.args.get("live") == "1":            # asked for only: a widget reading the plain list gets none
+                from agent_friday.tv_gateway import ws_summary
+                said = ws_summary.lines(str(row.get("id") or "") for row in shown)
+                for row in shown:
+                    if row.get("id") in said:
+                        row["live"] = said[row["id"]]
             return jsonify({"ok": True, "as_of": int(time.time()), "groups": reg_all.get("groups") or [],
                             "workspaces": shown, "count": len(shown)})
         except Exception as e:
