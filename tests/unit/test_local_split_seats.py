@@ -50,6 +50,7 @@ def _arb(live, seats, lease=None):
     arb.records = []
     arb._record = lambda *a: arb.records.append(a)
     arb.gpu_not_ours = lambda: None
+    arb._gpu_embedder = lambda: None
     arb._build_hours_active = lambda: False
     arb.loaded = []
 
@@ -78,3 +79,21 @@ def test_reseat_leaves_the_card_alone_when_it_is_not_fridays():
     arb.gpu_not_ours = lambda: "Friday is stood down"
     out = arb.reseat_to_plan("split on")
     assert arb.llama.evicted == [] and not out["ok"]
+
+
+def test_reseat_keeps_the_gpu_embedder():
+    arb = _arb({"bonsai2:27b", "embeddinggemma:300m"},
+               {"sidekick": {"model_id": ls.QUICK_MODEL, "status": "pinned", "device": "gpu"}})
+    arb._gpu_embedder = lambda: {"model_id": "embeddinggemma:300m", "device": "gpu"}
+    arb.reseat_to_plan("split on")
+    assert "embeddinggemma:300m" in arb.llama.procs and arb.llama.evicted == ["bonsai2:27b"]
+
+
+def test_reseat_reports_a_failed_load_instead_of_raising():
+    arb = _arb({"bonsai2:27b"}, {"sidekick": {"model_id": ls.QUICK_MODEL, "status": "pinned", "device": "gpu"}})
+
+    def boom(seat, role):
+        raise RuntimeError("out of memory")
+    arb._load_pinned = boom
+    out = arb.reseat_to_plan("split on")
+    assert out["ok"] is False and "did not load" in out["error"]

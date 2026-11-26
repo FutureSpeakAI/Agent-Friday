@@ -104,20 +104,17 @@ def test_quick_seat_down_routes_as_usual(world):
     assert _route("open spotify", turn_shape=QUICK) is None
 
 
-def test_prepare_turn_waits_and_says_so(world):
+def test_prepare_turn_loads_bonsai_silently(world):
     route = _route("my vault", vault_access=True)
-    notes = []
-    out = ls.prepare_turn(route, ensure=lambda narrate: (narrate(ls.WAIT_NOTE), {"ok": True, "waited_s": 38.0})[1],
-                          narrate=notes.append)
-    assert notes == [ls.WAIT_NOTE]
-    assert out["model"] == ls.PRIVATE_MODEL and not out.get("refuse")
+    out = ls.prepare_turn(route, ensure=lambda: {"ok": True, "waited_s": 38.0})
+    assert out["model"] == ls.PRIVATE_MODEL and not out.get("refuse") and not out.get("warning")
     assert out["private_seat_wait_s"] == 38.0
+    assert not hasattr(ls, "WAIT_NOTE")          # no "please wait" text exists to show
 
 
 def test_failed_load_is_a_local_refusal_never_cloud(world):
     route = _route("my vault", mode="cloud_only", vault_access=True)
-    out = ls.prepare_turn(route, ensure=lambda narrate: {"ok": False, "error": "Waited 240 s for the lease"},
-                          narrate=lambda n: None)
+    out = ls.prepare_turn(route, ensure=lambda: {"ok": False, "error": "Waited 300 s for the lease"})
     assert out["refuse"] is True
     assert out["provider"] == "local" and out["model"] == ls.PRIVATE_MODEL
     assert not out.get("offer_cloud_switch") and not out.get("local_unavailable")
@@ -149,17 +146,16 @@ def test_ensure_renews_a_held_private_lease(world):
     assert arb.calls == [("renew", "private_turn", ls.PRIVATE_IDLE_S)]
 
 
-def test_ensure_grants_and_narrates(world, monkeypatch):
+def test_ensure_grants_silently(world, monkeypatch):
     arb = _Arb(grant={"ok": True})
-    seen = []
 
     def grant(kind, **kw):
         world["serving"] = {ls.PRIVATE_MODEL}
         arb.calls.append(("grant", kind, kw))
         return {"ok": True}
     arb.grant = grant
-    out = ls.ensure_private_seat(seen.append, arbiter=arb)
-    assert out["ok"] and seen == [ls.WAIT_NOTE]
+    out = ls.ensure_private_seat(arbiter=arb)
+    assert out["ok"]
     assert arb.calls[0][0:2] == ("grant", "private_turn")
     assert arb.calls[0][2]["role"] == ls.PRIVATE_MODEL
 
@@ -193,3 +189,154 @@ def test_router_decide_unchanged_when_off(world, monkeypatch):
     out = r.route([{"role": "user", "content": "open spotify"}],
                   task_context={"has_tools": True, "turn_shape": QUICK})
     assert out.get("local_split") is None
+
+
+# ── a conversation that went private stays on Bonsai ──
+
+def test_rest_of_a_private_conversation_stays_on_bonsai(world):
+    ls._PRIVATE_CONVS.clear()
+    assert _route("read my vault note", vault_access=True, conversation_id="c1")["local_split"] == "private"
+    r = _route("open spotify", turn_shape=QUICK, conversation_id="c1")
+    assert r["model"] == ls.PRIVATE_MODEL and r["local_split"] == "private_conversation" and r["vault_access"]
+    # another conversation is not affected
+    assert _route("open spotify", turn_shape=QUICK, conversation_id="c2")["model"] == ls.QUICK_MODEL
+
+
+def test_private_conversation_idles_out(world, monkeypatch):
+    ls._PRIVATE_CONVS.clear()
+    ls.note_private("c3")
+    ls._PRIVATE_CONVS["c3"] -= ls.PRIVATE_IDLE_S + 1
+    assert not ls.in_private_conversation("c3")
+
+
+def test_private_conversation_turn_also_loads_bonsai(world):
+    route = {"provider": "local", "model": ls.PRIVATE_MODEL, "local_split": "private_conversation"}
+    called = []
+    ls.prepare_turn(route, ensure=lambda: (called.append(1), {"ok": True, "waited_s": 0})[1])
+    assert called == [1]
+
+
+# ── Laya on the draft (typing, or a partial voice transcript) ──
+
+class _DraftArb:
+    def __init__(self):
+        self.lease, self.calls = None, []
+
+    def grant(self, kind, **kw):
+        self.calls.append(("grant", kind))
+        self.lease = {"kind": kind}
+        return {"ok": True}
+
+    def renew(self, kind, ttl):
+        self.calls.append(("renew", kind))
+        return {"ok": True}
+
+    def release(self, kind=None):
+        self.calls.append(("release", kind))
+        self.lease = None
+        return {"ok": True}
+
+
+@pytest.fixture
+def draft(world, monkeypatch):
+    ls._PRIVATE_CONVS.clear()
+    ls._DRAFT_LAST.clear()
+    ls._PREWARM.__init__()
+    monkeypatch.setattr(ls, "DRAFT_MIN_INTERVAL_S", 0.0)
+    monkeypatch.setattr(ls, "_settings", lambda s=None: ON if s is None else s)
+    world["serving"] = {ls.QUICK_MODEL}
+    return _DraftArb()
+
+
+def _wait_prewarm():
+    t = ls._PREWARM.thread
+    if t is not None:
+        t.join(5)
+
+
+def test_private_draft_prewarms_bonsai(draft):
+    out = ls.observe_draft("what's my passport number in the vault", "c9", arbiter=draft)
+    _wait_prewarm()
+    assert out["prep"] == "prewarm_bonsai" and ("grant", "private_turn") in draft.calls
+
+
+def test_quick_draft_keeps_fridayweaver(draft):
+    out = ls.observe_draft("open the weather app please", "c9", arbiter=draft)
+    assert out["prep"] == "keep" and draft.calls == []
+
+
+def test_draft_that_turns_away_cancels_the_prewarm(draft, monkeypatch):
+    ls.observe_draft("what's my passport number in the vault", "c9", arbiter=draft)
+    _wait_prewarm()
+    monkeypatch.setattr(ls, "DRAFT_CANCEL_AFTER_S", 0.0)
+    out = ls.observe_draft("actually, open the weather app", "c9", arbiter=draft)
+    assert out["prep"] == "cancelled_prewarm"
+    assert draft.calls[-1] == ("release", "private_turn")
+
+
+def test_cancel_never_drops_bonsai_once_a_private_turn_used_it(draft, monkeypatch):
+    ls.observe_draft("what's my passport number in the vault", "c9", arbiter=draft)
+    _wait_prewarm()
+    ls._PREWARM.mark_used()                       # the owner sent it; the turn is on Bonsai now
+    monkeypatch.setattr(ls, "DRAFT_CANCEL_AFTER_S", 0.0)
+    ls.observe_draft("thanks, now open the weather app", "c9", arbiter=draft)
+    assert ("release", "private_turn") not in draft.calls
+
+
+def test_draft_does_nothing_when_split_is_off(world, monkeypatch):
+    monkeypatch.setattr(ls, "_settings", lambda s=None: {} if s is None else s)
+    assert ls.observe_draft("what's my passport number in the vault", "c9")["prep"] == "none"
+
+
+def test_draft_text_is_never_logged(draft, caplog, capsys):
+    import logging
+    caplog.set_level(logging.DEBUG)
+    secret = "my passport number is X1234567 in the vault"
+    ls.observe_draft(secret, "c9", arbiter=draft)
+    _wait_prewarm()
+    out = capsys.readouterr()
+    assert "X1234567" not in caplog.text and "X1234567" not in out.out and "X1234567" not in out.err
+    assert "X1234567" not in repr(ls.draft_stats()) and "X1234567" not in repr(ls._PREWARM.__dict__)
+
+
+def test_draft_check_is_fast(draft):
+    for i in range(20):
+        ls.observe_draft("open the weather app number %d" % i, "c%d" % i, arbiter=draft)
+    st = ls.draft_stats()
+    assert st["checks"] >= 20 and st["check_ms_p95"] < 50
+
+
+def test_draft_endpoint_never_echoes_text(draft, monkeypatch):
+    from flask import Flask
+    from agent_friday.routes import residency as rr
+    app = Flask(__name__)
+    app.secret_key = "test"
+    app.register_blueprint(rr.residency_bp)
+    monkeypatch.setattr(ls, "_arbiter", lambda a=None: draft)
+    r = app.test_client().post("/api/split/draft", json={"text": "my passport X7654321 in the vault",
+                                                         "conversation_id": "c5"})
+    _wait_prewarm()
+    assert r.status_code == 200 and "X7654321" not in r.get_data(as_text=True)
+    assert r.get_json()["prep"] in ("prewarm_bonsai", "bonsai_ready_or_loading")
+
+
+def test_async_observer_keeps_only_the_newest_draft(draft, monkeypatch):
+    seen = []
+    monkeypatch.setattr(ls, "observe_draft", lambda t, c=None, **k: seen.append(t))
+    for i in range(50):
+        ls.observe_draft_async("draft %d" % i, "c6")
+    t = ls._ASYNC["thread"]
+    if t is not None:
+        t.join(5)
+    assert seen and seen[-1] == "draft 49" and len(seen) < 50
+
+
+def test_background_work_is_not_split(world):
+    assert _route("read my vault note", vault_access=True, is_background_task=True) is None
+    assert _route("open spotify", turn_shape=QUICK, scheduled=True) is None
+
+
+def test_a_local_voice_call_lease_fails_fast_not_minutes(world):
+    arb = _Arb(lease={"kind": "voice_call"})
+    out = ls.ensure_private_seat(arbiter=arb)
+    assert not out["ok"] and arb.calls == []

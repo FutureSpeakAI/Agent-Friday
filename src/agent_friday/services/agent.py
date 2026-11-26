@@ -388,7 +388,8 @@ def _generate_agent_untraced(messages, system=None, model=None, max_tokens=16384
     # here or is refused locally; never a cloud route. No-op otherwise.
     try:
         from agent_friday.services import local_split as _lsplit
-        route = _lsplit.prepare_turn(route)
+        if not (session_ctx or {}).get('pin_to_seat'):   # a pinned voice turn keeps its own local seat
+            route = _lsplit.prepare_turn(route)
         routed_model = route.get('model') or routed_model
     except Exception as _lse:
         if route.get('local_split') == 'private':

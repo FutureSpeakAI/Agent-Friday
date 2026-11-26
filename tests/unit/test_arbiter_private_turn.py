@@ -60,6 +60,12 @@ def _arbiter(monkeypatch, load_raises=False):
     arb._load_leased = load_leased
     arb.restored = []
     arb._rollback = lambda: arb.records.append(("rollback",))
+    arb.sidekick_loads = []
+
+    def load_pinned(seat, role):
+        arb.sidekick_loads.append((seat["model_id"], role))
+        arb.llama.procs[seat["model_id"]] = ("proc", 8090)
+    arb._load_pinned = load_pinned
     monkeypatch.setattr(ra.Arbiter, "_build_hours_active", staticmethod(lambda: False))
     from agent_friday.services import hardware_profile, machine_monitor
     monkeypatch.setattr(hardware_profile, "vram_headroom",
@@ -85,11 +91,31 @@ def test_private_turn_needs_a_model(monkeypatch):
     assert arb.llama.evicted == []
 
 
-def test_a_failed_bonsai_load_rolls_back(monkeypatch):
+def test_a_failed_bonsai_load_rolls_back_and_fridayweaver_returns(monkeypatch):
     arb = _arbiter(monkeypatch, load_raises=True)
     got = arb._grant_now("private_turn", role=BONSAI, ttl_s=600)
     assert not got["ok"] and got.get("rolled_back")
     assert ("rollback",) in arb.records
+    assert FW2 in arb.llama.procs and (FW2, "sidekick") in arb.sidekick_loads
+
+
+def test_release_evicts_bonsai_and_brings_fridayweaver_back(monkeypatch):
+    arb = _arbiter(monkeypatch)
+    monkeypatch.setattr(ra, "_restore_sleep", lambda s: None, raising=False)
+    assert arb._grant_now("private_turn", role=BONSAI, ttl_s=600)["ok"]
+    out = arb.release("private_turn")
+    assert out["ok"], out
+    assert BONSAI not in arb.llama.procs and FW2 in arb.llama.procs
+    assert arb.lease is None
+
+
+def test_expiry_releases_the_private_lease(monkeypatch):
+    arb = _arbiter(monkeypatch)
+    monkeypatch.setattr(ra, "_restore_sleep", lambda s: None, raising=False)
+    arb._grant_now("private_turn", role=BONSAI, ttl_s=600)
+    arb.lease["expires_at"] = 0
+    arb.expire_if_due()
+    assert arb.lease is None and FW2 in arb.llama.procs and BONSAI not in arb.llama.procs
 
 
 def test_private_turn_renews_while_the_conversation_continues(monkeypatch):

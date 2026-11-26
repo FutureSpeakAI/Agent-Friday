@@ -16045,6 +16045,26 @@ function FridayOffRecordConfirmHost() {
           E('button', { ref: cancelRef, type: 'button', className: 'sc-btn quiet', onClick: cancel }, FRIDAY_OFF_RECORD_CONFIRM_CANCEL),
           E('button', { ref: goRef, type: 'button', className: 'sc-btn', disabled: !d, onClick: () => finish(true) }, FRIDAY_OFF_RECORD_CONFIRM_GO)))));
 }
+// Laya on the draft (services/local_split.observe_draft; Dispatch 2026-11-26). Only while the owner's quick/private
+// split is on: ~300 ms after typing pauses, the draft goes to THIS PC's own server, which classifies it in memory
+// for reversible prep (pre-load Bonsai, or cancel that) and keeps nothing. Fire-and-forget: never awaited, never on
+// the keystroke path, so typing cannot lag. The route itself is decided on send.
+const _fridayDraftState = { t: null, last: '' };
+function fridayLayaDraft(text) {
+  try {
+    if (!window.__FRIDAY_SPLIT_ON) return;
+    if (_fridayDraftState.t) clearTimeout(_fridayDraftState.t);
+    _fridayDraftState.t = setTimeout(() => {
+      _fridayDraftState.t = null;
+      const v = String(text || '');
+      if (v === _fridayDraftState.last || v.trim().length < 8) return;
+      _fridayDraftState.last = v;
+      const cid = (window.__fridayConvId && window.__fridayConvId()) || '';
+      apiFetch('/api/split/draft', { method: 'POST', keepalive: true, headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text: v, conversation_id: cid, source: 'typing' }) }).catch(() => {});
+    }, 300);
+  } catch (_) {}
+}
 function FridayChatInput({ value, onChange, onSend, placeholder, disabled, inputRef, className, style, maxHeight, autoFocus }) {
   const offRecord = useFridayOffRecord();
   if (offRecord) placeholder = FRIDAY_OFF_RECORD_TEXT;
@@ -16070,6 +16090,7 @@ function FridayChatInput({ value, onChange, onSend, placeholder, disabled, input
     "data-off-record": offRecord ? "true" : undefined,
     onChange: e => {
       onChange(e.target.value);
+      fridayLayaDraft(e.target.value);
       // The user typing to Friday: the avatar's data-in wave.
       try {
         window.fridayAvatar && window.fridayAvatar.typed();
@@ -71444,6 +71465,11 @@ function App() {
       }));
     }).catch(() => {});
   }, []);
+  // The quick/private split's draft check runs only while the owner has it on (fridayLayaDraft).
+  useEffect(() => {
+    window.__FRIDAY_SPLIT_ON = agentSettings.local_turn_split === 'fridayweaver_quick_bonsai_private';
+    window.__fridayConvId = () => (typeof convIdRef !== 'undefined' && convIdRef && convIdRef.current) || '';
+  }, [agentSettings.local_turn_split]);
   const saveAgentSettings = async (patch, opts = {}) => {
     const prev = agentSettings;
     const next = {

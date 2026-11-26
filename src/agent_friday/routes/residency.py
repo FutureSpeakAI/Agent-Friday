@@ -440,3 +440,27 @@ def residency_release_for_quit():
     reason = str(body.get("reason") or "user_quit")[:64]
     return jsonify({"status": "ok",
                     "release": ra.release_for_quit(reason, planned=planned)})
+
+
+@residency_bp.route("/api/split/draft", methods=["POST"])
+@login_required
+def split_draft():
+    """Laya on a draft for the owner's quick/private split (services/local_split.observe_draft): reversible prep only
+    (pre-load Bonsai for a draft that reads as private, cancel that when it turns away). The text is classified in
+    memory and dropped; it is not logged, stored or sent anywhere, and the reply never repeats it."""
+    from agent_friday.services import local_split
+    data = request.get_json(silent=True) or {}
+    try:
+        out = local_split.observe_draft(str(data.get("text") or "")[:4000], data.get("conversation_id") or None,
+                                        source=str(data.get("source") or "typing"))
+    except Exception:
+        out = {"ok": False, "prep": "none"}
+    return jsonify({"status": "ok", **{k: v for k, v in out.items() if k in ("ok", "prep", "ms", "why")}})
+
+
+@residency_bp.route("/api/split/draft/stats", methods=["GET"])
+@login_required
+def split_draft_stats():
+    """Counts and timings of the draft checks (no text)."""
+    from agent_friday.services import local_split
+    return jsonify({"status": "ok", **local_split.draft_stats()})

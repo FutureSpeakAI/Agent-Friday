@@ -4626,6 +4626,13 @@ if sock is not None:
             def _speculate(partial_text):
                 # Stable partial transcript -> the front's cache, before the
                 # endpoint (local voice spec §4.2 recovery lever).
+                # The owner's quick/private split: Laya's reversible prep on
+                # the partial (services/local_split; off the voice thread).
+                try:
+                    from agent_friday.services import local_split as _lsplit
+                    _lsplit.observe_draft_async(partial_text, _open_cid[0], source="voice")
+                except Exception:
+                    pass
                 if not _front:
                     return
                 if _front.get("speaker"):
@@ -6456,6 +6463,11 @@ if sock is not None:
                                                 _safe_send({"type": "input_transcript", "text": in_tr.text})
                                                 _user_words_ts[0] = _time.time()
                                                 _live_laya.for_call(_voice_session).on_input(in_tr.text)
+                                                try:   # the owner's split: reversible prep on the partial
+                                                    from agent_friday.services import local_split as _lsplit
+                                                    _lsplit.observe_draft_async(''.join(in_buf)[-600:], None, source="voice")
+                                                except Exception:
+                                                    pass
                                                 _turn_timed[0] = False
                                             mt = getattr(sc, 'model_turn', None)
                                             if mt and getattr(mt, 'parts', None):
