@@ -163,3 +163,11 @@ def test_routes_install_status_uninstall(store):
                   json={"model_id": "gemma4:e2b-fridayweaver-2.0-r1"}).status_code == 200
     bad = c.post("/api/models/adapter-seats/install", json={"model_id": "nope", "source": str(store["src"])})
     assert bad.status_code == 400
+
+
+def test_network_source_refused_and_hash_not_echoed(store):
+    out = ads.install("gemma4:e2b-fridayweaver-2.0-r1", SHARE + r"\fw2.gguf")
+    assert not out["ok"] and "this computer" in out["error"]
+    store["src"].write_bytes(b"not it")
+    out = ads.install("gemma4:e2b-fridayweaver-2.0-r1", store["src"])
+    assert not out["ok"] and __import__("hashlib").sha256(b"not it").hexdigest() not in out["error"]

@@ -51,11 +51,15 @@ def install(model_id: str, source) -> dict:
         return {"ok": True, "already": True, "entry": have}
 
     src = Path(source) if source else dest
+    # A local file only: a network path would be probed (and could stall, or authenticate to another host) before
+    # the hash could refuse it.
+    if str(src).startswith(("\\\\", "//")):
+        return {"ok": False, "error": "the adapter must be a file on this computer"}
     if not src.exists():
         return {"ok": False, "error": "no adapter file at %s" % src}
-    got = ms.sha256_of(src)
-    if got != entry["sha256"]:
-        return {"ok": False, "error": "sha256 mismatch: %s is %s, the pinned file is %s" % (src, got, entry["sha256"])}
+    if ms.sha256_of(src) != entry["sha256"]:
+        # The file's own hash is not echoed: the route must not become a way to hash arbitrary files.
+        return {"ok": False, "error": "sha256 mismatch: that file is not the pinned %s adapter" % model_id}
     if not _is_lora(src):
         return {"ok": False, "error": "%s is not a GGUF LoRA adapter" % src}
     if src.resolve() != dest.resolve():
