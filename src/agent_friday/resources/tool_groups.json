@@ -233,6 +233,9 @@
   "delete_task": [
    "tasks"
   ],
+  "devices_status": [
+    "settings"
+  ],
   "discover_capabilities": [
    "settings"
   ],
@@ -245,6 +248,9 @@
   ],
   "draft_email": [
    "mail"
+  ],
+  "ecosystem_info": [
+    "settings"
   ],
   "epistemic_score": [
    "personality"

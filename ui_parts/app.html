@@ -2133,13 +2133,17 @@ if (typeof document !== 'undefined') {
 }
 function fridaySanitizeMarkup(html) {
   const esc = s => String(s).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-  const dec = s => String(s).replace(/&(#x[0-9a-f]+|#\d+|amp|lt|gt|quot|apos|nbsp|colon|newline|tab);?/gi, (m, e) => {
-    const k = e.toLowerCase();
-    if (k[0] === '#') {
+  // An attribute value decoded the way the browser decodes it, so the value checked is the value it will use
+  // and a real address keeps its query: a numeric reference with or without ";", a named one with its ";", and
+  // only a legacy name (amp lt gt quot nbsp) without one, and then not before "=" or a letter or digit
+  // ("?id=7&tab=x", "&ampm=pm" and "&lt=5" stay as written). The value is re-escaped below.
+  const dec = s => String(s).replace(/&(?:(#x[0-9a-f]+|#\d+);?|(amp|lt|gt|quot|apos|nbsp|colon|newline|tab);|(amp|lt|gt|quot|nbsp)(?![=a-z0-9]))/gi, (m, num, named, legacy) => {
+    if (num) {
+      const k = num.toLowerCase();
       const n = k[1] === 'x' ? parseInt(k.slice(2), 16) : parseInt(k.slice(1), 10);
       return n > 0 && n < 0x110000 ? String.fromCodePoint(n) : '';
     }
-    return ({amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: ' ', colon: ':', newline: '\n', tab: '\t'})[k];
+    return ({amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: ' ', colon: ':', newline: '\n', tab: '\t'})[(named || legacy).toLowerCase()];
   });
   const TAG = /<(\/?)([a-zA-Z][a-zA-Z0-9]*)((?:\s+[^\s"'<>\/=]+(?:\s*=\s*(?:"[^"]*"|'[^']*'|[^\s"'=<>`]+))?)*)\s*(\/?)>/y;
   const ATTR = /([^\s"'<>\/=]+)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+)))?/g;
@@ -4971,7 +4975,7 @@ function CareerWS(){
   const[tracker,setTracker]=useState(null);const[reports,setReports]=useState([]);const[pipeline,setPipeline]=useState('');
   const[jobs,setJobs]=useState('');const[loading,setLoading]=useState(true);const[refreshing,setRefreshing]=useState(false);const[view,setView]=useState('overview');
   const[reportContent,setReportContent]=useState('');const[evalUrl,setEvalUrl]=useState('');
-  const[engineJobs,setEngineJobs]=useState([]);const[coStatus,setCoStatus]=useState(null);const[coPath,setCoPath]=useState('');
+  const[engineJobs,setEngineJobs]=useState([]);const[archiveJobs,setArchiveJobs]=useState([]);const[coStatus,setCoStatus]=useState(null);const[coPath,setCoPath]=useState('');
   const[loadError,setLoadError]=useState('');const[actionError,setActionError]=useState('');const[busy,setBusy]=useState('');
   const[reply,setReply]=useState('');const[conversation,setConversation]=useState(null);const[notice,setNotice]=useState('');
   const busyRef=useRef(false);const refreshRef=useRef(false);
@@ -4993,7 +4997,8 @@ function CareerWS(){
       ['Reports','/api/career-ops/reports',d=>setReports(d.reports||[])],
       ['Pipeline','/api/career-ops/pipeline',d=>setPipeline(d.content||'')],
       ['Curated jobs','/api/jobs',d=>setJobs(d.content||d.raw||'')],
-      ['Job scanner','/api/pipeline/jobs',d=>setEngineJobs(d.jobs||[])]
+      ['Job scanner','/api/career/jobs?view=recent',d=>setEngineJobs(d.jobs||[])],
+      ['Job archive','/api/career/jobs?view=archive',d=>setArchiveJobs(d.jobs||[])]
     ];
     const results=await Promise.allSettled(requests.map(async([label,url,save])=>{const d=await careerRequest(url);save(d)}));
     const failed=results.flatMap((r,i)=>r.status==='rejected'?[requests[i][0]+': '+r.reason.message]:[]);
@@ -5041,7 +5046,8 @@ function CareerWS(){
   };
   const saveCoPath=()=>perform('Saving folder',async()=>{const d=await careerRequest('/api/career-ops/path',{path:coPath});setCoStatus(d);setNotice('Career folder saved.');await load()});
   const addWorkflow=()=>perform('Adding workflow',async()=>{const d=await careerRequest('/api/workflows/templates/career-search/add',{});if(d.status!=='ok'||!d.slug)throw new Error('The workflow was not saved.');setNotice(d.created?'Career search added to Workflows. Open it to review the steps and run or schedule it.':'Career search is already in Workflows. Your saved steps are unchanged.')});
-  const engineScan=()=>perform('Scanning jobs',async()=>{await careerRequest('/api/pipeline/scan',{});const d=await careerRequest('/api/pipeline/jobs');setEngineJobs(d.jobs||[]);setNotice('Job scanner refreshed.')});
+  const jobDay=s=>{const d=s?new Date(s):null;return d&&!isNaN(d)?d.toLocaleDateString():''};
+  const engineScan=()=>perform('Scanning jobs',async()=>{const r=await careerRequest('/api/pipeline/scan',{});const[a,b]=await Promise.all([careerRequest('/api/career/jobs?view=recent'),careerRequest('/api/career/jobs?view=archive')]);setEngineJobs(a.jobs||[]);setArchiveJobs(b.jobs||[]);setNotice(r.scanned>0?'Job scanner refreshed.':'The scanner checked nothing: no job feed is connected, so no new listings can arrive.')});
   const engineApply=id=>perform('Preparing application',async()=>{const d=await careerRequest('/api/pipeline/jobs/'+encodeURIComponent(id)+'/apply',{});if(d.status!=='prepared')throw new Error('Not prepared: '+((d.quality_gates_failed||[]).join(', ')||d.status||'No preparation result'));setNotice('Application prepared. Review it and submit it yourself on the employer’s site.')});
   if(loading)return <div style={{color:'#999',textAlign:'center',padding:40}}>Loading career workspace...</div>;
   const entries=tracker?.entries||[];const applied=entries.filter(e=>(e.status||'').toLowerCase().includes('appli')).length;
@@ -5111,19 +5117,25 @@ function CareerWS(){
     <div ref={resultsRef} style={{display:'flex',gap:4,marginBottom:10,flexWrap:'wrap'}}>{['overview','tracker','scanner','reports','pipeline','curated','interview','outreach'].map(v=><button key={v} className={'btn'+(view===v?' active':'')} aria-pressed={view===v} style={{fontSize:11,padding:'3px 8px'}} onClick={()=>setView(v)}>{v}</button>)}</div>
     {view==='scanner'&&<div>
       <div className="card" style={{marginBottom:8,padding:10,display:'flex',gap:6,alignItems:'center'}}>
-        <div style={{flex:1,fontSize:12,color:'#aaa'}}>Job Scanner engine — {engineJobs.length} tracked. Scoring, dedup and resume A/B variants run locally. {fridayName()} prepares applications; you submit them.</div>
+        <div style={{flex:1,fontSize:12,color:'#aaa'}}>Job Scanner — {engineJobs.length} open and recently seen. Scoring, dedup and resume A/B variants run locally. {fridayName()} prepares applications; you submit them.</div>
         <button className="btn" style={{fontSize:11}} disabled={disabled} onClick={engineScan}>Scan Now</button>
       </div>
-      {engineJobs.length===0&&<div style={{color:'#999',fontSize:12,textAlign:'center',padding:20}}>No tracked jobs yet. Scan Now checks the scanner’s configured keyword sets.</div>}
-      {engineJobs.map((j,i)=><div key={j.job_id||i} className="card" style={{marginBottom:4}}>
+      {engineJobs.length===0&&<div style={{color:'#999',fontSize:12,textAlign:'center',padding:20}}>No open, recently seen jobs. Closed and expired ones are in the archive below.</div>}
+      {engineJobs.map((j,i)=><div key={j.key||j.job_id||i} className="card" style={{marginBottom:4}} data-testid="career-recent-job">
         <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',gap:8}}>
           <div style={{minWidth:0}}>
             <div style={{fontSize:12,whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{j.title} <span style={{color:'#888'}}>@ {j.company}</span></div>
-            <div style={{fontSize:10,color:'#999'}}>{j.location}{j.remote?' · remote':''} · score {(j.relevance_score||0).toFixed(2)}</div>
+            <div style={{fontSize:10,color:'#999'}}>{j.location}{j.remote?' · remote':''}{j.status==='applied'?' · applied':''} · score {(j.score||0).toFixed(2)} · seen {jobDay(j.last_seen)}</div>
           </div>
-          <button className="btn" style={{fontSize:10,flexShrink:0}} disabled={disabled} onClick={()=>engineApply(j.job_id)}>Prepare</button>
+          {j.job_id&&<button className="btn" style={{fontSize:10,flexShrink:0}} disabled={disabled} onClick={()=>engineApply(j.job_id)}>Prepare</button>}
         </div>
       </div>)}
+      {archiveJobs.length>0&&<div data-testid="career-job-archive" style={{marginTop:12}}><div className="card-title">Archive · closed or no longer listed ({archiveJobs.length})</div>
+        {archiveJobs.map((j,i)=><div key={j.key||i} className="card" style={{marginBottom:4,opacity:0.75}} data-testid="career-archived-job">
+          <div style={{fontSize:12,whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{j.title} <span style={{color:'#888'}}>@ {j.company}</span></div>
+          <div style={{fontSize:10,color:'#999'}}>{j.status==='expired'?'expired':'closed'} {jobDay(j.closed_at||j.last_seen)}{j.close_reason?' · '+j.close_reason:''}</div>
+        </div>)}
+      </div>}
     </div>}
     {view==='overview'&&<div>
       <div className="fr-comp-career-stages" style={{display:'flex',gap:8,marginBottom:12}}>
@@ -11832,7 +11844,7 @@ function archiveToCard(a,boostedSet){
 function _fmtDur(sec){if(!sec||!isFinite(sec)||sec<0)return'0:00';const s=Math.floor(sec);return Math.floor(s/60)+':'+String(s%60).padStart(2,'0')}
 
 const NEWS_TABS=[{id:'frontpage',label:'Front Page'},{id:'feed',label:'Feed'},{id:'readlater',label:'Read Later'},{id:'notes',label:'My Notes'},{id:'briefings',label:'Briefings'},{id:'weekly',label:'Weekly'},{id:'editorial',label:'Editorial'},{id:'trust',label:'Trust'}];
-fridayDeclareNav('news',{key:'tab',keys:['tab','article','url','title','source','episode'],sections:NEWS_TABS});
+fridayDeclareNav('news',{key:'tab',keys:['tab','article','url','title','source','episode','briefing','date'],sections:NEWS_TABS});
 // The Local beat is the owner's setting: the place Local news covers and the
 // outlets it reads (news_local_area, news_local_sources). Nothing ships with a
 // city; both empty means no Local section. Listed outlets are trusted like the
@@ -11849,6 +11861,42 @@ function NewsArticleView({a,onClose}){
     <DeepDive it={{url:a.url,title:a.title,source:host}}/>
   </div>);
 }
+/* fridayBriefingSections:begin */
+// Start My Day's answer names the written briefing it speaks; open News on it.
+function fridayShowStartMyDayBriefing(d) {
+  const b = d && d.briefing;
+  if (!b || !b.filename || !window.fridayOpenWorkspace) return false;
+  window.fridayOpenWorkspace({workspace: 'news', tab: 'briefings', briefing: b.filename, date: b.date});
+  return true;
+}
+// The briefing's section skills (services/briefing_sections): each one's state and an on/off switch. A section
+// whose skill is not installed or not approved yet still shows in the briefing as "Didn't run" with the reason.
+const FRIDAY_SECTION_STATE_WORDS = {installed: 'ready', waiting: 'awaiting approval', missing: 'not installed',
+  unreadable: 'could not be read'};
+function NewsSectionSkills() {
+  const h = React.createElement;
+  const [rows, setRows] = useState(null);
+  const [err, setErr] = useState('');
+  const take = d => { if (d && d.status === 'ok') { setRows(d.sections || []); setErr(''); } else setErr((d && d.message) || 'Could not load the section skills.'); };
+  useEffect(() => { fetch('/api/briefing/sections').then(r => r.json()).then(take).catch(() => setErr('Could not load the section skills.')); }, []);
+  const toggle = s => fetch('/api/briefing/sections', {method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({skill: s.skill, enabled: !s.enabled})}).then(r => r.json()).then(take).catch(() => setErr('Could not save.'));
+  return h('div', {'data-testid': 'briefing-section-skills'},
+    h('div', {className: 'card-title', style: {marginTop: 14}}, 'Section skills'),
+    err ? h('div', {style: {fontSize: 11, color: '#f88'}}, err) : null,
+    rows === null && !err ? h('div', {style: {fontSize: 11, color: '#777'}}, 'Loading…') : null,
+    (rows || []).map(s => h('div', {key: s.skill, className: 'reorder-row', 'data-skill': s.skill},
+      h('span', {style: {flex: 1, fontSize: 12, color: s.enabled ? '#e0e4ee' : '#666'}},
+        s.heading, h('span', {style: {fontSize: 10, color: '#7fb6c9', marginLeft: 6}},
+          s.skill + ' · ' + (FRIDAY_SECTION_STATE_WORDS[s.state] || s.state) + ' · ' + (s.days === 'daily' ? 'every day' : s.days))),
+      h('span', {className: 'toggle-pill ' + (s.enabled ? 'on' : ''), role: 'switch', 'aria-checked': s.enabled ? 'true' : 'false', 'aria-label': s.heading + ' section',
+        tabIndex: 0, title: (s.enabled ? 'Turn off ' : 'Turn on ') + s.heading,
+        onClick: () => toggle(s), onKeyDown: e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle(s); } }},
+        s.enabled ? 'On' : 'Off'))),
+    h('div', {style: {fontSize: 10, color: '#777', marginTop: 6}},
+      'A section that is on but cannot run says "Didn\'t run" and why in the briefing.'));
+}
+/* fridayBriefingSections:end */
 function NewsLocalBeatSettings() {
   const h = React.createElement;
   const [area, setArea] = useState(null);
@@ -11949,7 +11997,10 @@ function NewsWS(){
   useNavTarget('news',t=>{if(t.tab){setTab(t.tab);setSelected(null);}
     if(t.article||t.url)setArticleOpen({id:t.article||'',url:t.url||'',title:t.title||'',source:t.source||''});
     // A routine's episode lives beside its edition: open it in the player here.
-    if(t.episode)fridayPodcast('open', t.episode);});
+    if(t.episode)fridayPodcast('open', t.episode);
+    // Start My Day names the briefing it is speaking: refresh the list (it may have just been written) and open it.
+    if(t.briefing){fetch('/api/briefings').then(r=>r.json()).then(d=>setBriefings(d.briefings||[])).catch(()=>{});
+      openBriefing({md:t.briefing,date:t.date||String(t.briefing).slice(0,10)});}});
 
   // Pull a page of the permanent archive (newest first). reset=true clears and
   // refetches from offset 0 (category/sort change, manual refresh); reset=false
@@ -12749,6 +12800,7 @@ function NewsWS(){
         {(cats.length?cats.map(c=>c.name):Object.keys(prefs.categories_enabled)).map(c=>
           <span key={c} className={'toggle-pill '+(prefs.categories_enabled[c]?'on':'')} onClick={()=>toggleCat(c)}>{c}</span>)}
       </div>
+      <NewsSectionSkills/>
       <NewsLocalBeatSettings/>
       <div style={{fontSize:10,color:'#777',marginTop:10}}>Changes save instantly and shape your next ✨ Generate Briefing and the live feed.</div>
     </div>}
@@ -30123,9 +30175,9 @@ function App(){
   // opens), then start voice. If voice is already live, the turn is sent
   // immediately so the running session pivots to the new context. Exposed on
   // window so the standalone FWin component (outside this scope) can call it.
-  const startVoiceWithPrompt=useCallback(async(url)=>{
+  const startVoiceWithPrompt=useCallback(async(url,onData)=>{
     let prompt='';
-    try{const r=await fetch(url);const d=await r.json();if(d&&d.prompt)prompt=d.prompt;}catch(_){}
+    try{const r=await fetch(url);const d=await r.json();if(d&&d.prompt)prompt=d.prompt;if(onData)onData(d);}catch(_){}
     if(!prompt)return;
     if(!voiceOn){
       voicePendingTextRef.current=prompt;          // sent on ws.onopen
@@ -30139,7 +30191,8 @@ function App(){
   },[voiceOn]);
   useEffect(()=>{
     window.fridayStartWorkspaceVoice=(wsId)=>startVoiceWithPrompt('/api/voice-context/'+encodeURIComponent(wsId));
-    window.fridayStartMyDay=()=>startVoiceWithPrompt('/api/voice/start-my-day');
+    // Start My Day speaks today's written briefing; the News workspace opens on that same briefing beside the voice.
+    window.fridayStartMyDay=()=>startVoiceWithPrompt('/api/voice/start-my-day',fridayShowStartMyDayBriefing);
     return()=>{try{delete window.fridayStartWorkspaceVoice;delete window.fridayStartMyDay}catch(_){}};
   },[startVoiceWithPrompt]);
 

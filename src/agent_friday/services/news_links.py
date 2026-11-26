@@ -23,7 +23,76 @@ import re
 #: Matches [N3], [N3, N5], [N3][N5]: citations by story id.
 _CITE_RE = re.compile(r"\[\s*([A-Z]\d{1,3}(?:\s*[,;]\s*[A-Z]\d{1,3})*)\s*\]")
 _MD_LINK_RE = re.compile(r"\[([^\]\n]{1,300})\]\((https?://[^)\s]+)\)")
-_BARE_URL_RE = re.compile(r"(?<![(\[])\bhttps?://[^\s)\]>\"']+")
+_BARE_URL_RE = re.compile(r"(?<![(\[])\bhttps?://[^\s)\]>\"'\x00]+")
+#: marked's own rule (9.1.6, inline._backpedal, applied until it stops changing) for where an address it links
+#: ends: closing punctuation and a ")" that opens nothing are trimmed off the end, a "(" with no ")" ends it, and
+#: so does an "&" that starts an entity at the end. ui_parts/app.html renders a briefing with marked (gfm).
+_BACKPEDAL = re.compile(r"(?:[^?!.,:;*_'\"~()&]+|\([^)]*\)|&(?![a-zA-Z0-9]+;\Z)|[?!.,:;*_'\"~)]+(?!\Z))+")
+
+
+def _linked(run: str) -> str:
+    """The address marked links when it meets `run`: an address and everything glued to it, up to a space."""
+    while True:
+        found = _BACKPEDAL.match(run)
+        linked = found.group(0) if found else ""
+        if linked == run:
+            return run
+        run = linked
+
+
+_MARK = re.compile("\x00(\\d+)\x00")
+
+
+#: An address marked could read as another one is never set aside (it goes), and no link is ever written to it.
+#: An allowlist, not a list of known troubles: anything but plain URL characters (letters, digits and
+#: -._~:/?#[]@!$&'()*+,;=%) is unfit, and so is anything the browser would decode as a character reference in an
+#: href: "&name;", any "&#" (numeric, with or without ";"), and a legacy "&amp", "&lt", "&gt", "&quot" or "&nbsp"
+#: without ";" that no "=", letter or digit follows ("?q&tab=x" and "&ampm=pm" are fit; ui_parts/app.html's
+#: sanitizer decodes the same way). So a space, "<", ">", "|" (ends a table cell), "\" (marked drops it before
+#: punctuation in a target), a backtick, and every non-ASCII character fail closed.
+_UNFIT = re.compile(r"[^A-Za-z0-9\-._~:/?#\[\]@!$&'()*+,;=%]"
+                    r"|&#|&[A-Za-z0-9]+;|&(?i:amp|lt|gt|quot|nbsp)(?![=A-Za-z0-9])")
+#: What opens a markdown link before its "](": an unescaped "[", then a label holding no bracket but one balanced
+#: "[...]" pair at most ("[[draft] plan]").
+_LABEL = r"(?<!\\)\[(?:[^\[\]\n\\]|\\.|\[[^\[\]\n]*\])*"
+#: Not after a backslash: "\<K>" is a literal "<" to marked, and its extended autolink would run on through the
+#: ">"; an escaped known address is never set aside (it goes).
+_UNESCAPED = r"(?<!\\)"
+
+
+def set_aside_known(text: str, known, kept: list) -> str:
+    """The text with every known link replaced by a mark, its spelling saved in `kept`, for put_back to restore in
+    a form marked (gfm, as ui_parts/app.html renders a briefing) can neither extend nor cut. A known address after
+    a backslash is never set aside (_UNESCAPED: "\\<K>" is no autolink), and goes like an unknown one:
+      1. a known address already in angle brackets ("<K>") stays so: an autolink marked ends at the ">", before
+         any emphasis;
+      2. a known link target ("](K)") stays so when a label opens it, so it is a real link, and K's brackets
+         balance; one with nothing to open it is a bare address (3);
+      3. a known address standing in the text, when everything glued to it up to a space is K to marked (its own
+         rule, _linked), comes back as "<K>" with the punctuation after it: nothing glued to it (another link,
+         "K)evil.example", an "_" that opens emphasis) can change what it links. Anything else glued on makes the
+         run another address, and it goes.
+    Every pass that removes links runs on the marked text, so none can cut a known address short. The one place
+    both link passes decide what is known (services/briefing_links.strip_unknown_links and attach_links);
+    tests/unit/test_briefing_links.py renders every shape the way marked does."""
+    def mark(spelling: str) -> str:
+        kept.append(spelling)
+        return "\x00%d\x00" % (len(kept) - 1)
+    ordered = sorted({url for url in known if url and not _UNFIT.search(url)}, key=len, reverse=True)
+    for url in ordered:
+        text = re.sub(_UNESCAPED + re.escape("<%s>" % url), lambda m: mark(m.group(0)), text)
+    for url in ordered:
+        span = "](%s)" % url
+        if span in text and _balanced(url):
+            text = re.sub(_LABEL + re.escape(span), lambda m, span=span: m.group(0)[:-len(span)] + mark(span), text)
+    for url in ordered:
+        text = re.sub(_UNESCAPED + re.escape(url) + "\\S*", lambda m, url=url: (
+            mark("<%s>%s" % (url, m.group(0)[len(url):])) if _linked(m.group(0)) == url else m.group(0)), text)
+    return text
+
+
+def put_back(text: str, kept: list) -> str:
+    return _MARK.sub(lambda m: kept[int(m.group(1))], text)
 
 CITE_RULE = (
     "Each story below has an id in square brackets, like [N3]. Cite a story by "
@@ -32,9 +101,21 @@ CITE_RULE = (
     "address or a markdown link; the links are added for you from the ids.")
 
 
+def _balanced(url: str) -> bool:
+    """Every ")" in the address closes a "(" before it, and every "(" is closed: marked ends a link's target at the
+    first ")" that closes nothing ("https://a.test/a)(b" would link https://a.test/a)."""
+    depth = 0
+    for c in url:
+        depth += (c == "(") - (c == ")")
+        if depth < 0:
+            return False
+    return depth == 0
+
+
 def working(url: str) -> bool:
-    """A link a reader can open: an http(s) address with a host."""
-    return bool(re.match(r"^https?://[^\s/]+\.[^\s/]+", url or ""))
+    """A link a reader can open, and that marked links whole and as written: an http(s) address with a host, made
+    only of plain URL characters with nothing entity-like (_UNFIT), and brackets that balance."""
+    return bool(re.match(r"^https?://[^\s/]+\.[^\s/]+", url or "")) and not _UNFIT.search(url) and _balanced(url)
 
 
 def number(items: list[dict], prefix: str = "N") -> list[dict]:
@@ -81,18 +162,20 @@ def cited_ids(text: str) -> list[str]:
     return seen
 
 
-def attach_links(text: str, stories: list[dict], *, sources_heading: str = "Sources") -> str:
+def attach_links(text: str, stories: list[dict], *, sources_heading: str = "Sources", keep=()) -> str:
     """Turn story ids into links from the fetched URLs, and remove any link the
-    model wrote. Ends the text with the cited stories, each linked."""
+    model wrote. Ends the text with the cited stories, each linked. `keep` are
+    links code already verified from the run's own sources (the calendar and
+    email links services/briefing_links put in); they are not removed."""
     by_id = {s["id"]: s for s in stories}
-    known = {s["url"] for s in stories if s.get("url")}
+    known = {s["url"] for s in stories if s.get("url")} | set(keep)
 
     # 1. Links and addresses the model typed: keep the words, drop the address,
-    #    unless it is exactly a fetched story's URL.
-    def md(m):
-        return m.group(0) if m.group(2) in known else m.group(1)
-    text = _MD_LINK_RE.sub(md, text or "")
-    text = _BARE_URL_RE.sub(lambda m: m.group(0) if m.group(0) in known else "", text)
+    #    unless it is exactly a fetched story's URL (set aside first: set_aside_known).
+    kept: list = []
+    text = set_aside_known((text or "").replace("\x00", ""), known, kept)
+    text = _MD_LINK_RE.sub(lambda m: m.group(1), text)
+    text = put_back(_BARE_URL_RE.sub("", text), kept)
 
     # 2. Ids to links.
     def cite(m):

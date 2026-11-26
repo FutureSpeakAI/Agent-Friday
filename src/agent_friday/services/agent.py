@@ -5435,11 +5435,8 @@ def _tool_get_briefing(_inp):
     """Return the most recent daily briefing (HTML stripped, plus markdown)."""
     candidates = []
     briefings_dir = FRIDAY_DIR / "wiki" / "briefings"
-    if briefings_dir.exists():
-        for f in briefings_dir.iterdir():
-            # _index.md and other _-prefixed files are wiki bookkeeping, not briefings.
-            if f.is_file() and f.suffix in ('.html', '.md') and not f.name.startswith('_'):
-                candidates.append(f)
+    from agent_friday.services import briefing_files
+    candidates.extend(briefing_files.dated(briefings_dir))      # only the dated briefings (not _index.md or a supplement)
     creations_dir = CREATIONS_DIR
     if creations_dir.exists():
         for f in creations_dir.iterdir():
@@ -11599,6 +11596,45 @@ CLAUDE_TOOLS.append({
 })
 CLAUDE_TOOL_HANDLERS["web_task_start"] = _tool_web_task_start
 TOOL_RINGS["web_task_start"] = 2
+
+
+# ── Companion apps (services/ecosystem.py): what exists, how to install and
+#    pair each, what a device can see. Read-only; the text is rendered from
+#    resources/ecosystem, never composed by the model.
+
+def _tool_ecosystem_info(inp):
+    from agent_friday.services import ecosystem as _eco
+    return _eco.tool_ecosystem_info(inp)
+
+
+CLAUDE_TOOLS.append({
+    "name": "ecosystem_info",
+    "description": ("Read-only (Ring 0): the facts about Friday's companion apps (Android phone, tablet, "
+                    "TV, Wear OS watch): what works today, how to install, how to pair, what a device can "
+                    "see, known limits. Use before saying anything about these apps; give steps as written."),
+    "input_schema": {"type": "object", "properties": {
+        "app": {"type": "string", "enum": ["phone", "tablet", "tv", "watch"]},
+        "topic": {"type": "string", "enum": ["overview", "install", "pair", "sees", "limits"]}}},
+})
+CLAUDE_TOOL_HANDLERS["ecosystem_info"] = _tool_ecosystem_info
+TOOL_RINGS["ecosystem_info"] = 0
+
+
+def _tool_devices_status(inp):
+    from agent_friday.services import device_awareness as _da
+    return _da.tool_devices_status(inp)
+
+
+CLAUDE_TOOLS.append({
+    "name": "devices_status",
+    "description": ("Read-only (Ring 0): which companion devices are paired with this PC right now: kind, "
+                    "whether each is connected now or when it last signed in. Use before saying "
+                    "anything about paired devices. It cannot pair, remove or change a device."),
+    "input_schema": {"type": "object", "properties": {
+        "kind": {"type": "string", "enum": ["phone", "tablet", "tv", "watch"]}}},
+})
+CLAUDE_TOOL_HANDLERS["devices_status"] = _tool_devices_status
+TOOL_RINGS["devices_status"] = 0
 
 try:        # registers the decision hook that starts an approved website task
     from agent_friday.services import web_tasks as _web_tasks

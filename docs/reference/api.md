@@ -615,7 +615,17 @@ Voice setup readiness for the first-run wizard. Returns `{ "ready": bool, "engin
 Run a voice setup test.
 
 ### `GET /api/voice/start-my-day`
-Assemble the sequential morning voice briefing (calendar → email → news → tasks).
+The opening voice turn for Start My Day, spoken from today's written briefing: the stored one when it was
+generated in the last six hours, else one written now by the briefing generator (the same as
+`POST /api/briefing/generate`). Returns `{status, label, prompt, briefing}`, where `briefing` is
+`{date, filename, generated_at, made_now}` (the file the News workspace opens), or `null` when no briefing
+could be made; the prompt then says so first and speaks from live data, marked unchecked.
+
+### `GET /api/briefing/sections`, `POST /api/briefing/sections`
+The briefing's section skills (setting `briefing_sections`), each with `{skill, heading, days, enabled, state,
+today}`; `state` is `installed`, `waiting` (awaiting approval), `missing` or `unreadable`. POST
+`{skill, enabled}` switches one section on or off and answers with the list (404 for a skill not in it, 400 for
+a bad body).
 
 ### `POST /api/voice/tts`
 Text-to-speech via Gemini.

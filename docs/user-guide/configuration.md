@@ -370,6 +370,7 @@ precedence over both.
 | `show_all_workspaces` | `true` (`false` on a new install) | The full dock, or the core set. |
 | `dock_custom` | no changes | Your own dock order and hidden workspaces. Once you arrange the dock, it wins over `show_all_workspaces`. |
 | `landing_mode` | `"smart"` | When the start screen's cluster shows: `smart`, `always` or `never`. |
+| `briefing_sections` | `null` (events every day, family outing Friday to Sunday) | The skills Start My Day's briefing runs as sections: a list of `{skill, heading, days, enabled}`, where `days` is `daily`, a range like `fri-sun`, or a list like `mon,wed`. A skill that is not installed or not approved yet shows "Didn't run" with the reason instead of vanishing. Each section is switched on or off in News > Customize Briefing > Section skills. |
 | `dismissed_countdowns` | `{}` | Start-screen countdowns you hid with their x button: countdown id to the time (epoch seconds) it passes. Entries are dropped after that, so a yearly one returns next year. |
 | `big_mode` | `"auto"` | Large targets for the hand cursor: `auto`, `on` or `off`. |
 | `workspace_layouts` | `{}` | Workspaces you set to fill the screen with the chat tray docked beside them. |

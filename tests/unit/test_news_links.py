@@ -46,6 +46,14 @@ def test_links_the_model_typed_are_removed_and_ids_it_invented_are_dropped(stori
     assert "https://examplewire.com/2031/transit" in out
 
 
+def test_a_known_link_with_round_brackets_in_its_address_is_kept_whole():
+    url = "https://en.wikipedia.example.test/wiki/Mercury_(planet)"
+    cal = "https://calendar.example.test/e(1)"
+    stories = [{"id": "N1", "title": "Mercury", "source": "examplewiki.test", "url": url}]
+    out = nl.attach_links("Typed [Mercury](%s). Planning ([Calendar event](%s)). [N1]" % (url, cal), stories, keep={cal})
+    assert out.count("](%s)" % url) == 3 and "([Calendar event](%s))" % cal in out
+
+
 def test_several_ids_in_one_citation(stories):
     out = nl.attach_links("Two outlets agree. [N1, N2]", stories)
     assert "([Examplewire](https://examplewire.com/2031/transit), [Exampleledger](https://exampleledger.com/storm))" in out

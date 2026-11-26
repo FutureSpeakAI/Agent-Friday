@@ -127,8 +127,10 @@ def test_messages_takes_a_search_and_a_maximized_conversation():
 def test_news_opens_one_story_on_its_own(ui):
     s = UI[ui]
     assert "function NewsArticleView" in s
-    # 'episode': a routine show's episode opens on its News tab.
-    assert re.search(r"keys:\s*\[\s*'tab',\s*'article',\s*'url',\s*'title',\s*'source',\s*'episode'\s*\]", s)
+    # 'episode': a routine show's episode opens on its News tab; 'briefing' + 'date': Start My Day opens the written
+    # briefing it speaks (fridayShowStartMyDayBriefing).
+    assert re.search(r"keys:\s*\[\s*'tab',\s*'article',\s*'url',\s*'title',\s*'source',\s*'episode',\s*'briefing',"
+                     r"\s*'date'\s*\]", s)
 
 
 @pytest.mark.parametrize("ui", sorted(UI))

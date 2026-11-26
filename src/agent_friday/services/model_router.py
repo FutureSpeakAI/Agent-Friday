@@ -3845,6 +3845,15 @@ def _get_friday_system_prompt(keywords='', workspace='', *, provider,
             prefix += "\n== WHAT YOU ACTUALLY ARE ==\n" + _acct + "\n"
     except Exception:
         pass
+    # The companion apps (phone, tablet, TV, watch): which exist and what state
+    # each is in, rendered from resources/ecosystem so she states nothing about
+    # them from memory. In the head, so the voice front's digest carries it too
+    # (tests/unit/test_ecosystem_knowledge.py).
+    try:
+        from agent_friday.services import ecosystem as _eco
+        prefix += _eco.prompt_section()
+    except Exception:
+        pass
     # A local seat is told, in one line, which model it is, its window, what it
     # cannot do and that the conversation stays on this PC. Only a provider the
     # egress gate itself treats as local gets the line, so the privacy claim is
@@ -4972,31 +4981,15 @@ def _generate_wiki_indexes():
     """Create _index.md in each wiki directory listing files with one-line descriptions.
 
     Called at startup so the agent can read a directory's table of contents before
-    deciding which full articles to load — dramatically reduces context waste.
+    deciding which full articles to load — dramatically reduces context waste. A
+    directory whose articles change while the server runs (the briefings) rebuilds
+    its own index on every write (services/briefing_files).
     """
+    from agent_friday.services.wiki_engine import write_wiki_index
     if not WIKI_DIR.exists():
         return
-    dirs_to_index = [WIKI_DIR] + [p for p in WIKI_DIR.rglob('*') if p.is_dir()]
-    for directory in dirs_to_index:
-        md_files = [f for f in directory.glob('*.md') if f.name != '_index.md']
-        if not md_files:
-            continue
-        lines = [f"# Index: {directory.name}\n"]
-        for f in sorted(md_files, key=lambda x: x.name):
-            try:
-                text = wiki_read_text(f)
-                # Use first non-empty, non-heading line as description
-                desc = next(
-                    (l.strip() for l in text.splitlines() if l.strip() and not l.startswith('#')),
-                    f.stem
-                )
-                lines.append(f"- {f.name}: {desc[:120]}")
-            except Exception:
-                lines.append(f"- {f.name}")
-        try:
-            wiki_write_text(directory / '_index.md', '\n'.join(lines))
-        except Exception:
-            pass
+    for directory in [WIKI_DIR] + [p for p in WIKI_DIR.rglob('*') if p.is_dir()]:
+        write_wiki_index(directory)
 
 
 def _load_section(parts, directory, max_bytes=20_000):
@@ -5058,12 +5051,7 @@ def _load_friday_data(parts, subdir, max_bytes=10_000):
 
 def _load_latest_briefing_summary(parts):
     """Note the most recent briefing exists; don't load the full HTML."""
-    briefing_dir = FRIDAY_DIR / "wiki" / "briefings"
-    if not briefing_dir.exists():
-        return
-    try:
-        files = sorted(briefing_dir.glob("*.html"), reverse=True)
-    except Exception:
-        return
-    if files:
-        parts.append(f"== LATEST BRIEFING ==\nMost recent: {files[0].name} (use get_briefing tool to read it)")
+    from agent_friday.services import briefing_files
+    newest = briefing_files.latest(FRIDAY_DIR / "wiki" / "briefings")
+    if newest is not None:
+        parts.append(f"== LATEST BRIEFING ==\nMost recent: {newest.name} (use get_briefing tool to read it)")

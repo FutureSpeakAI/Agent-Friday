@@ -37,14 +37,22 @@ def test_grants_screen_shows_the_gates_reason_without_paths(client, monkeypatch)
     assert "Traceback" not in body and "someone" not in body
 
 
-def test_start_my_day_names_the_failure_without_paths(client, monkeypatch):
-    from agent_friday.routes import voice_context
+def test_start_my_day_names_the_failure_without_paths(client, monkeypatch, tmp_path):
+    # Start My Day first tries to write today's briefing (routes/news.generate_briefing); with the live data failing
+    # there too, it falls back and says why, with no path, no traceback and no user name in either part.
+    from agent_friday import core
+    from agent_friday.routes import news, voice_context
+    # An empty home: a briefing another test wrote today into the shared one would be "fresh" and spoken instead.
+    monkeypatch.setattr(core, "FRIDAY_DIR", tmp_path)
 
     def boom():
         raise RuntimeError(LEAKY)
     monkeypatch.setattr(voice_context, "_gather_live_briefing_context", boom)
+    monkeypatch.setattr(news, "_gather_live_briefing_context", boom)
     r = client.get("/api/voice/start-my-day")
     assert r.status_code == 200
-    prompt = r.get_json()["prompt"]
+    body = r.get_json()
+    prompt = body["prompt"]
+    assert body["briefing"] is None and "Today's written briefing could not be made" in prompt
     assert "(could not load all live data: boom at <path>" in prompt
     assert "Traceback" not in prompt and "someone" not in prompt

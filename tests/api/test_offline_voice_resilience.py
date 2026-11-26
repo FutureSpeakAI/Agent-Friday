@@ -147,8 +147,9 @@ class TestVoiceContext:
         core._set_network_state("offline")
         d = client.get("/api/voice/start-my-day").get_json()
         assert d["status"] == "ok"
-        assert "calendar" in d["prompt"].lower()
-        assert "news" in d["prompt"].lower()
+        # Offline, the voice still opens: with today's written briefing, or saying it could not be made and
+        # speaking from whatever live data there is (services/start_my_day).
+        assert d["prompt"].startswith("[START MY DAY") and "written briefing" in d["prompt"]
 
 
 # ── Voice live-tool registry ──────────────────────────────────────────────────
