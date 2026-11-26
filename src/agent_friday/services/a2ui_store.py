@@ -191,10 +191,15 @@ def _validated(doc, ctx: prof.Context) -> list:
     return doc
 
 
+#: Who wrote a document and who approved it travel with it into a version and back out of it on restore.
+PROVENANCE = ("authorship", "model_authored", "approved_by")
+
+
 def _snapshot(record: dict, kind: str) -> dict:
     return {"id": uuid.uuid4().hex[:12], "ts": record.get("updated") or _now(), "kind": kind,
             "label": record.get("label"), "by": record.get("updated_by"),
-            "doc": record["doc"], "customization": record["customization"]}
+            "doc": record["doc"], "customization": record["customization"],
+            **{k: record[k] for k in PROVENANCE if k in record}}
 
 
 def _commit(view_id: str, build, base_rev: str):
@@ -252,7 +257,10 @@ def save(view_id: str, doc, *, ctx: prof.Context, base_rev: str, label: str, by:
 
 
 def _default_ctx(view: dict) -> prof.Context:
-    return prof.Context(subject=view.get("subject") or "", authorship=view.get("authorship") or "composer")
+    """The context a stored view was checked under. A view that holds a document he approved keeps
+    model_authored (tests/unit/test_tv_ws_view_documents.py: test_restore_and_undo_check_as_strictly_as_save)."""
+    return prof.Context(subject=view.get("subject") or "", authorship=view.get("authorship") or "composer",
+                        model_authored=bool(view.get("model_authored")))
 
 
 def restore(view_id: str, version_id: str, *, base_rev: str, by: str, ctx: Optional[prof.Context] = None) -> dict:
@@ -268,7 +276,14 @@ def restore(view_id: str, version_id: str, *, base_rev: str, by: str, ctx: Optio
         _validated(target["doc"], ctx or _default_ctx(previous))
         versions = [dict(v, undone=True) if v["id"] == version_id else v for v in previous["versions"]]
         versions.append(_snapshot(previous, KIND_RESTORE))
-        return {**previous, "doc": target["doc"], "customization": target["customization"],
+        # a version written before versions carried provenance is Friday's own: never his approval, never inherited
+        provenance = {"authorship": target.get("authorship", previous.get("authorship")),
+                      "model_authored": bool(target.get("model_authored", False))}
+        if "approved_by" in target:
+            provenance["approved_by"] = target["approved_by"]
+        rest = {k: v for k, v in previous.items() if k != "approved_by"}
+        return {**rest, **provenance,
+                "doc": target["doc"], "customization": target["customization"],
                 "label": target.get("label") or previous.get("label"), "versions": versions[-MAX_VERSIONS:],
                 "updated_by": by}
     return _commit(view_id, build, base_rev)

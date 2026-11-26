@@ -33,6 +33,11 @@ from agent_friday.tv_gateway.approval_verify import Refusal, Rejected
 _log = logging.getLogger(__name__)
 
 SIGN_PREFIX = "wsview:"
+#: The most a proposal body may be. The gateway reads a chunked body up to its own 2 MB cap (app.py); this route then
+#: refuses anything over BODY_MAX before parsing it. This, not the store's MAX_DOC_BYTES, is the real limit on a
+#: document from a device.
+BODY_MAX = 72 * 1024
+SAFE_INT = 2 ** 53
 
 
 def proposal_fp(ws: str, base_rev: str, change) -> str:
@@ -70,17 +75,73 @@ def _approver() -> dict:
     return _approving_device(dev)
 
 
+class _TooBig(Exception):
+    pass
+
+
+def _no_repeats(pairs):
+    keys = [k for k, _ in pairs]
+    if len(keys) != len(set(keys)):
+        raise ValueError("a key is repeated")
+    return dict(pairs)
+
+
+def _no_constant(name):
+    raise ValueError("%s is not JSON" % name)
+
+
+def _canonical(value) -> None:
+    """ValueError unless value has one canonical form a phone computes the same way: no floats, integers within
+    +/-2^53, every string (key or value) valid Unicode in NFC."""
+    import unicodedata
+    stack = [value]
+    while stack:
+        v = stack.pop()
+        if isinstance(v, bool) or v is None:
+            continue
+        if isinstance(v, float):
+            raise ValueError("a float")
+        if isinstance(v, int):
+            if abs(v) > SAFE_INT:
+                raise ValueError("an integer past 2^53")
+        elif isinstance(v, str):
+            if unicodedata.normalize("NFC", v) != v:
+                raise ValueError("text not in NFC")
+            v.encode("utf-8")
+        elif isinstance(v, dict):
+            stack.extend(v.keys())
+            stack.extend(v.values())
+        elif isinstance(v, list):
+            stack.extend(v)
+
+
 def _body() -> tuple:
-    body = request.get_json(silent=True) or {}
+    """The proposal body, read and parsed here: at most BODY_MAX bytes (_TooBig), and no repeated key, NaN, Infinity
+    or anything without a canonical form (Rejected). tests/unit/test_tv_ws_view_documents.py holds the limits."""
+    if (request.content_length or 0) > BODY_MAX:
+        raise _TooBig()
+    raw = request.get_data(cache=True)
+    if len(raw) > BODY_MAX:
+        raise _TooBig()
+    from agent_friday.tv_gateway.app import _check_depth
+    try:
+        _check_depth(raw)
+        body = json.loads(raw.decode("utf-8"), object_pairs_hook=_no_repeats, parse_constant=_no_constant)
+    except (ValueError, RecursionError):
+        raise Rejected(Refusal.BAD_REQUEST, "send one JSON object, each key once")
+    if not isinstance(body, dict):
+        raise Rejected(Refusal.BAD_REQUEST, "send {base_rev, change}")
     base_rev, change = body.get("base_rev"), body.get("change")
     if not isinstance(base_rev, str) or not base_rev or len(base_rev) > 128 or not isinstance(change, dict):
         raise Rejected(Refusal.BAD_REQUEST, "send {base_rev, change}")
     try:
+        _canonical(change)
         proposal_fp("", base_rev, change)
     except ValueError:
         # test_tv_ws_view.py: test_a_challenge_that_cannot_be_fingerprinted_is_refused_not_a_crash,
         # test_a_signed_proposal_that_cannot_be_fingerprinted_is_refused_before_its_nonce
-        raise Rejected(Refusal.BAD_REQUEST, "that change has no canonical form (a lone surrogate, NaN or Infinity)")
+        raise Rejected(Refusal.BAD_REQUEST, "that change has no canonical form (a float, a huge number, text not in "
+                                            "NFC, a lone surrogate, NaN or Infinity)")
     return body, base_rev, change
 
 
@@ -147,6 +208,8 @@ def register(app: Flask) -> None:
                 return _unknown()
             _, base_rev, change = _body()
             challenge = av.mint(dev["id"], SIGN_PREFIX + ws, proposal_fp(ws, base_rev, change))
+        except _TooBig:
+            return pc_read._refuse(413, "that change is too big to send from a device", code="too_large")
         except Rejected as rejected:
             return _refusal(rejected)
         return jsonify({"ok": True, "proposal_fp": challenge.action_fp, "nonce": challenge.nonce,
@@ -158,16 +221,21 @@ def register(app: Flask) -> None:
         dev = getattr(g, "device", None) or {}
         try:
             dev = _approver()
-            if _served(ws) is None:
+            block = _served(ws)
+            if block is None:
                 return _unknown()
             body, base_rev, change = _body()
             _verify(dev, ws, body, base_rev, change, now)
+        except _TooBig:
+            _receipt("workspace_view_refused", dev, ws, reason="too_large")
+            return pc_read._refuse(413, "that change is too big to send from a device", code="too_large")
         except Rejected as rejected:
             if dev.get("id"):
                 _receipt("workspace_view_refused", dev, ws, reason=rejected.refusal.value)
             return _refusal(rejected)
         try:
-            got = a2ui_workspaces.apply_change(ws, change, base_rev=base_rev, by=av.device_label(dev["id"]))
+            got = a2ui_workspaces.apply_change(ws, change, base_rev=base_rev, by=av.device_label(dev["id"]),
+                                               sections=(block.get("sections") or {}))
         except a2ui_store.ViewStale as stale:
             try:
                 current = a2ui_workspaces.current(ws) or {}
@@ -189,4 +257,7 @@ def register(app: Flask) -> None:
             _receipt("workspace_view_refused", dev, ws, reason="pc_unavailable")
             return pc_read._refuse(503, "your PC could not save that right now; nothing changed", code="pc_unavailable")
         _receipt("workspace_view_changed", dev, ws, rev=got["rev"], change=sorted(change))
-        return jsonify({"ok": True, "rev": got["rev"], "version": got["version"]})
+        out = {"ok": True, "rev": got["rev"], "version": got["version"]}
+        if "dropped_hidden" in got:
+            out["dropped_hidden"] = got["dropped_hidden"]
+        return jsonify(out)
