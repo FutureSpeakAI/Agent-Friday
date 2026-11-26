@@ -301,6 +301,45 @@ def stack_preview():
         return api_error(e, "Couldn't preview the stack", shape="bare")
 
 
+# ── adapter seats: a fine-tune installed beside its base (services/adapter_seats) ──
+
+@models_screen_bp.route("/api/models/adapter-seats", methods=["GET"])
+@login_required
+def adapter_seats_status():
+    try:
+        from agent_friday.services import adapter_seats
+        return jsonify({"status": "ok", "adapters": adapter_seats.status()})
+    except Exception as e:
+        return api_error(e, "Couldn't read the adapter seats")
+
+
+@models_screen_bp.route("/api/models/adapter-seats/install", methods=["POST"])
+@login_required
+def adapter_seats_install():
+    """Install a pinned adapter (resources/adapter_seats.json) from a local file. Only the exact sha256 installs; the
+    base record is never written."""
+    body = request.get_json(silent=True) or {}
+    try:
+        from agent_friday.services import adapter_seats
+        out = adapter_seats.install(str(body.get("model_id") or ""), body.get("source"))
+        return jsonify({"status": "ok" if out.get("ok") else "error", **out}), (200 if out.get("ok") else 400)
+    except Exception as e:
+        return api_error(e, "Couldn't install the adapter seat")
+
+
+@models_screen_bp.route("/api/models/adapter-seats/uninstall", methods=["POST"])
+@login_required
+def adapter_seats_uninstall():
+    """The rollback: remove an adapter seat; its base and the base's own adapter stay as they were."""
+    body = request.get_json(silent=True) or {}
+    try:
+        from agent_friday.services import adapter_seats
+        out = adapter_seats.uninstall(str(body.get("model_id") or ""))
+        return jsonify({"status": "ok" if out.get("ok") else "error", **out}), (200 if out.get("ok") else 400)
+    except Exception as e:
+        return api_error(e, "Couldn't remove the adapter seat")
+
+
 # ── measure, remove, roll back ──────────────────────────────────────────────
 
 @models_screen_bp.route("/api/models/<path:model_id>/bench", methods=["POST", "GET"])
