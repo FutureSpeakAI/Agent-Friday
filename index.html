@@ -16045,6 +16045,26 @@ function FridayOffRecordConfirmHost() {
           E('button', { ref: cancelRef, type: 'button', className: 'sc-btn quiet', onClick: cancel }, FRIDAY_OFF_RECORD_CONFIRM_CANCEL),
           E('button', { ref: goRef, type: 'button', className: 'sc-btn', disabled: !d, onClick: () => finish(true) }, FRIDAY_OFF_RECORD_CONFIRM_GO)))));
 }
+// Laya on the draft (services/local_split.observe_draft; Dispatch 2026-11-26). Only while the owner's quick/private
+// split is on: ~300 ms after typing pauses, the draft goes to THIS PC's own server, which classifies it in memory
+// for reversible prep (pre-load Bonsai, or cancel that) and keeps nothing. Fire-and-forget: never awaited, never on
+// the keystroke path, so typing cannot lag. The route itself is decided on send.
+const _fridayDraftState = { t: null, last: '' };
+function fridayLayaDraft(text) {
+  try {
+    if (!window.__FRIDAY_SPLIT_ON) return;
+    if (_fridayDraftState.t) clearTimeout(_fridayDraftState.t);
+    _fridayDraftState.t = setTimeout(() => {
+      _fridayDraftState.t = null;
+      const v = String(text || '');
+      if (v === _fridayDraftState.last || v.trim().length < 8) return;
+      _fridayDraftState.last = v;
+      const cid = (window.__fridayConvId && window.__fridayConvId()) || '';
+      apiFetch('/api/split/draft', { method: 'POST', keepalive: true, headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text: v, conversation_id: cid, source: 'typing' }) }).catch(() => {});
+    }, 300);
+  } catch (_) {}
+}
 function FridayChatInput({ value, onChange, onSend, placeholder, disabled, inputRef, className, style, maxHeight, autoFocus }) {
   const offRecord = useFridayOffRecord();
   if (offRecord) placeholder = FRIDAY_OFF_RECORD_TEXT;
@@ -16070,6 +16090,7 @@ function FridayChatInput({ value, onChange, onSend, placeholder, disabled, input
     "data-off-record": offRecord ? "true" : undefined,
     onChange: e => {
       onChange(e.target.value);
+      fridayLayaDraft(e.target.value);
       // The user typing to Friday: the avatar's data-in wave.
       try {
         window.fridayAvatar && window.fridayAvatar.typed();
@@ -58332,6 +58353,36 @@ function TurnLimitsSection() {
           }, note))));
 }
 
+function LocalTurnSplitPanel({s, save}) {
+  // The owner's split (services/local_split; Dispatch 2026-11-26). Off by default and only ever chosen here or by
+  // voice ("switch quick turns to FridayWeaver"). Each answer still shows which model wrote it.
+  const E = React.createElement;
+  const choice = (s && s.local_turn_split) || 'off';
+  const pickSplit = (value, label, desc) => E('button', {
+    type:'button', className:'settings-btn', 'aria-pressed': choice === value,
+    onClick:() => save({local_turn_split:value}),
+    style:{display:'block',textAlign:'left',width:'100%',marginBottom:6,fontSize:12,
+      borderColor: choice === value ? 'var(--st-accent, #00d4ff)' : undefined}},
+    E('span', {style:{display:'block',fontWeight:600}}, label),
+    E('span', {style:{display:'block',fontSize:11,color:'var(--st-dim)',marginTop:2}}, desc));
+  return E('div', {style:{margin:'0 0 18px'}},
+    E('div', {style:{fontSize:12.5,fontWeight:600,margin:'0 0 4px'}}, 'Quick turns and private turns'),
+    E('div', {style:{fontSize:11.5,lineHeight:1.55,color:'var(--st-dim)',margin:'0 0 8px'}},
+      'Which model on this PC answers which kind of message.'),
+    pickSplit('off', 'Off',
+      fridayName() + ' picks the model as it does today.'),
+    pickSplit('fridayweaver_quick_bonsai_private', 'Quick turns on FridayWeaver 2, private turns on Bonsai',
+      'Quick commands and short everyday messages are answered by FridayWeaver 2, which stays ready on the graphics card. ' +
+      'Your vault and anything marked private is answered by Bonsai, which loads when it is needed (about 40 seconds the first time). ' +
+      'A private message waits for Bonsai and says so on screen. It is never sent to the cloud instead.'),
+    E('div', {style:{fontSize:11,lineHeight:1.6,color:'var(--st-dim)',marginTop:4}},
+      choice === 'fridayweaver_quick_bonsai_private'
+        ? 'On. Every answer shows which model wrote it. Longer or harder messages go where they would with this off. You can also say “turn the quick-turn split off”.'
+        : 'Off. You can also say “switch quick turns to FridayWeaver”.')
+  );
+}
+// End quick/private split panel
+
 function SettingsTabIntelligence({ s, save }) {
   const { d, err, reload } = useIntelligence(15000);
   const [openFor, setOpenFor] = useState(null);
@@ -58513,6 +58564,9 @@ function SettingsTabIntelligence({ s, save }) {
       soup: d.soup, d: d, mode: d.routing_mode_picked === false ? '' : (d.routing_mode || ''),
       setMode: setMode, savingMode: savingMode, reload: reload,
     }),
+
+    // The owner's quick/private split (services/local_split), off by default.
+    E(LocalTurnSplitPanel, {s: s, save: save}),
 
     /* Did my pick take? One line, set from the SERVER's confirmation rather
        than from the slow panel refresh, because the refresh not landing is
@@ -71411,6 +71465,11 @@ function App() {
       }));
     }).catch(() => {});
   }, []);
+  // The quick/private split's draft check runs only while the owner has it on (fridayLayaDraft).
+  useEffect(() => {
+    window.__FRIDAY_SPLIT_ON = agentSettings.local_turn_split === 'fridayweaver_quick_bonsai_private';
+    window.__fridayConvId = () => (typeof convIdRef !== 'undefined' && convIdRef && convIdRef.current) || '';
+  }, [agentSettings.local_turn_split]);
   const saveAgentSettings = async (patch, opts = {}) => {
     const prev = agentSettings;
     const next = {

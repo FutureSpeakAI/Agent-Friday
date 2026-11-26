@@ -3051,6 +3051,41 @@ class Arbiter:
                     role, model_id,
                     seat.get("pin_unenforced") or "no process is serving it")
 
+    def reseat_to_plan(self, reason=""):
+        """Make the card match the plan after the owner moved a seat (the
+        split setting): stop the model processes no pinned seat names, then
+        bring the pinned seats up. Not while a lease, build hours, a
+        stand-down or another program holds the card; the lease's own release
+        restores to the current plan."""
+        if self._build_hours_active():
+            return {"ok": True, "note": "build hours own the brain"}
+        why = self.gpu_not_ours()
+        if why:
+            return {"ok": False, "note": why}
+        with self._lock:
+            if self.lease is not None:
+                return {"ok": True, "note": "lease %s holds the seats; its release restores the plan"
+                        % self.lease.get("kind")}
+            wanted = set(self._pinned_llama_models())
+            emb = self._gpu_embedder()
+            if emb is not None:
+                wanted.add(emb.get("model_id"))         # the embedder is not a chat seat; it stays
+            stale = [m for m in list(self.llama.procs) if m not in wanted]
+            for m in stale:
+                t0 = time.time()
+                self.llama.evict(m)
+                self._record("evict", "reseat", m, round(time.time() - t0, 2))
+            try:
+                self._serve_pinned_seats()
+            except Exception as e:
+                # A seat that would not load is reported, never raised into the
+                # settings save; the next restore_unheld_seats tick retries.
+                return {"ok": False, "stopped": stale, "reason": reason,
+                        "error": "a pinned seat did not load: %s" % e,
+                        "seats": sorted(self.llama.procs)}
+            return {"ok": True, "stopped": stale, "reason": reason,
+                    "seats": sorted(self.llama.procs)}
+
     def _note_seat_problem(self, role, model_id, reason):
         prev = self.seat_problems.get(model_id) or {}
         self.seat_problems[model_id] = {
@@ -3252,6 +3287,40 @@ class Arbiter:
                                   "model_id": seat["model_id"],
                                   "displaced": displaced,
                                   "expires_at": time.time() + ttl_s}
+                elif kind == "private_turn":
+                    # The owner's split (services/local_split): Bonsai for a
+                    # private turn. `role` names the model. The sidekick
+                    # (FridayWeaver) is stood down too -- the policy's one
+                    # loading exception to R10, LEASES_DISPLACING_SIDEKICK.
+                    model_id = str(role or "")
+                    if not model_id:
+                        self.state = STATE_DEFAULT
+                        return {"ok": False, "error": "a private turn lease names its model"}
+                    entry = self._entry(model_id)
+                    adm = self.admit(entry)
+                    if not adm["ok"]:
+                        self.state = STATE_DEFAULT
+                        return {"ok": False, "refused": adm,
+                                "error": adm["explanation"]}
+                    displaced = self._evict_pinned(
+                        displace_sidekick=kind in rp.LEASES_DISPLACING_SIDEKICK)
+                    try:
+                        self._load_leased(self._private_seat(model_id, entry), "private")
+                    except Exception:
+                        # Bonsai did not come up: put back what was stood down,
+                        # the sidekick included (the generic rollback keeps R10
+                        # and would leave FridayWeaver down).
+                        if model_id not in self._pinned_llama_models():
+                            self.llama.evict(model_id)
+                        try:
+                            self._restore_pinned(displaced, include_retained=True)
+                        except Exception:
+                            pass
+                        raise
+                    self.lease = {"kind": kind, "role": "private",
+                                  "model_id": model_id,
+                                  "displaced": displaced,
+                                  "expires_at": time.time() + ttl_s}
                 elif kind == "image_job":
                     displaced = self._evict_pinned()
                     self._evict_all_but_retained()
@@ -3337,6 +3406,10 @@ class Arbiter:
                 if kind == "heavy_turn":
                     self.ollama.evict(self.lease["model_id"])
                     self.llama.evict(self.lease["model_id"])
+                elif kind == "private_turn":
+                    # Bonsai goes unless the plan pins it in some role.
+                    if self.lease.get("model_id") not in self._pinned_llama_models():
+                        self.llama.evict(self.lease["model_id"])
                 elif kind == "image_job":
                     self.comfy.stop()
                 if self._build_hours_active():
@@ -3345,7 +3418,9 @@ class Arbiter:
                     # is "parked", and restoring it means not launching.
                     self._record("parked", "plan", None, 0.0)
                 else:
-                    missing = self._restore_with_retry(self.lease.get("displaced"))
+                    missing = self._restore_with_retry(
+                        self.lease.get("displaced"),
+                        include_retained=kind in rp.LEASES_DISPLACING_SIDEKICK)
                     if missing:
                         # The card is given back either way; a seat that did
                         # not come back is said, never swallowed.
@@ -3384,7 +3459,7 @@ class Arbiter:
     RESTORE_TRIES = 3
     RESTORE_BACKOFF_S = (1.0, 2.0)
 
-    def _restore_with_retry(self, roles):
+    def _restore_with_retry(self, roles, include_retained=False):
         """`_restore_pinned(roles)`, verified: every displaced llama seat's
         model must be served afterwards. A try that raises or leaves a seat
         unserved is retried (RESTORE_TRIES, with backoff); what is still not
@@ -3392,13 +3467,13 @@ class Arbiter:
         [(role, model_id)]. Caller holds the lock."""
         roles = list(roles or [])
         wanted = {r: s["model_id"] for r, s in self._pinned_llama_seats()
-                  if r in roles and r not in rp.RETAINED_THROUGH_LEASE}
+                  if r in roles and (include_retained or r not in rp.RETAINED_THROUGH_LEASE)}
         err = None
         missing = []
         for attempt in range(self.RESTORE_TRIES):
             err = None
             try:
-                self._restore_pinned(roles)
+                self._restore_pinned(roles, include_retained=include_retained)
             except Exception as e:  # noqa: BLE001
                 err = e
             try:
@@ -3426,14 +3501,15 @@ class Arbiter:
     def renew(self, kind, ttl_s):
         """Extend the held lease of `kind` by `ttl_s` from now.
 
-        Only a voice call renews: its length is the conversation's, so its
+        A voice call and a private turn renew (each lasts as long as its
+        conversation): its length is the conversation's, so its
         holder renews while the call lives and a crashed holder still lets the
         lease expire (``expire_if_due``) and the parked seats come back.
         """
         with self._lock:
             if self.lease is None or self.lease.get("kind") != kind:
                 return {"ok": False, "error": "no %s lease held" % kind}
-            if kind != "voice_call":
+            if kind not in ("voice_call", "private_turn"):
                 return {"ok": False, "error": "lease %s does not renew" % kind}
             self.lease["expires_at"] = time.time() + float(ttl_s)
             return {"ok": True, "expires_at": self.lease["expires_at"]}
@@ -4200,10 +4276,11 @@ class Arbiter:
             return emb
         return None
 
-    def _displaceable_seats(self, park_brain=False):
+    def _displaceable_seats(self, park_brain=False, displace_sidekick=False):
         """``[(role, seat)]`` that `_evict_pinned` stands down: the pinned GPU
-        seats (and a GPU embedder) the lease may take, R10 applied."""
-        keep_models = self._retained_models()
+        seats (and a GPU embedder) the lease may take, R10 applied (except for
+        rp.LEASES_DISPLACING_SIDEKICK, which passes ``displace_sidekick``)."""
+        keep_models = set() if displace_sidekick else self._retained_models()
         if park_brain:
             brain = ((self.plan or {}).get("seats") or {}).get("interactive_brain") or {}
             keep_models = keep_models - {brain.get("model_id")}
@@ -4213,7 +4290,7 @@ class Arbiter:
             cands.append(("embedder", emb))
         out = []
         for role, seat in cands:
-            if role in rp.RETAINED_THROUGH_LEASE:
+            if role in rp.RETAINED_THROUGH_LEASE and not displace_sidekick:
                 continue
             if seat.get("model_id") in keep_models:
                 continue
@@ -4257,7 +4334,18 @@ class Arbiter:
         except Exception:
             return 0
 
-    def _evict_pinned(self, park_brain=False):
+    def _private_seat(self, model_id, entry=None):
+        """The seat a `private_turn` lease loads: the plan's own seat for that
+        model when a role already names it (sized by the plan), else one at
+        the record's declared window or the tool-seat window."""
+        for _role, seat in ((self.plan or {}).get("seats") or {}).items():
+            if isinstance(seat, dict) and seat.get("model_id") == model_id:
+                return dict(seat)
+        entry = entry or {}
+        return {"model_id": model_id, "device": "gpu",
+                "num_ctx": int(entry.get("serve_num_ctx") or rp.TOOL_SEAT_NUM_CTX)}
+
+    def _evict_pinned(self, park_brain=False, displace_sidekick=False):
         """Stand down the seats a lease may take. R10 says which it may not.
 
         Every pinned llama.cpp seat on the card is displaceable whatever its
@@ -4284,7 +4372,7 @@ class Arbiter:
         exactly.
         """
         displaced = []
-        for role, seat in self._displaceable_seats(park_brain):
+        for role, seat in self._displaceable_seats(park_brain, displace_sidekick):
             t0 = time.time()
             self.llama.evict(seat["model_id"])
             self.ollama.evict(seat["model_id"])
@@ -4293,7 +4381,7 @@ class Arbiter:
                          round(time.time() - t0, 2))
         return displaced
 
-    def _restore_pinned(self, roles=None):
+    def _restore_pinned(self, roles=None, include_retained=False):
         """Reload what a lease actually displaced.
 
         `roles` comes from the lease's own record, so a retained seat is not
@@ -4306,7 +4394,8 @@ class Arbiter:
             roles = [r for r, _s in self._pinned_llama_seats()]
             if self._gpu_embedder() is not None:
                 roles.append("embedder")
-        wanted = {r for r in roles if r not in rp.RETAINED_THROUGH_LEASE}
+        wanted = {r for r in roles
+                  if include_retained or r not in rp.RETAINED_THROUGH_LEASE}
         self._serve_pinned_seats(wanted)
         if "embedder" in wanted:
             self._restore_embedder()

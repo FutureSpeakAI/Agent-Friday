@@ -369,6 +369,12 @@ _PROMPT_ROLES = frozenset(r for r in ROLES if r not in NO_PROMPT_ROLES
 # subtracted here, in the plan, rather than discovered at load time.
 RETAINED_THROUGH_LEASE = frozenset({"sidekick"})
 
+# THE ONE R10 EXCEPTION THAT LOADS A MODEL (Dispatch 2026-11-26, the owner's split, services/local_split). Under the
+# split the sidekick is FridayWeaver 2 and a private turn needs Bonsai 2; the two do not fit a 12 GB card together, so
+# the `private_turn` lease stands the sidekick down too. Friday is not mute meanwhile: Bonsai answers, quick turns
+# included, until the lease idles out and release brings the sidekick back.
+LEASES_DISPLACING_SIDEKICK = frozenset({"private_turn"})
+
 
 def retained_mib(seats: dict) -> int:
     """VRAM a lease cannot reclaim, because R10 keeps those seats resident."""

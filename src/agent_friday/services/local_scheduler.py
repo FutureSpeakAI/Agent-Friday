@@ -88,9 +88,10 @@ TIME_BOUND_KINDS = ("scheduled", "time_bound")
 #: What each Arbiter lease kind is, for ordering. A call is the owner talking;
 #: a job they asked for goes before one nobody is waiting for.
 KIND_CLASS = {"voice_call": "voice", "heavy_turn": "user_job", "image_job": "user_job",
+              "private_turn": "user_job",
               "podcast_voice": "background", "bench_job": "background"}
 #: Lease kinds that load a model (the rest only stand the pinned seats down).
-LOADING_KINDS = ("heavy_turn", "image_job")
+LOADING_KINDS = ("heavy_turn", "image_job", "private_turn")
 #: The admission kind and seat of a recording meeting (see ``MeetingHold``): a
 #: job the owner asked for is not held back by their own recording.
 MEETING_KIND = "meeting_capture"
@@ -1039,6 +1040,10 @@ def lease_grant(arb, kind: str, *, role=None, ttl_s: int = 300,
                 return {"ok": False, "cancelled": True, "queued": True,
                         "error": "The %s request was taken out of the line." % kind}
             held = getattr(arb, "lease", None)
+            if (held is not None and kind == "private_turn" and held.get("kind") == "private_turn"
+                    and held.get("model_id") == role):
+                # Bonsai is already leased for private turns (a draft's pre-load, or another private turn): join it.
+                return {"ok": True, "joined": True, "lease": dict(held)}
             with _LEASE_LOCK:
                 nxt = _next_waiter()
             if held is not None:
@@ -1073,7 +1078,7 @@ def lease_grant(arb, kind: str, *, role=None, ttl_s: int = 300,
 def _lease_word(kind: Any) -> str:
     return {"voice_call": "voice call", "heavy_turn": "heavy model turn",
             "image_job": "image job", "podcast_voice": "podcast voice",
-            "bench_job": "benchmark"}.get(str(kind), str(kind or "lease"))
+            "bench_job": "benchmark", "private_turn": "private turn on Bonsai"}.get(str(kind), str(kind or "lease"))
 
 
 def lease_waiters() -> List[dict]:

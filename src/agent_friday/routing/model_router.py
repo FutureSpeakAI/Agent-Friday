@@ -723,6 +723,22 @@ class ModelRouter:
         """
         ctx = task_context or {}
 
+        # THE OWNER'S SPLIT (services/local_split, setting `local_turn_split`,
+        # off by default). Checked first because it is the owner's explicit
+        # placement of private turns: on Bonsai, on this computer, in every
+        # routing mode -- never redacted to the cloud because Bonsai happens
+        # not to be loaded (chat waits for it instead). Quick, non-private
+        # turns go to FridayWeaver 2. Anything else returns None here and
+        # routes exactly as it does with the split off.
+        try:
+            from agent_friday.services import local_split as _lsplit
+            _split = _lsplit.route_for_turn(self, messages, ctx)
+        except Exception as _e:
+            print("  [ROUTER] split check failed, routing as usual: %s" % _e)
+            _split = None
+        if _split is not None:
+            return _split
+
         if self.needs_vault_access(messages, ctx):
             # `_route_vault` returns None when the owner has disabled vault
             # gating, meaning "I have no special claim on this turn" -- so it
