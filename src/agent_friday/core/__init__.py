@@ -3378,6 +3378,11 @@ DEFAULT_SETTINGS = {
     # hands the model the result; "model" records that the owner chose the
     # old behaviour. Offered in Settings; nothing is preselected.
     "chat_tool_routing": "",
+    # The owner's split (services/local_split), off by default: "off" |
+    # "fridayweaver_quick_bonsai_private" (quick, non-private turns on
+    # FridayWeaver 2; vault and private turns on Bonsai, loaded on demand and
+    # never sent to the cloud). Offered in Settings; changeable by voice.
+    "local_turn_split": "off",
     # The trained tool chooser as a tier of the Laya router
     # (services/laya_router_head): "off" | "shadow" | "on". Ships in shadow and
     # inert until a certified checkpoint exists in this profile's folder.

@@ -5257,5 +5257,19 @@
   "reader_needle": "_settings(settings).get(\"mail_default_account\")",
   "status": "ok",
   "note": "Lists GET /api/mail/draft-accounts (gmail_send.mail_accounts). gmail_send.default_account_id reads it through owner_choices.mail_default_account; choose_account keeps its order: the account named > the replied-to conversation's > this default > the only one > ask. Ask me saves an empty value."
+ },
+ {
+  "section": "Models",
+  "panel": "Models · What answers you",
+  "label": "Off | Quick turns on FridayWeaver 2, private turns on Bonsai",
+  "kind": "choice",
+  "keys": [
+   "local_turn_split"
+  ],
+  "route": "POST /api/settings",
+  "reader_file": "src/agent_friday/services/local_split.py",
+  "reader_needle": "get(\"local_turn_split\")",
+  "status": "ok",
+  "note": "The owner's split (Dispatch 2026-11-26). Off by default. Read on every turn by routing/model_router via services/local_split.route_for_turn; a change re-seats the card (core_routes replan + Arbiter.reseat_to_plan). Mirrored in ui_parts/app.html under Laya."
  }
 ]

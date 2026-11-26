@@ -77,6 +77,7 @@ KEYS_OF = {
     "podcast_length": ("podcasts",),
     "live_laya": ("voice_live_reflex",),
     "dock_visibility": ("dock_custom",),
+    "quick_private_split": ("local_turn_split",),
 }
 LABELS = {
     "switch_model": "the chat model",
@@ -89,6 +90,7 @@ LABELS = {
     "podcast_length": "how long a show runs",
     "live_laya": "Laya acting on her own during cloud calls",
     "dock_visibility": "which workspaces the dock shows",
+    "quick_private_split": "which model answers quick and private turns",
 }
 
 
@@ -369,7 +371,8 @@ register_hooks()
 PATHS = ("settings.models.chat_model", "settings.display.workspace_layout.<workspace>", "settings.display.start_screen",
          "settings.accessibility.big_mode", "settings.hologram.window.<dial>", "settings.calls.stand_back",
          "settings.podcasts.format.<show>", "settings.podcasts.length.<show>",
-         "settings.podcasts.hosts.<a|b>", "settings.laya.live_reflex", "settings.display.dock.<workspace> (show / hide; op=list lists them)")
+         "settings.podcasts.hosts.<a|b>", "settings.laya.live_reflex", "settings.display.dock.<workspace> (show / hide; op=list lists them)",
+         "settings.models.quick_private_split (on: quick turns on FridayWeaver 2, private on Bonsai / off)")
 _LAYOUT_VALUES = ("normal", "fullscreen_chat")
 
 
@@ -549,6 +552,39 @@ def _dock(inp: dict, path: str, value: str) -> str:
     return said
 
 
+SPLIT_PATH = "settings.models.quick_private_split"
+
+
+def _split(inp: dict, value) -> str:
+    """The owner's quick/private split (services/local_split). On asks first, like every widening row; off goes
+    straight back to the default. Either way the card is re-seated to match."""
+    from agent_friday.services import local_split as ls
+    want = ls.parse_mode(value)
+    if want is None:
+        return "SETTING_FAIL: settings.models.quick_private_split takes on or off."
+    cur = ls.mode()
+    if want == cur:
+        return "SETTING_UNCHANGED: %s already reads %s." % (LABELS["quick_private_split"], ls.LABELS[cur])
+    if want == ls.MODE_SPLIT:
+        held = hold("quick_private_split", {"path": SPLIT_PATH, "value": "on"}, old=ls.LABELS[cur],
+                    new=ls.LABELS[want], run_as="set_setting",
+                    consequence=("Quick, non-private messages would be answered by FridayWeaver 2 on the graphics "
+                                 "card; your vault and private messages by Bonsai, which loads when needed and is "
+                                 "never swapped for the cloud."))
+        if held:
+            return held
+    else:
+        record_change("quick_private_split", label=LABELS["quick_private_split"], old=ls.LABELS[cur],
+                      new=ls.LABELS[want], snapshot=_snapshot(KEYS_OF["quick_private_split"]), by=BY_ASKING)
+    res = ls.apply_mode(want)
+    _tell_pages(SPLIT_PATH)
+    tail = "" if res.get("ok", True) else " (the models will switch at the next restart: %s)" % res.get("error")
+    if want == ls.MODE_SPLIT:
+        return ("SPLIT_ON: quick turns now go to FridayWeaver 2 and private ones to Bonsai, which loads when "
+                "needed. Each answer shows which model wrote it." + tail)
+    return "SPLIT_OFF: back to Off; Friday picks the model as usual." + tail
+
+
 #: Who made a change applied the moment the owner asked (no card): their own words were the decision.
 BY_ASKING = "you, by asking"
 
@@ -574,6 +610,8 @@ def tool(inp) -> str:
     settings too, so Friday points to the row's own Undo, which is the owner's click."""
     inp = inp or {}
     _p = str(inp.get("path") or "").strip().lower().replace(" ", "_")
+    if _p == SPLIT_PATH and str(inp.get("op") or "").strip().lower() != "undo":
+        return _split(inp, inp.get("value"))
     if (_p == DOCK_PATH or _p.startswith(DOCK_PATH + ".")) and str(inp.get("op") or "").strip().lower() != "undo":
         return _dock(inp, _p, str(inp.get("value") if inp.get("value") is not None else "").strip())
     if str(inp.get("op") or "").strip().lower() == "undo":

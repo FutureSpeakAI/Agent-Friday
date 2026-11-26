@@ -2235,6 +2235,11 @@ def chat():
                 "conversation_id": _conversation_id,
                 "conversation_seat": _conv_seat,
                 "cloud_model": settings.get('orchestrator_model') or ANTHROPIC_MODEL_DEFAULT,
+                # For the owner's split (services/local_split): the tier-1
+                # verdict computed above, so a quick turn can go to the quick
+                # seat. Unread when the split is off.
+                "turn_shape": _turn_shape,
+                "user_text": message,
             })
             if _route_info.get('implied_intent') and not _cloud_intent.current():
                 _cloud_intent.set_intent(_route_info['implied_intent'], source='task_override')
@@ -2301,6 +2306,19 @@ def chat():
         elif _cloud_turn == 'vault':
             print("  [ROUTER] refusing route_mode=cloud: this turn touches "
                   "vault-tier material and stays local")
+
+        # The owner's split: a private turn waits for Bonsai on this computer
+        # (the wait is narrated on screen through the tool sink) or is refused
+        # here. It is never turned into a cloud route.
+        try:
+            from agent_friday.services import local_split as _lsplit
+            _route_info = _lsplit.prepare_turn(_route_info)
+        except Exception as _lse:
+            if _route_info.get('local_split') == 'private':
+                _route_info = dict(_route_info, refuse=True, offer_cloud_switch=False,
+                                   local_unavailable=False,
+                                   warning=("Bonsai couldn't load to answer this privately "
+                                            "(%s). I didn't send it anywhere else." % _lse))
 
         _provider = _route_info.get('provider', 'cloud')
         _routed_local = bool(_route_info.get('is_local'))

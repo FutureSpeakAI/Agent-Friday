@@ -384,6 +384,18 @@ def _generate_agent_untraced(messages, system=None, model=None, max_tokens=16384
     except Exception:
         pass
 
+    # The owner's split (services/local_split): a private turn waits for Bonsai
+    # here or is refused locally; never a cloud route. No-op otherwise.
+    try:
+        from agent_friday.services import local_split as _lsplit
+        route = _lsplit.prepare_turn(route)
+        routed_model = route.get('model') or routed_model
+    except Exception as _lse:
+        if route.get('local_split') == 'private':
+            route = dict(route, refuse=True, local_unavailable=False,
+                         warning="Bonsai couldn't load to answer this privately "
+                                 "(%s). I didn't send it anywhere else." % _lse)
+
     # Honor the router's verdicts BEFORE any provider sees the request.
     # refuse=True means vault access was required and the configured fallback
     # is deny/warn — no model call is permitted at all.
@@ -956,7 +968,7 @@ CLAUDE_TOOLS = [
          "detail": {"type": "string", "enum": ["brief", "full"], "description": "brief (default): a few lines; full: the structured snapshot."},
          "look": {"type": "string", "enum": ["screen"], "description": "screen: what the user's open workspace shows now (rows, ticks, filters), as counts for voice."},
          "pin": {"type": "boolean"}}}},
-    {"name": "set_setting", "description": "Change one Settings row by its path; op=undo changes nothing and says where the row's own Undo is (30 days). It shows old and new and waits for the user's own yes (SETTING_NEEDS_YES); a conditional yes does not count. Paths: settings.models.chat_model, .display.start_screen, .display.workspace_layout.<ws>, .accessibility.big_mode, .hologram.window.<dial>, .calls.stand_back, .podcasts.format.<show>, .podcasts.hosts.<a|b> (host name), .display.dock.<ws> (value show or hide; op=list says what the dock shows and hides).",
+    {"name": "set_setting", "description": "Change one Settings row by its path; op=undo changes nothing and says where the row's own Undo is (30 days). It shows old and new and waits for the user's own yes (SETTING_NEEDS_YES); a conditional yes does not count. Paths: settings.models.chat_model, .display.start_screen, .display.workspace_layout.<ws>, .accessibility.big_mode, .hologram.window.<dial>, .calls.stand_back, .podcasts.format.<show>, .podcasts.hosts.<a|b> (host name), .display.dock.<ws> (value show or hide; op=list says what the dock shows and hides), .models.quick_private_split (on: quick turns on FridayWeaver 2 and private ones on Bonsai; off).",
      "input_schema": {"type": "object", "properties": {"path": {"type": "string"}, "value": {"type": "string"}, "op": {"type": "string"}}, "required": ["path"]}},
     {"name": "task_control", "description": "Stop or steer background work. op=stop ends a running workflow or task after the step it is on: that step finishes, the next never starts, nothing done is undone; with no target it stops the steps on the user's screen. op=stop_all stops everything at once (only when the user asks to stop everything). op=steer messages a running task without stopping it. target: workflow name, task id, or words from a task's name. TASK_STOPPED, TASK_STEERED and TASK_NONE report what happened.",
      "input_schema": {"type": "object", "properties": {

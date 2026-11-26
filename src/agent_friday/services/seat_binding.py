@@ -129,6 +129,14 @@ def overrides_from_settings(settings: dict) -> dict:
         if _is_cloud_binding(entry, model):
             continue
         out[seat] = model
+    # The owner's split (services/local_split, off by default): FridayWeaver 2
+    # is the pinned Quick reflexes seat while it is on; Bonsai then loads on
+    # demand for private turns through the `private_turn` lease.
+    try:
+        from agent_friday.services import local_split as _lsplit
+        out.update(_lsplit.seat_override(settings or {}))
+    except Exception:
+        pass
     return out
 
 

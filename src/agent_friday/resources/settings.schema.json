@@ -846,6 +846,13 @@
    },
    "type": "object"
   },
+  "local_turn_split": {
+   "enum": [
+    "off",
+    "fridayweaver_quick_bonsai_private"
+   ],
+   "type": "string"
+  },
   "local_voice_asr_model": {
    "type": "string"
   },

@@ -1560,6 +1560,8 @@ _VOICE_ENUMS = {
     "call_mode": ("automatic", "ask", "off"),
     # Typed chat: who picks the tool (services/chat_tool_routing). Same rule.
     "chat_tool_routing": ("laya", "model"),
+    # The owner's split (services/local_split). Same rule.
+    "local_turn_split": ("off", "fridayweaver_quick_bonsai_private"),
 }
 
 
@@ -2067,8 +2069,10 @@ def api_settings():
         # same silent-override defect wearing different clothes. Where the choice
         # cannot be seated the plan records a refusal with its reason, which
         # /api/residency/status and Settings -> Models both surface.
+        _split_moved = 'local_turn_split' in (new_settings or {})
         if any(k in (new_settings or {}) for k in
-               ('capability_routing', 'orchestrator_model', 'subagent_model')):
+               ('capability_routing', 'orchestrator_model', 'subagent_model',
+                'local_turn_split')):
             def _replan_after_seat_change():
                 try:
                     from agent_friday.services.residency_arbiter import get_arbiter
@@ -2082,6 +2086,11 @@ def api_settings():
                     seats = {r: (v or {}).get('model_id')
                              for r, v in (plan.get('seats') or {}).items()}
                     print('  [RESIDENCY] replanned after a seat change: %s' % seats)
+                    if _split_moved:
+                        # The split moves the Quick reflexes seat itself
+                        # (Bonsai <-> FridayWeaver 2): make the card match.
+                        print('  [RESIDENCY] split setting: %s'
+                              % arb.reseat_to_plan('local_turn_split changed'))
                     for f in (plan.get('refusals') or []):
                         print('  [RESIDENCY] cannot seat %s: %s'
                               % (f.get('role'), f.get('explanation')))

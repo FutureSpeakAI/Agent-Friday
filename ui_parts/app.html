@@ -22264,6 +22264,36 @@ function LayaPilotPanel({s, save}) {
 }
 // End Laya chat pilot panel
 
+function LocalTurnSplitPanel({s, save}) {
+  // The owner's split (services/local_split; Dispatch 2026-11-26). Off by default and only ever chosen here or by
+  // voice ("switch quick turns to FridayWeaver"). Each answer still shows which model wrote it.
+  const E = React.createElement;
+  const choice = (s && s.local_turn_split) || 'off';
+  const pickSplit = (value, label, desc) => E('button', {
+    type:'button', className:'settings-btn', 'aria-pressed': choice === value,
+    onClick:() => save({local_turn_split:value}),
+    style:{display:'block',textAlign:'left',width:'100%',marginBottom:6,fontSize:12,
+      borderColor: choice === value ? 'var(--st-accent, #00d4ff)' : undefined}},
+    E('span', {style:{display:'block',fontWeight:600}}, label),
+    E('span', {style:{display:'block',fontSize:11,color:'var(--st-dim)',marginTop:2}}, desc));
+  return E('div', {style:{margin:'0 0 18px'}},
+    E('div', {style:{fontSize:12.5,fontWeight:600,margin:'0 0 4px'}}, 'Quick turns and private turns'),
+    E('div', {style:{fontSize:11.5,lineHeight:1.55,color:'var(--st-dim)',margin:'0 0 8px'}},
+      'Which model on this PC answers which kind of message.'),
+    pickSplit('off', 'Off',
+      fridayName() + ' picks the model as it does today.'),
+    pickSplit('fridayweaver_quick_bonsai_private', 'Quick turns on FridayWeaver 2, private turns on Bonsai',
+      'Quick commands and short everyday messages are answered by FridayWeaver 2, which stays ready on the graphics card. ' +
+      'Your vault and anything marked private is answered by Bonsai, which loads when it is needed (about 40 seconds the first time). ' +
+      'A private message waits for Bonsai and says so on screen. It is never sent to the cloud instead.'),
+    E('div', {style:{fontSize:11,lineHeight:1.6,color:'var(--st-dim)',marginTop:4}},
+      choice === 'fridayweaver_quick_bonsai_private'
+        ? 'On. Every answer shows which model wrote it. Longer or harder messages go where they would with this off. You can also say “turn the quick-turn split off”.'
+        : 'Off. You can also say “switch quick turns to FridayWeaver”.')
+  );
+}
+// End quick/private split panel
+
 function LayaReflexPanel({s, save}) {
   // Turns answered with no model round (services/reflex_chat). The approval-reply
   // switch is on by default; "open the X" is the owner's choice, unchosen at first.
@@ -22368,6 +22398,7 @@ function SettingsTabLaya({s, save} = {}) {
   const moved = [
     React.createElement(StSection, { title: "What Laya learns about you", key: 'moved-learn' }, E(LayaLearningPanel, {key: 'learn' + taught, s: st, save: sv})),
     React.createElement(StSection, { title: "Instant answers (no model)", key: 'moved-reflex' }, E(LayaReflexPanel, {s: st, save: sv})),
+    React.createElement(StSection, { title: "Quick turns and private turns", key: 'local-turn-split' }, E(LocalTurnSplitPanel, {s: st, save: sv})),
     React.createElement(StSection, { title: "Laya chat pilot", key: 'moved-pilot' }, E(LayaPilotPanel, {s: st, save: sv})),
     React.createElement(StSection, { title: "Safe writes (off until you turn them on)", key: 'moved-safe' }, E(LayaSafeWritesPanel, null))];
   if (err && !d) return E('div', {'data-laya-settings': 'error'}, E('div', {role:'status', style:dim}, err), moved);
