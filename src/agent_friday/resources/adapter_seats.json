@@ -1,11 +1,12 @@
 {
-  "_comment": "Fine-tuned LoRA adapters Friday may install as their own seats (services/adapter_seats). Each entry pins the adapter's sha256: only that exact file installs. base_from names the store record whose weights and projector the seat reuses; that record is never modified, so it stays the one-step rollback.",
+  "_comment": "Fine-tuned LoRA adapters Friday may install as their own seats (services/adapter_seats). Each entry pins the adapter's sha256: only that exact file installs. source is where the file is found, relative to Friday's home; the app takes no path from a request. base_from names the store record whose weights and projector the seat reuses; that record is never modified, so it stays the one-step rollback.",
   "adapters": [
     {
       "model_id": "gemma4:e2b-fridayweaver-2.0-r1",
       "label": "FridayWeaver-2.0-r1",
       "base_from": "gemma4:e2b-fridayweaver-1.0",
       "adapter_file": "fridayweaver-2.0-r1-lora.gguf",
+      "source": "bench/bakeoff-2026-11-18/fw2/fw2r1-lora.gguf",
       "sha256": "3b678889c13b3edfcf8f7d8161fdfa9618782d3edc003c634d91c8f05a9de1f6",
       "bytes": 12543968,
       "origin": {

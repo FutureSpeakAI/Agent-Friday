@@ -316,12 +316,13 @@ def adapter_seats_status():
 @models_screen_bp.route("/api/models/adapter-seats/install", methods=["POST"])
 @login_required
 def adapter_seats_install():
-    """Install a pinned adapter (resources/adapter_seats.json) from a local file. Only the exact sha256 installs; the
-    base record is never written."""
+    """Install a pinned adapter (resources/adapter_seats.json) from where its manifest entry says it is, under
+    Friday's home. The request names only the model id, never a path. Only the exact sha256 installs; the base
+    record is never written."""
     body = request.get_json(silent=True) or {}
     try:
         from agent_friday.services import adapter_seats
-        out = adapter_seats.install(str(body.get("model_id") or ""), body.get("source"))
+        out = adapter_seats.install(str(body.get("model_id") or ""))
         return jsonify({"status": "ok" if out.get("ok") else "error", **out}), (200 if out.get("ok") else 400)
     except Exception as e:
         return api_error(e, "Couldn't install the adapter seat")

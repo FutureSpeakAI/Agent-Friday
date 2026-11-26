@@ -152,10 +152,13 @@ def _client():
     return app.test_client()
 
 
-def test_routes_install_status_uninstall(store):
+def test_routes_install_status_uninstall(store, monkeypatch):
     c = _client()
+    from agent_friday import paths
+    monkeypatch.setattr(paths, "friday_home", lambda: store["root"])
+    store["entry"]["source"] = "bench/fw2r1-lora.gguf"
     r = c.post("/api/models/adapter-seats/install",
-               json={"model_id": "gemma4:e2b-fridayweaver-2.0-r1", "source": str(store["src"])})
+               json={"model_id": "gemma4:e2b-fridayweaver-2.0-r1", "source": "C:/Windows/win.ini"})
     assert r.status_code == 200, r.get_json()
     rows = c.get("/api/models/adapter-seats").get_json()["adapters"]
     assert rows[0]["installed"] is True
@@ -171,3 +174,16 @@ def test_network_source_refused_and_hash_not_echoed(store):
     store["src"].write_bytes(b"not it")
     out = ads.install("gemma4:e2b-fridayweaver-2.0-r1", store["src"])
     assert not out["ok"] and __import__("hashlib").sha256(b"not it").hexdigest() not in out["error"]
+
+
+def test_pinned_source_cannot_leave_friday_home(store, monkeypatch):
+    from agent_friday import paths
+    monkeypatch.setattr(paths, "friday_home", lambda: store["root"])
+    store["entry"]["source"] = "../../outside.gguf"
+    out = ads.install("gemma4:e2b-fridayweaver-2.0-r1")
+    assert not out["ok"] and "not under" in out["error"]
+
+
+def test_shipped_manifest_source_is_relative():
+    e = ads._read_manifest()["gemma4:e2b-fridayweaver-2.0-r1"]
+    assert not e["source"].startswith(("/", "\\")) and ":" not in e["source"] and ".." not in e["source"]

@@ -34,7 +34,22 @@ def _is_lora(path) -> bool:
     return meta.get("general.type") == "adapter" and meta.get("adapter.type") == "lora"
 
 
-def install(model_id: str, source) -> dict:
+def _pinned_source(entry: dict):
+    """The manifest's `source`, resolved under Friday's home; None if it would leave it."""
+    from agent_friday import paths
+    home = Path(paths.friday_home()).resolve()
+    rel = str(entry.get("source") or "")
+    if not rel:
+        return None
+    cand = (home / rel).resolve()
+    try:
+        cand.relative_to(home)
+    except ValueError:
+        return None
+    return cand
+
+
+def install(model_id: str, source=None) -> dict:
     """Copy the pinned adapter into the store and record the seat. Idempotent."""
     entry = manifest().get(model_id)
     if not entry:
@@ -50,7 +65,12 @@ def install(model_id: str, source) -> dict:
     if have and dest.exists() and ms.sha256_of(dest) == entry["sha256"]:
         return {"ok": True, "already": True, "entry": have}
 
-    src = Path(source) if source else dest
+    if source is None:
+        src = _pinned_source(entry)
+        if src is None:
+            return {"ok": False, "error": "the pinned source for %s is not under Friday's home" % model_id}
+    else:
+        src = Path(source)          # service callers and tests only; the HTTP route never passes a path
     # A local file only: a network path would be probed (and could stall, or authenticate to another host) before
     # the hash could refuse it.
     if str(src).startswith(("\\\\", "//")):
