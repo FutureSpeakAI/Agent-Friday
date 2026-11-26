@@ -18023,6 +18023,10 @@ def _orb_tool_trace(orb_id, name, args, result, duration_ms):
             "duration_ms": int(duration_ms),
             "ts": _time.time(),
         })
+        from agent_friday.services import action_journal as _aj_rcpt
+        _rcpt = _aj_rcpt.receipt_in(result, tool=name, within_s=duration_ms / 1000.0 + 2.0) if _ok else None
+        if _rcpt:
+            process_update(orb_id, receipt=_rcpt)
     except Exception:
         pass
 
