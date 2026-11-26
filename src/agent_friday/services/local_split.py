@@ -209,24 +209,29 @@ def ensure_private_seat(*, wait_s: float = PRIVATE_WAIT_S, arbiter=None, for_tur
     arbiter = _arbiter(arbiter)
     if arbiter is None:
         return {"ok": False, "error": "the local model manager is not running"}
+    t0 = time.time()
+    if for_turn:
+        # Claim the draft's pre-load before anything else, under its lock: a cancel that has not released yet now
+        # sees it used and leaves Bonsai alone (critic, 11-26).
+        with _PREWARM.lock:
+            _PREWARM.used = True
+            pending = _PREWARM.thread
+        if pending is not None and pending is not threading.current_thread() and pending.is_alive():
+            # The draft already started Bonsai's load: join it instead of queueing a second grant behind it.
+            pending.join(wait_s)
     lease = getattr(arbiter, "lease", None) or {}
     if lease.get("kind") in ("voice_call", "podcast_voice"):
         # A local voice call has the card; queueing behind it would be minutes of silence. Not the cloud either.
         return {"ok": False, "error": "a local voice call is using the graphics card"}
     if lease.get("kind") == "private_turn" and _serving(PRIVATE_MODEL):
         arbiter.renew("private_turn", PRIVATE_IDLE_S)
-        if for_turn:
-            _PREWARM.mark_used()
-        return {"ok": True, "waited_s": 0.0, "renewed": True}
+        return {"ok": True, "waited_s": round(time.time() - t0, 2), "renewed": True}
     if _serving(PRIVATE_MODEL) and not lease:
-        return {"ok": True, "waited_s": 0.0, "resident": True}
-    t0 = time.time()
+        return {"ok": True, "waited_s": round(time.time() - t0, 2), "resident": True}
     out = dict(arbiter.grant("private_turn", role=PRIVATE_MODEL, ttl_s=PRIVATE_IDLE_S, wait_s=wait_s) or {})
     out["waited_s"] = round(time.time() - t0, 2)
     if out.get("ok") and not _serving(PRIVATE_MODEL):
         out.update(ok=False, error="Bonsai's lease was granted but it is not answering")
-    if out.get("ok") and for_turn:
-        _PREWARM.mark_used()
     return out
 
 
@@ -317,14 +322,17 @@ def _start_prewarm(conv, arbiter=None):
 
 def _release_prewarm(arbiter=None):
     """Give the card back to FridayWeaver, unless a private turn or private conversation has since claimed Bonsai."""
+    # The whole check-and-release runs under the pre-load's lock, so a turn that claims Bonsai (ensure_private_seat
+    # sets `used` under this lock first) either wins and the cancel does nothing, or waits until FridayWeaver is back
+    # and then loads Bonsai fresh. Bonsai is never evicted under a turn.
     with _PREWARM.lock:
         if _PREWARM.used or (_PREWARM.conv and _conv_is_private_now(_PREWARM.conv)):
             return False
         _PREWARM.thread = None
-    arb = _arbiter(arbiter)
-    lease = (getattr(arb, "lease", None) or {}) if arb is not None else {}
-    if lease.get("kind") == "private_turn":
-        arb.release("private_turn")
+        arb = _arbiter(arbiter)
+        lease = (getattr(arb, "lease", None) or {}) if arb is not None else {}
+        if lease.get("kind") == "private_turn":
+            arb.release("private_turn")
     _DRAFT_STATS["cancels"] += 1
     return True
 

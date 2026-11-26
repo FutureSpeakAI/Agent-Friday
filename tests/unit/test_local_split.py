@@ -340,3 +340,66 @@ def test_a_local_voice_call_lease_fails_fast_not_minutes(world):
     arb = _Arb(lease={"kind": "voice_call"})
     out = ls.ensure_private_seat(arbiter=arb)
     assert not out["ok"] and arb.calls == []
+
+
+class _SlowArb:
+    """An arbiter whose private_turn grant takes a while (a cold Bonsai load), through the real scheduler."""
+
+    def __init__(self, world, load_s=1.0):
+        self.lease, self.world, self.load_s, self.grants = None, world, load_s, 0
+
+    def grant(self, kind, *, role=None, ttl_s=300, wait_s=None, cls=None):
+        from agent_friday.services import local_scheduler
+        return local_scheduler.lease_grant(self, kind, role=role, ttl_s=ttl_s, wait_s=wait_s, cls=cls)
+
+    def _grant_now(self, kind, *, role=None, ttl_s=300):
+        import time as _t
+        self.grants += 1
+        _t.sleep(self.load_s)
+        self.world["serving"] = {ls.PRIVATE_MODEL}
+        self.lease = {"kind": kind, "model_id": role}
+        return {"ok": True, "lease": dict(self.lease)}
+
+    def renew(self, kind, ttl):
+        return {"ok": True}
+
+    def release(self, kind=None):
+        self.lease = None
+        self.world["serving"] = {ls.QUICK_MODEL}
+        return {"ok": True}
+
+
+def test_a_turn_sent_while_the_draft_is_loading_bonsai_joins_it(draft, world):
+    import time as _t
+    arb = _SlowArb(world, load_s=1.0)
+    ls.observe_draft("what's my passport number in the vault", "c9", arbiter=arb)
+    _t.sleep(0.2)
+    t0 = _t.time()
+    out = ls.ensure_private_seat(arbiter=arb, wait_s=10)
+    assert out["ok"], out
+    assert _t.time() - t0 < 3 and arb.grants == 1          # joined the draft's load, no second grant, no timeout
+
+
+def test_two_private_grants_join_instead_of_waiting(world):
+    from agent_friday.services import local_scheduler
+    arb = _SlowArb(world, load_s=0.0)
+    arb.lease = {"kind": "private_turn", "model_id": ls.PRIVATE_MODEL}
+    out = local_scheduler.lease_grant(arb, "private_turn", role=ls.PRIVATE_MODEL, wait_s=5)
+    assert out["ok"] and out.get("joined") and arb.grants == 0
+
+
+def test_cancel_after_a_turn_claimed_bonsai_does_nothing(draft, world, monkeypatch):
+    arb = _SlowArb(world, load_s=0.0)
+    ls.observe_draft("what's my passport number in the vault", "c9", arbiter=arb)
+    _wait_prewarm()
+    ls.ensure_private_seat(arbiter=arb)                    # the owner sent it
+    monkeypatch.setattr(ls, "DRAFT_CANCEL_AFTER_S", 0.0)
+    ls.observe_draft("thanks, open the weather app", "c9", arbiter=arb)
+    assert arb.lease is not None and ls.PRIVATE_MODEL in world["serving"]
+
+
+def test_agent_path_passes_the_conversation_id():
+    import inspect
+    from agent_friday.services import agent
+    src = inspect.getsource(agent._generate_agent_untraced)
+    assert '"conversation_id": (session_ctx or {}).get("conversation_id")' in src

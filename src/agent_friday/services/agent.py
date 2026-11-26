@@ -349,6 +349,9 @@ def _generate_agent_untraced(messages, system=None, model=None, max_tokens=16384
             # — set by the voice pipeline's own call site
             # (routes/voice.py), never inferred from message content.
             "is_voice": bool((session_ctx or {}).get("is_voice")),
+            # The owner's split keeps a conversation that went private on
+            # Bonsai (services/local_split); it needs to know which one.
+            "conversation_id": (session_ctx or {}).get("conversation_id"),
         }) or {}
         provider = route.get('provider', 'cloud')
         routed_model = route.get('model') or model
