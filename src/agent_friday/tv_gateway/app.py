@@ -323,6 +323,8 @@ def create_app(tailnet: bool = False) -> Flask:
     _voices.register(app, _refuse)               # GET /tv/v1/voices, POST /tv/v1/voice/switch
     from agent_friday.tv_gateway import conversation_state as _conversation_state
     _conversation_state.register(app, _refuse)   # POST /tv/v1/model/switch, GET /tv/v1/conversations/<id>/state
+    from agent_friday.tv_gateway import voice_bridge as _voice_bridge
+    _voice_bridge.register(app, _refuse)         # GET (WebSocket) /tv/v1/voice/session, POST /tv/v1/tts
 
     @app.get("/tv/v1/stt")
     def stt_ready():
