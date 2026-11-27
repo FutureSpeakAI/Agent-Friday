@@ -2732,9 +2732,12 @@ def chat():
             "provider": _provider,
             # The routed model, read by the governance receipt's `chosen_by`.
             "model": str(_route_info.get('model') or ''),
-            # Laya 2's tier-1 verdict for this turn (or None): read only by
-            # the local payload's reasoning-effort choice.
+            # Laya 2's tier-1 verdict for this turn (or None): read by the local
+            # payload's reasoning-effort choice and the mode-T adapter strength.
             "turn_shape": _turn_shape,
+            # The router's vault verdict: a mode-T adapter stays at strength 0
+            # on these turns (services/tool_adapter).
+            "vault_access": _vault_access,
             # Which conversation this turn belongs to. An approval card raised
             # here carries it, so services/approval_executor can report the
             # outcome back into this chat when the owner approves the card

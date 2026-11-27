@@ -1712,6 +1712,21 @@ def _openai_leg_is_local(bound):
         return False
 
 
+def _tool_adapter_field(model, over, turn_shape, session_ctx):
+    """The per-request adapter strength for a mode-T seat (services/tool_adapter), or None.
+    A failure here sends no field, and a per-request seat then runs at its launch strength 0,
+    the plain base (test_tool_adapter_mode_t)."""
+    try:
+        from agent_friday.services import model_store as _ms_ta
+        from agent_friday.services import tool_adapter as _ta
+        shape = over.get("turn_shape")
+        if shape is None:
+            shape = turn_shape if turn_shape is not None else (session_ctx or {}).get("turn_shape")
+        return _ta.request_field(_ms_ta.get(model), _load_settings() or {}, shape, session_ctx)
+    except Exception:
+        return None
+
+
 @_sched_admitted("model_router.openai", local=_openai_leg_is_local)
 def _call_openai(messages, system=None, model=None, max_tokens=None,
                  temperature=None, orb_label=None, orb_icon='☁️',
@@ -2134,6 +2149,10 @@ def _call_openai(messages, system=None, model=None, max_tokens=None,
             # back to llama.cpp's own `timings`, which carry exact counts.
             if payload.get("stream"):
                 payload.setdefault("stream_options", {})["include_usage"] = True
+            if local_bypass:
+                _lora = _tool_adapter_field(model, _over, turn_shape, session_ctx)
+                if _lora is not None:
+                    payload["lora"] = _lora
             _trace_outgoing("_call_openai", pname, model, payload,
                             {"local_bypass": bool(local_bypass),
                              "tools_in": len(tools or []),

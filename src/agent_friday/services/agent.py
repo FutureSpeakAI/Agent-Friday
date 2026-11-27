@@ -401,6 +401,9 @@ def _generate_agent_untraced(messages, system=None, model=None, max_tokens=16384
                    "model. Load one in Settings → Models (or adjust "
                    "model_routing.vault_cloud_fallback), then retry."), []
     vault_access = bool(route.get('vault_access'))
+    if isinstance(session_ctx, dict) and vault_access:
+        # A mode-T adapter stays at strength 0 on vault turns (services/tool_adapter).
+        session_ctx["vault_access"] = True
 
     # Re-gate the system prompt per LEG, not once for the predicted
     # provider — see the `system_builder` docstring above. Without a builder,

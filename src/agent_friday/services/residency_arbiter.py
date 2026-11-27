@@ -691,6 +691,16 @@ def join_seat_ready_hooks(timeout: float = 5.0) -> None:
             _SEAT_READY_THREADS.remove(t)
 
 
+def _adapter_per_request(model_id: str) -> bool:
+    """A mode-T seat: its adapter loads at strength 0 and each request names the strength
+    (services/tool_adapter; test_tool_adapter_mode_t)."""
+    try:
+        from agent_friday.services import model_store, tool_adapter
+        return tool_adapter.per_request(model_store.get(model_id))
+    except Exception:
+        return False
+
+
 def _merge_declared_args(cmd: list, declared: list) -> list:
     """Apply a model's declared llama-server flags over the default command.
 
@@ -2039,6 +2049,8 @@ class LlamaServerBackend:
                     "to serve the base under the fine-tune's name"
                     % (model_id, lora_path))
             cmd += ["--lora", str(lora_path)]
+            if _adapter_per_request(model_id):
+                cmd += ["--lora-init-without-apply"]
         if n_cpu_moe is not None:
             cmd += ["--n-cpu-moe", str(n_cpu_moe)]
         # A CPU SEAT KEEPS OFF THE CARD. `-ngl 0` moves no layers, but a CUDA
@@ -2128,7 +2140,8 @@ class LlamaServerBackend:
                 ready = False
             if ready:
                 if lora_path:
-                    why = self._adapter_missing(port, lora_path)
+                    why = self._adapter_missing(
+                        port, lora_path, unapplied_ok=_adapter_per_request(model_id))
                     if why:
                         proc.terminate()
                         raise TransitionError(
@@ -2166,9 +2179,10 @@ class LlamaServerBackend:
                               % (Path(binary).name, timeout, model_id))
 
     @staticmethod
-    def _adapter_missing(port: int, lora_path) -> str | None:
+    def _adapter_missing(port: int, lora_path, unapplied_ok: bool = False) -> str | None:
         """Ask the seat what adapters it loaded. `None` when the adapter is
-        there at a non-zero scale; otherwise the reason.
+        there at a non-zero scale (or, for a mode-T seat started with
+        `--lora-init-without-apply`, there at any scale); otherwise the reason.
 
         A definitive negative (the endpoint answers and the adapter is not in
         the list, or is at scale 0) is a refusal. A build without the
@@ -2197,7 +2211,7 @@ class LlamaServerBackend:
                     scale = float(row.get("scale", 0))
                 except Exception:
                     scale = 0.0
-                if scale > 0:
+                if scale > 0 or unapplied_ok:
                     return None
                 return "adapter listed at scale %s" % scale
         return "adapter not in /lora-adapters (%d listed)" % len(rows)

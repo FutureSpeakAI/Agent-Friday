@@ -393,7 +393,8 @@ def register(model_id: str, path, *, source: str = SOURCE_LOCAL,
              local_files: dict | None = None, engine=None,
              serve_args: list | None = None,
              serve_num_ctx: int | None = None,
-             held: str | None = None) -> dict:
+             held: str | None = None,
+             lora_apply: str | None = None) -> dict:
     """Record a model Friday holds, with its facts read from the file.
 
     `engine` is the server binary that can load this file, when stock
@@ -464,6 +465,10 @@ def register(model_id: str, path, *, source: str = SOURCE_LOCAL,
         entry["serve_args"] = [str(a) for a in serve_args]
     if serve_num_ctx:
         entry["serve_num_ctx"] = int(serve_num_ctx)
+    if lora and lora_apply:
+        # "per_request": the adapter loads at strength 0 and each request names
+        # its strength (mode T, services/tool_adapter).
+        entry["lora_apply"] = str(lora_apply)
     if held:
         # Installed and verified, but no seat may use it yet; see available().
         entry["held"] = str(held)
