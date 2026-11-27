@@ -21,9 +21,13 @@ import contextvars
 import copy
 import logging
 from concurrent.futures import Future, ThreadPoolExecutor
-from typing import Callable, Dict, Optional, Tuple
+from typing import Callable, Dict, Optional
 
 _log = logging.getLogger(__name__)
+
+#: The early half's result, for the handler of a SPLIT tool while `_execute_tool` runs it (its
+#: real handler reads this instead of redoing that half). Set only around that one call.
+EARLY = contextvars.ContextVar("friday_parallel_read_early", default=None)
 
 #: Only these: they read this PC's own wiki and knowledge graph and change nothing.
 PARALLEL_READ_TOOLS = frozenset({"read_wiki", "knowledge_query"})
@@ -43,22 +47,31 @@ class Prefetch:
         got = self._started.get(getattr(tu, "id", None))
         if not got:
             return None
-        name, started_with, fut, finish = got
+        name, started_with, fut, split = got
         real = self._handlers.get(name)
 
         def handler(inp):
-            if inp == started_with:
-                early = fut.result()
-                return finish(inp, early) if finish else early
-            return real(inp)
+            if inp != started_with:
+                return real(inp)
+            early = fut.result()
+            if not split:
+                return early
+            # A split tool: its registered handler runs here, inside the real call (and its
+            # context), and takes the early half from EARLY instead of redoing it.
+            tok = EARLY.set(early)
+            try:
+                return real(inp)
+            finally:
+                EARLY.reset(tok)
         return handler
 
 
 def start(tool_uses, handlers: Dict[str, Callable], prepare: Callable[[str, dict], Optional[dict]],
-          split: Optional[Dict[str, Tuple[Callable, Callable]]] = None) -> Prefetch:
+          split: Optional[Dict[str, Callable]] = None) -> Prefetch:
     """Start the round's read-only lookups together. `prepare(name, input)` gives the input the
-    handler will receive (or None to leave that call alone). `split` maps a tool to (early, finish):
-    `early(input)` runs now, `finish(input, early_result)` runs inside the real call. Never raises."""
+    handler will receive (or None to leave that call alone). `split` maps a tool to its early half,
+    `early(input)`, run now; the tool's own handler runs inside the real call with that result in
+    EARLY. Never raises."""
     pre = Prefetch(handlers)
     split = split or {}
     try:
@@ -76,10 +89,11 @@ def start(tool_uses, handlers: Dict[str, Callable], prepare: Callable[[str, dict
                     inp = None
                 if inp is None:
                     continue
-                early, finish = split.get(tu.name) or (handlers[tu.name], None)
+                is_split = tu.name in split
+                early = split[tu.name] if is_split else handlers[tu.name]
                 ctx = contextvars.copy_context()
                 fut: Future = pool.submit(ctx.run, early, copy.deepcopy(inp))
-                pre._started[tu.id] = (tu.name, inp, fut, finish)
+                pre._started[tu.id] = (tu.name, inp, fut, is_split)
         finally:
             pool.shutdown(wait=False)
     except Exception as e:  # noqa: BLE001  the loop runs its calls as before

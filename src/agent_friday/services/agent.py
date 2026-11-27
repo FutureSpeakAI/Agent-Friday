@@ -3134,11 +3134,14 @@ def _search_wiki_early(inp):
     return _search_wiki_pages(query, limit)
 
 
-def _tool_search_wiki(inp, _early_pages=None):
+def _tool_search_wiki(inp):
     """Keyword-search the wiki and return up to N hits with excerpts.
 
-    `_early_pages`: (hits, partial) from _search_wiki_early for this same input, computed beside
-    the round's other reads; the memory-card part still runs here, in this call's own context."""
+    When the cloud loop started this call's page search early (services/parallel_reads), its
+    (hits, partial) is in parallel_reads.EARLY while _execute_tool runs this; the memory-card part
+    always runs here, in this call's own context."""
+    from agent_friday.services import parallel_reads as _par_reads_sw
+    _early_pages = _par_reads_sw.EARLY.get()
     query, limit = _search_wiki_args(inp)
     if query is None:
         return limit
@@ -19008,11 +19011,10 @@ def _call_claude_agent_run(messages, system=None, model=None, max_tokens=16384, 
             # parallel_reads); each call below still passes every gate in order before its result is used.
             from agent_friday.services import parallel_reads as _par_reads
             # search_wiki starts only its page search early; its memory-card half, gated on this
-            # call's origin and provider, runs inside the real call (_tool_search_wiki(_early_pages=)).
+            # call's origin and provider, runs inside the real call (parallel_reads.EARLY).
             _early = _par_reads.start(
                 tool_uses, CLAUDE_TOOL_HANDLERS, lambda _n, _i: _prefetch_prepare(_n, _i, pii_lookup),
-                split=({"search_wiki": (_search_wiki_early,
-                                        lambda _i, _d: _tool_search_wiki(_i, _early_pages=_d))}
+                split=({"search_wiki": _search_wiki_early}
                        if CLAUDE_TOOL_HANDLERS.get("search_wiki") is _tool_search_wiki else None))
             for tu in tool_uses:
                 # No gate note from anything before this call (an earlier call, a
