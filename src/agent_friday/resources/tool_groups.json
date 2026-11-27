@@ -703,6 +703,9 @@
   ],
   "write_file": [
    "files"
+  ],
+  "tv_memory": [
+   "privacy"
   ]
  },
  "annotation_overrides": {

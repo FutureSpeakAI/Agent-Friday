@@ -24,6 +24,9 @@ STRUCTURE = frozenset({
     "records", "segments", "store", "through", "unreadable",
     # integrity_ack (_guarded_append): `problems` is [{key, seq, reason}], the ledger problems the owner accepted: names and numbers
     "problems",
+    # tv_owner_context (tv_gateway/turn.py): the device's principal id, its kind, the TV's room word (grownup | family | kids)
+    # and the TV memory setting's word (all | shareable | none); none carries owner text
+    "principal", "device_kind", "watching", "mode",
     "terminal", "tool", "verified", "list", "made_by", "goal_id", "kept", "label", "kind"})
 SRC = Path(__file__).resolve().parents[2] / "src"
 
