@@ -78,7 +78,7 @@ def test_the_pick_thresholds_restate_the_tiers_file():
     assert r["friday_footprint_mib"]["value"] == 1500 and "FridayFootprintMib = 1500" in PICKER
     assert r["disk_floor_mib"]["value"] == 10240 and "DiskFloorMib       = 10240" in PICKER
     assert r["compute_buffer_mib"]["ub_512"] == 400 and "ComputeBufferMib   = 400" in PICKER
-    assert doc["pick"]["derived"]["weights_mib"].startswith("5671") and "WeightsPtq10Mib    = 5671" in PICKER
+    assert doc["pick"]["derived"]["weights_mib"].startswith("5716") and "WeightsPtq10Mib    = 5716" in PICKER
 
 
 def test_every_tier_row_of_the_json_has_the_same_outputs_in_the_picker():
@@ -114,11 +114,11 @@ def test_the_tier_is_the_one_the_tiers_file_gives(tmp_path, name, facts, tier):
 
 @needs_powershell
 def test_an_8_gb_and_a_6_gb_card_offload_the_layers_the_tiers_file_computes(tmp_path):
-    """tiers.json T4a note: Windows 8 GB -> 56 of 64 layers; Windows 6 GB -> 33."""
+    """tiers.json T4a note: Windows 8 GB -> 55 of 64 layers; Windows 6 GB -> 32."""
     eight = probe(tmp_path, ram_mib=16384, gpu_name="NVIDIA GeForce RTX 3070", gpu_vendor="nvidia", vram_mib=8192, vram_known=True, idle_used_mib=700)
     six = probe(tmp_path, ram_mib=16384, gpu_name="NVIDIA GeForce GTX 1660", gpu_vendor="nvidia", vram_mib=6144, vram_known=True, idle_used_mib=500)
-    assert eight["deep"][0]["pick"]["n_gpu_layers"] == 56
-    assert six["deep"][0]["pick"]["n_gpu_layers"] == 33
+    assert eight["deep"][0]["pick"]["n_gpu_layers"] == 55
+    assert six["deep"][0]["pick"]["n_gpu_layers"] == 32
 
 
 @needs_powershell

@@ -41,7 +41,7 @@ def test_the_reference_machine_sees_bonsai2_as_the_standard_with_an_honest_verdi
     # says "tight" rather than rounding that up to "runs well".
     assert ptq["verdict"] in ("runs_well", "tight") and ptq["context"] >= 32768
     assert ptq["speed"]["basis"] == "about"
-    assert ptq["why"]["vram_available_mib"] > 0 and ptq["seat"]["weights_mib"] == 5671
+    assert ptq["why"]["vram_available_mib"] > 0 and ptq["seat"]["weights_mib"] == 5716
     assert b["licence_class"] == "permissive" and b["telemetry"] == "none"
     assert out["machine"]["tier"] == "a 12 GB card"
     assert "never leaves" in out["machine"]["profile_path"]

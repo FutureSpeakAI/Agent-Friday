@@ -195,6 +195,48 @@ def test_a_shortlist_download_registers_the_model_with_its_engine(store, tmp_pat
         srv.stop()
 
 
+def test_a_new_file_for_an_installed_model_keeps_its_seat_settings(store, tmp_path, monkeypatch):
+    """Bonsai 2 -> 2.5 is the same seat with a new file. The flags this machine
+    runs it with (KV type, context, projector on demand) were measured here; the
+    shortlist's are a generic default, and taking them would change the seat's VRAM
+    unseen. Rollback restores the same settings with the old file."""
+    from agent_friday.services import model_remove
+    monkeypatch.setattr(model_remove, "previous_dir", lambda: tmp_path / "previous")
+    old = store / "gguf" / "old.gguf"
+    old.parent.mkdir(parents=True, exist_ok=True)
+    old.write_bytes(b"GGUF old")
+    measured = ["-b", "4096", "-np", "1", "--cache-type-k", "q4_0", "--cache-type-v", "q4_0"]
+    model_store.register("bonsai2:27b", old, engine="fork/llama-server.exe",
+                         serve_args=measured, serve_num_ctx=65536, vision="on_demand")
+    payload = _gguf_bytes()
+    srv = _Server(payload)
+    try:
+        entry = {"id": "bonsai2:27b", "label": "Bonsai 2.5 27B", "runtime": "prism-fork",
+                 "repo": "x/y", "licence": "Apache-2.0",
+                 "serve": {"serve_num_ctx": 131072,
+                           "serve_args": ["--cache-type-k", "q8_0", "--cache-type-v", "q8_0"]},
+                 "files": [{"file": "new.gguf", "packing": "PTQ1_0", "bytes": len(payload),
+                            "sha256": hashlib.sha256(payload).hexdigest(), "default": True}]}
+        monkeypatch.setattr(sl, "get", lambda mid: dict(entry) if mid == "bonsai2:27b" else None)
+        monkeypatch.setattr(sl, "file_url", lambda mid, f: srv.url)
+        monkeypatch.setattr(sl, "companions", lambda mid: [])
+        job = md.start_model("bonsai2:27b", engine_override="fork/llama-server.exe", start_thread=False)
+        out = md.run_job(job["id"])
+        assert out["status"] == "installed", out.get("error")
+        rec = model_store.get("bonsai2:27b")
+        assert Path(rec["path"]).name == "new.gguf"
+        assert rec["serve_args"] == measured and rec["serve_num_ctx"] == 65536
+        assert rec["vision"] == "on_demand"
+        assert model_remove.previous_version("bonsai2:27b")["record"]["path"] == str(old)
+        assert model_remove.rollback("bonsai2:27b")["ok"]
+        back = model_store.get("bonsai2:27b")
+        assert Path(back["path"]) == old and back["engine"] == "fork/llama-server.exe"
+        assert {k: back.get(k) for k in model_store.SEAT_KEYS} == {
+            "serve_args": measured, "serve_num_ctx": 65536, "vision": "on_demand"}
+    finally:
+        srv.stop()
+
+
 def test_the_disk_floor_refuses_before_any_request(store, monkeypatch):
     calls = []
     monkeypatch.setattr(md, "_http_get", lambda *a, **k: calls.append(a) or (_ for _ in ()).throw(AssertionError("no request")))
@@ -259,7 +301,7 @@ def test_the_shortlist_bonsai_entry_matches_the_tier_manifest():
         assert f["sha256"] == manifest[f["file"]]["sha256"], f["file"]
     assert sl.file_entry("bonsai2:27b")["packing"] == "PTQ1_0"
     assert sl.file_url("bonsai2:27b", sl.file_entry("bonsai2:27b")).startswith(
-        "https://huggingface.co/prism-ml/Ternary-Bonsai-2-27B-gguf/resolve/main/")
+        "https://huggingface.co/prism-ml/Ternary-Bonsai-2.5-27B-GGUF/resolve/28a7093cc25bc151cc2b284c5570f12ce343fdcf/")
 
 
 def test_the_runtime_asset_is_picked_per_os_and_backend_with_its_digest():
