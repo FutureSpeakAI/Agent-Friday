@@ -398,6 +398,9 @@ INTERNAL_TOOLS = frozenset({
     # select never fires a guarded action.
     "big_mode",
     "hand_cursor",
+    # What the household TV may remember (TV-P1): narrowing at once, widening only through the
+    # setting card's Yes (setting_proposals.hold) or the owner's own Settings click.
+    "tv_memory",
     # Declarative local UI only: no executable card actions or codebase writes.
     "home_cards", "customize_workspace",
     # Voice-only helpers routed through the checkpoint.

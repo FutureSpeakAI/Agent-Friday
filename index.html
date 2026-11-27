@@ -13352,6 +13352,18 @@ function fridaySceneKey(e) {
 // Settings > Voice > Spoken approvals in a room. Loosening it ("Anyone in the room") is
 // accepted only with this owner_action on a click on Friday's own page (routes/core_routes.py);
 // the Settings view reloads on friday:settings-changed and shows what was kept.
+// Settings > Privacy > What the TV may remember (TV-P1). Widening it is accepted only with this owner_action
+// on a click on Friday's own page (routes/core_routes.py); narrowing always goes through.
+function fridaySetTvMemory(mode) {
+  return apiFetch('/api/settings', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ owner_action: 'tv_memory_access', settings: { tv_memory_access: mode } })
+  }).then(r => r.json()).then(d => {
+    try { window.dispatchEvent(new CustomEvent('friday:settings-changed')); } catch (_) {}
+    return d;
+  }).catch(() => null);
+}
 function fridaySetRoomApprovals(requireName) {
   return apiFetch('/api/settings', {
     method: 'POST',
@@ -63445,6 +63457,63 @@ const TrackingSlider = StSlider;
 // Whether Friday stands back on her own when a call takes the camera or the
 // mic (services/call_watch). The recommended option is labelled, not
 // pre-selected: the stored value is what shows.
+// ── WHAT THE TV MAY REMEMBER (TV-P1, decided 2026-11-26) ─────────────────
+// Which of the owner's memories a grown-up turn on the household TV may use
+// (services/tv_memory_access). Kids mode and turns without the TV's grown-up
+// PIN never get any, whatever this says. The stored value is what shows.
+function TvMemoryPanel({
+  s
+}) {
+  const [cur, setCur] = useState(s && s.tv_memory_access || 'all');
+  useEffect(() => { setCur(s && s.tv_memory_access || 'all'); }, [s && s.tv_memory_access]);
+  const opts = [{
+    k: 'all',
+    l: 'All my memories',
+    d: 'In a grown-up window on the TV, ' + fridayName() + ' can use your past conversations, knowledge graph and wiki. Anyone in the room while the window is open can hear them.'
+  }, {
+    k: 'shareable',
+    l: 'Only ones I mark shareable with the TV',
+    d: 'Marking memories isn't available yet, so for now the TV gets none.'
+  }, {
+    k: 'none',
+    l: 'None',
+    d: 'TV turns get none of your memories.'
+  }];
+  return /*#__PURE__*/React.createElement(StSection, {
+    settingKey: "settings.tv.memory_access",
+    title: "What the TV may remember",
+    desc: "Kids mode never gets your memories, and neither does anyone using the TV without the grown-up PIN. Each TV answer's record lists what it drew on."
+  }, /*#__PURE__*/React.createElement("div", {
+    role: "radiogroup",
+    "aria-label": "What the TV may remember",
+    style: {
+      display: 'flex',
+      flexDirection: 'column',
+      gap: 6
+    }
+  }, opts.map(o => /*#__PURE__*/React.createElement("button", {
+    key: o.k,
+    type: "button",
+    role: "radio",
+    "aria-checked": cur === o.k,
+    className: `settings-btn ${cur === o.k ? 'active' : ''}`,
+    style: {
+      fontSize: 12,
+      fontFamily: 'var(--st-font)',
+      textAlign: 'left'
+    },
+    onClick: () => fridaySetTvMemory(o.k).then(d => {
+      const kept = d && d.settings && d.settings.tv_memory_access;
+      if (kept) setCur(kept);
+    })
+  }, /*#__PURE__*/React.createElement("div", null, o.l), /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 11,
+      color: 'var(--st-dim)',
+      marginTop: 2
+    }
+  }, o.d)))));
+}
 function CallModePanel({
   s,
   save
@@ -68328,10 +68397,12 @@ function SettingsWS() {
     s: s,
     save: save,
     part: "accounts"
-  }), /*#__PURE__*/React.createElement(ChannelsCard, null), /*#__PURE__*/React.createElement(SettingsTabPhone, null), /*#__PURE__*/React.createElement(SettingsTabSigning, null), /*#__PURE__*/React.createElement(SettingsTabBrowser, null), window.FridaySalonSettings && /*#__PURE__*/React.createElement(window.FridaySalonSettings, null)), tab === 'privacy' && /*#__PURE__*/React.createElement(SettingsTabPrivacy, {
+  }), /*#__PURE__*/React.createElement(ChannelsCard, null), /*#__PURE__*/React.createElement(SettingsTabPhone, null), /*#__PURE__*/React.createElement(SettingsTabSigning, null), /*#__PURE__*/React.createElement(SettingsTabBrowser, null), window.FridaySalonSettings && /*#__PURE__*/React.createElement(window.FridaySalonSettings, null)), tab === 'privacy' && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement(SettingsTabPrivacy, {
     s: s,
     save: save
-  }), tab === 'laya' && /*#__PURE__*/React.createElement(SettingsTabLaya, { s: s, save: save }), tab === 'appearance' && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement(SettingsTabAppearance, {
+  }), /*#__PURE__*/React.createElement(TvMemoryPanel, {
+    s: s
+  })), tab === 'laya' && /*#__PURE__*/React.createElement(SettingsTabLaya, { s: s, save: save }), tab === 'appearance' && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement(SettingsTabAppearance, {
     s: s,
     save: save
   }), /*#__PURE__*/React.createElement(StSection, {

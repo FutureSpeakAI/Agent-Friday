@@ -3073,6 +3073,10 @@ DEFAULT_SETTINGS = {
     "dismissed_countdowns": {},
     # Big mode (hand-cursor.md §2): large targets when hand tracking is on. auto | on | off.
     "big_mode": "auto",
+    # Which of the owner's memories the household TV may use in a grown-up window (services/tv_memory_access,
+    # DECISIONS-FOR-STEPHEN TV-P1, decided 2026-11-26 "All, but options are cool"). all | shareable | none.
+    # Kids and non-grown-up turns never get any. Widening takes an owner action (_save_settings below).
+    "tv_memory_access": "all",
     # Claude Sonnet 5 is the default orchestrator — best cost/quality ratio for
     # most tasks; Opus 5 remains available for max-reasoning work. Fallback
     # chain: Sonnet 5 → Fable 5 → Opus 5 → Sonnet 5 → Haiku 4.5
@@ -4391,7 +4395,8 @@ def _save_settings(data, *, _internal_cloud_consent_write: bool = False,
                    owner_safe_writes_change: bool = False,
                    routing_change_via: str = "",
                    owner_room_approvals_change: bool = False,
-                   owner_fallback_order_change: bool = False):
+                   owner_fallback_order_change: bool = False,
+                   owner_tv_memory_change: bool = False):
     """Serialize read/merge/replace so simultaneous partial saves keep siblings."""
     with _SETTINGS_WRITE_LOCK:
         out = _save_settings_locked(data,
@@ -4400,7 +4405,8 @@ def _save_settings(data, *, _internal_cloud_consent_write: bool = False,
             owner_safe_writes_change=owner_safe_writes_change,
             routing_change_via=routing_change_via,
             owner_room_approvals_change=owner_room_approvals_change,
-            owner_fallback_order_change=owner_fallback_order_change)
+            owner_fallback_order_change=owner_fallback_order_change,
+            owner_tv_memory_change=owner_tv_memory_change)
     # A16a: a verified pick, once made, stays made. Kept in the install record
     # (which no client and no whole-file settings rewrite can touch), so a
     # later routing change that cannot be tied to a screen (the chat's mode
@@ -4453,7 +4459,8 @@ def _save_settings_locked(data, *, _internal_cloud_consent_write: bool = False,
                    owner_safe_writes_change: bool = False,
                    routing_change_via: str = "",
                    owner_room_approvals_change: bool = False,
-                   owner_fallback_order_change: bool = False):
+                   owner_fallback_order_change: bool = False,
+                   owner_tv_memory_change: bool = False):
     """`_internal_cloud_consent_write` exists for exactly one caller:
     `privacy.cloud_consent.record_consent()`. Every other path into this
     function — the generic `/api/settings` POST included — has
@@ -4672,6 +4679,25 @@ def _save_settings_locked(data, *, _internal_cloud_consent_write: bool = False,
                 _routing_mode_caller())
             data = dict(data)
             data.pop("voice_room_approvals_require_name", None)
+    # WHAT THE HOUSEHOLD TV MAY REMEMBER WIDENS ONLY ON AN OWNER ACTION (TV-P1).
+    #
+    # `tv_memory_access` none -> shareable -> all lets a grown-up turn on the TV carry the owner's memory.
+    # Widening takes owner_tv_memory_change: the Settings control's verified click, the setting card's Yes,
+    # or an owner-bound phone or tablet (services/tv_memory_access.write). A plain settings save, a script or
+    # a model's tool has the key dropped and logged. Narrowing is always allowed; a bad value is dropped.
+    if data and "tv_memory_access" in data:
+        from agent_friday.services import tv_memory_access as _tma
+        _new_tm = data.get("tv_memory_access")
+        _old_tm = _tma.current(existing)
+        if _new_tm not in _tma.MODES or (_tma.is_widening(_old_tm, _new_tm) and not owner_tv_memory_change):
+            import logging as _lg
+            _lg.getLogger("friday.settings").warning(
+                "REFUSED a change of tv_memory_access %r -> %r: %s (caller %s); the rest of the write is kept",
+                _old_tm, _new_tm,
+                "not one of all, shareable or none" if _new_tm not in _tma.MODES else "not an owner action",
+                _routing_mode_caller())
+            data = dict(data)
+            data.pop("tv_memory_access", None)
     merged = dict(DEFAULT_SETTINGS)
     merged.update({k: v for k, v in existing.items()})
     # North-star A17: a NEW install's daily cap is on. A save onto its store

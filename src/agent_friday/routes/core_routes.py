@@ -1962,6 +1962,16 @@ def api_settings():
                                 "error": "this setting changes only from the Settings page"}), 403
             _room_owner = True
 
+        # What the household TV may remember widens the same way: the Settings > Privacy control's own
+        # click on this page (services/tv_memory_access, TV-P1). A body that merely says owner_action is refused.
+        _tvm_owner = False
+        if data.get('owner_action') == 'tv_memory_access':
+            from agent_friday.services import screen_click as _screen_click_tvm
+            if not _screen_click_tvm.screen_session(request):
+                return jsonify({"status": "denied",
+                                "error": "this setting changes only from the Settings page"}), 403
+            _tvm_owner = True
+
         # FR-1 (toolcall-integrity-v5): a local model may only take Friday's
         # tool-using seat if it passes the structural conformance gate — see
         # services/model_seat_gate.py. Runs once per model (cached after);
@@ -2044,7 +2054,8 @@ def api_settings():
             owner_routing_change=_routing_owner,
             owner_safe_writes_change=_sw_owner,
             routing_change_via=_routing_via,
-            owner_room_approvals_change=_room_owner)
+            owner_room_approvals_change=_room_owner,
+            owner_tv_memory_change=_tvm_owner)
         if isinstance(new_settings, dict) and 'voice_engine' in new_settings:
             try:
                 from agent_friday.services import local_voice_readiness as _lvr_w
