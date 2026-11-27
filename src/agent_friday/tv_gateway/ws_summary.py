@@ -45,7 +45,11 @@ def _plain(text) -> str:
     """One line: no control or format characters (no bidi overrides, no zero-width), single spaces, an ellipsis cut."""
     s = "".join(c if not unicodedata.category(c).startswith("C") else " " for c in str(text or ""))
     s = " ".join(s.split())
-    return s if len(s) <= TEXT_MAX else s[:TEXT_MAX - 1].rstrip() + "…"
+    if len(s) <= TEXT_MAX:
+        return s
+    cut = s[:TEXT_MAX]                                  # room for TEXT_MAX - 1 characters and the ellipsis
+    words = cut.rsplit(" ", 1)[0].rstrip() if " " in cut else ""
+    return (words or s[:TEXT_MAX - 1].rstrip()) + "…"   # ends at a whole word; one word longer than the line is cut
 
 
 def _newest(rows: list[dict]) -> Optional[tuple[str, dict]]:
@@ -73,6 +77,46 @@ def _next_event(rows: list[dict]) -> Optional[tuple[str, dict]]:
     return None
 
 
+def _plural(n: int, noun: str) -> str:
+    return "%d %s%s" % (n, noun, "" if n == 1 else "s")
+
+
+def _repos(rows: list[dict]) -> Optional[tuple[str, dict]]:
+    """Code: how many repositories, and how many hold changes not yet committed (UI-CRITIC R3.1)."""
+    if not rows:
+        return None
+    changed = sum(1 for r in rows if r.get("state") == "changed")
+    return ("%s · %d with changes" % (_plural(len(rows), "repo"), changed) if changed
+            else "%s, all clean" % _plural(len(rows), "repo")), {}
+
+
+def _agents(rows: list[dict]) -> Optional[tuple[str, dict]]:
+    """Crew: how many agents are active, and how many suspended; the count alone when none says either."""
+    if not rows:
+        return None
+    active = sum(1 for r in rows if r.get("state") == "active")
+    held = sum(1 for r in rows if r.get("state") == "suspended")
+    parts = ["%d active" % active if active else "", "%d suspended" % held if held else ""]
+    return (" · ".join(p for p in parts if p) or _plural(len(rows), "agent")), {}
+
+
+def _day(when: datetime) -> str:
+    """today / yesterday / 9 Nov, on the PC's own calendar."""
+    then = time.localtime(when.timestamp())
+    now = time.localtime(_clock())
+    days = (datetime(*now[:3]) - datetime(*then[:3])).days
+    return "today" if days <= 0 else "yesterday" if days == 1 else "%d %s" % (then.tm_mday, time.strftime("%b", then))
+
+
+def _last_change(rows: list[dict]) -> Optional[tuple[str, dict]]:
+    """FutureSpeak: the project changed last, and when (its last commit). A project with no date says nothing."""
+    dated = [(w, r) for r in rows for w in [_parse_when(r.get("when"))] if w is not None and w.tzinfo is not None and r.get("title")]
+    if not dated:
+        return None
+    when, row = max(dated, key=lambda d: d[0])
+    return "%s · changed %s" % (row["title"], _day(when)), row
+
+
 def _count(noun: str) -> Callable[[list[dict]], Optional[tuple[str, dict]]]:
     return lambda rows: ("%d %s%s" % (len(rows), noun, "" if len(rows) == 1 else "s"), {}) if rows else None
 
@@ -82,6 +126,9 @@ SAYS: dict[str, tuple[str, Callable[[list[dict]], Optional[tuple[str, dict]]]]] 
     "news": ("latest", _newest),
     "calendar": ("agenda", _next_event),
     "knowledge": ("pages", _count("page")),
+    "code": ("repos", _repos),
+    "crew": ("roster", _agents),
+    "futurespeak": ("projects", _last_change),
 }
 
 
