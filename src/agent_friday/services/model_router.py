@@ -1301,6 +1301,24 @@ def announce_tool(name, args=None):
         pass
 
 
+#: Where a model round starts and where it turns out to call a tool, same mechanism as
+#: DELTA_SINK (KG latency fix 3, 2026-11-26). The cloud tool loop says {"kind": "start"} as each
+#: round opens and {"kind": "tool_use"} the moment the stream begins a tool call, so a reader of
+#: the deltas (the phone relay, tv_gateway/owner_turn) can tell a round's answer from the
+#: narration before a tool call without waiting for the whole turn.
+ROUND_SINK = _contextvars.ContextVar("friday_round_sink", default=None)
+
+
+def announce_round(kind: str, iteration: int = 0) -> None:
+    """Never raises."""
+    try:
+        sink = ROUND_SINK.get()
+        if sink:
+            sink({"kind": str(kind), "round": int(iteration or 0)})
+    except Exception:
+        pass
+
+
 #: Where a completion's `timings` go (llama-server's per-request
 #: `prompt_n` / `predicted_n` / per-token ms), same mechanism as DELTA_SINK.
 #: The voice session sets it to record `prefill_tokens` in the turn receipt

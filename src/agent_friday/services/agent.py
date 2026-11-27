@@ -18691,7 +18691,11 @@ def _call_claude_agent_run(messages, system=None, model=None, max_tokens=16384, 
                 _stream_fn = getattr(client.messages, "stream", None)
                 if callable(_stream_fn):
                     from agent_friday.services.model_router import DELTA_SINK as _DS
+                    from agent_friday.services.model_router import announce_round as _round_says
                     _sink = _DS.get()
+                    # A reader of the deltas learns where each round starts and the moment it
+                    # turns out to call a tool (model_router.ROUND_SINK; the phone relay).
+                    _round_says("start", iter_count)
                     with _stream_fn(**kwargs) as _stream:
                         for _ev in _stream:
                             if core.GLOBAL_STOP.is_set():
@@ -18699,6 +18703,9 @@ def _call_claude_agent_run(messages, system=None, model=None, max_tokens=16384, 
                                 # `with` closes the stream mid-reply.
                                 from agent_friday.services import global_stop as _gs_stream
                                 raise _gs_stream.EverythingStopped("the rest of this reply")
+                            if (getattr(_ev, "type", None) == "content_block_start"
+                                    and getattr(getattr(_ev, "content_block", None), "type", None) == "tool_use"):
+                                _round_says("tool_use", iter_count)
                             if _sink is None or getattr(_ev, "type", None) != "content_block_delta":
                                 continue
                             _delta = getattr(_ev, "delta", None)

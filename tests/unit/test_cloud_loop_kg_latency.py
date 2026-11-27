@@ -41,11 +41,11 @@ class _Client:
         self.messages = _Messages(script)
 
 
-def _drive(monkeypatch, script, execute, messages=None):
+def _drive(monkeypatch, script, execute, messages=None, client=None):
     from agent_friday.services import agent as ag
     from agent_friday.services import cost_meter as cm
     import agent_friday.core as core
-    client = _Client(script)
+    client = client or _Client(script)
     monkeypatch.setattr(ag, "get_anthropic_client", lambda *a, **k: client)
     monkeypatch.setattr(ag, "_execute_tool", execute)
     monkeypatch.setattr(core, "_load_settings", lambda *a, **k: {})
@@ -169,3 +169,61 @@ def test_a_changed_input_runs_the_handler_afresh():
     assert pre.handler_for(tus[0])({"path": "one.md"}) == "page one.md"
     assert pre.handler_for(tus[0])({"path": "two.md"}) == "page two.md"   # a hook changed it: run again
     assert pr.start(tus[:1], handlers, lambda n, i: i).handler_for(tus[0]) is None   # one read: not started
+
+
+# ── fix 3 (desktop half): the loop says where each round starts and where it calls a tool ──
+
+class _Ev:
+    def __init__(self, etype, block_type=None, text=None):
+        self.type = etype
+        self.content_block = type("CB", (), {"type": block_type})() if block_type else None
+        self.delta = type("D", (), {"type": "text_delta", "text": text})() if text else None
+
+
+class _Stream:
+    def __init__(self, resp, events):
+        self._resp, self._events = resp, events
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+    def __iter__(self):
+        return iter(self._events)
+
+    def get_final_message(self):
+        return self._resp
+
+
+class _StreamingMessages(_Messages):
+    def stream(self, **kw):
+        resp = self.create(**kw)
+        evs = []
+        for b in resp.content:
+            if b.type == "text":
+                evs += [_Ev("content_block_start", "text"), _Ev("content_block_delta", text=b.text)]
+            elif b.type == "tool_use":
+                evs.append(_Ev("content_block_start", "tool_use"))
+        return _Stream(resp, evs)
+
+
+def test_the_loop_announces_rounds_and_tool_calls(monkeypatch):
+    from agent_friday.services import model_router as mr
+    seen = []
+    tok = mr.ROUND_SINK.set(seen.append)
+    try:
+        def script(i):
+            if i == 1:
+                return _Resp([_Block("text", text="Let me look."),
+                              _Block("tool_use", name="read_wiki", inp={"path": "a.md"}, bid="t1")], "tool_use")
+            return _Resp([_Block("text", text="done.")], "end_turn")
+
+        client = _Client(script)
+        client.messages = _StreamingMessages(script)
+        _drive(monkeypatch, script, lambda n, a, **k: "ok", client=client)
+    finally:
+        mr.ROUND_SINK.reset(tok)
+    kinds = [(e["kind"], e["round"]) for e in seen]
+    assert kinds == [("start", 1), ("tool_use", 1), ("start", 2)], kinds

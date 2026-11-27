@@ -97,6 +97,12 @@ STATUS_EVERY_S = 4.0
 #: for ever; the turn itself keeps running on the PC. A long "start my day" runs for minutes, so this is generous.
 MAX_TURN_S = 30 * 60.0
 
+#: A round's text is streamed to the phone once this much of it has arrived with no tool call (KG fix 3):
+#: a narration line before a tool call ("Let me check your notes.") is shorter, and is dropped.
+COMMIT_CHARS = 160
+#: A privacy placeholder in model text: the saved reply restores it, so a stream must never show it.
+_PLACEHOLDER = re.compile(r"\[(?:PII|REDACTED|SECRET)[:_\]]")
+
 
 def _call_desktop(text: str, conversation_id: Optional[str], outside: Optional[list] = None):
     """The owner's chat turn on this PC's own app, in process, with this PC's own session token. ``outside`` is
@@ -673,11 +679,16 @@ def _public(truth: dict) -> dict:
 def _stream(response, dev: Optional[dict] = None, requested: str = "", cid: Optional[str] = None,
             voice: bool = False, voice_default: Optional[dict] = None, asked: str = "",
             expected: str = "", notes: Optional[list] = None) -> Iterator[str]:
-    """The phone's stream: progress while the desktop works, then the FINAL answer only.
+    """The phone's stream: progress while the desktop works, the answer as it is written, then the rest.
 
-    The desktop's own deltas are not relayed as they arrive: they can carry a tool round's narration,
-    and a local reasoning model's scratchpad is not an answer. What the phone gets is the turn's
-    final reply (the same text the desktop saves), after `ping` events that say it is working."""
+    A tool round's narration and a reasoning scratchpad are never relayed. The desktop's deltas are
+    streamed only for rounds the cloud loop announces (model_router.ROUND_SINK: "start", and
+    "tool_use" the moment a round calls a tool), and only once a round's text has reached
+    COMMIT_CHARS with no tool call, no scratchpad and no PII placeholder: until then it is held, and a
+    tool call drops it as narration. A turn that announces no rounds (a local seat), and every voice
+    turn (its speech is made from the final text), gets the final reply only, as before. The final
+    reply (the same text the desktop saves) always closes the stream: what was not yet sent is sent,
+    and if it does not continue what was streamed it follows in full after a paragraph break."""
     started = time.time()
     yield _event({"type": "message_start", "message": {"role": "assistant", "model": "", "content": []}})
     yield _event({"type": "content_block_start", "index": 0, "content_block": {"type": "text", "text": ""}})
@@ -688,6 +699,11 @@ def _stream(response, dev: Optional[dict] = None, requested: str = "", cid: Opti
     payload: dict = {}
     tools = 0
     ended = "closed"
+    live_ok = not voice
+    rnd_seen = False        # a round was announced: only then is anything streamed early
+    rnd_state = "hold"      # hold | live | off (narration, scratchpad or placeholder: not this round)
+    rnd_buf: list = []
+    sent: list = []
     try:
         for f in _frames_of(response):
             if time.time() - started > MAX_TURN_S:
@@ -699,8 +715,35 @@ def _stream(response, dev: Optional[dict] = None, requested: str = "", cid: Opti
             elif "tool" in f:
                 tools += 1
                 yield _status("working", started, voice_reply.progress_words(f["tool"]))
+            elif "round" in f:
+                kind = str((f.get("round") or {}).get("kind") or "")
+                if kind == "start":
+                    rnd_seen, rnd_state, rnd_buf = True, "hold", []
+                elif kind == "tool_use":
+                    rnd_state, rnd_buf = "off", []
             elif "delta" in f:
-                spoken.append(str(f["delta"]))
+                piece = str(f["delta"])
+                spoken.append(piece)
+                if not (live_ok and rnd_seen) or rnd_state == "off" or not piece:
+                    continue
+                if rnd_state == "live":
+                    if _PLACEHOLDER.search(piece) or "<think>" in piece:
+                        rnd_state = "off"
+                        continue
+                    sent.append(piece)
+                    yield _event({"type": "content_block_delta", "index": 0,
+                                  "delta": {"type": "text_delta", "text": piece}})
+                    continue
+                rnd_buf.append(piece)
+                held = "".join(rnd_buf)
+                if "<think>" in held or _PLACEHOLDER.search(held):
+                    rnd_state, rnd_buf = "off", []
+                elif len(held.strip()) >= COMMIT_CHARS:
+                    rnd_state, rnd_buf = "live", []
+                    held = held.lstrip() if not sent else held
+                    sent.append(held)
+                    yield _event({"type": "content_block_delta", "index": 0,
+                                  "delta": {"type": "text_delta", "text": held}})
             elif "error" in f:
                 failed = str(f["error"])
             elif f.get("done"):
@@ -744,6 +787,15 @@ def _stream(response, dev: Optional[dict] = None, requested: str = "", cid: Opti
     if voice:
         truth["formatted"] = text                               # the screen's copy; the stream text is what is spoken
         text = truth["speech"] or text                          # an answer that is only a table or code is still sent
+    already = "".join(sent)
+    if already and text.startswith(already):
+        text = text[len(already):]                              # the rest of what was being written
+    elif already:
+        # What was streamed is not how the saved reply begins (a guard or placeholder restore
+        # changed it): the saved reply follows in full, so the phone always ends on the PC's copy.
+        _log.warning("owner turn: streamed text differs from the final reply (%d chars streamed); final sent in full",
+                     len(already))
+        text = "\n\n" + text
     if text:
         yield _event({"type": "content_block_delta", "index": 0, "delta": {"type": "text_delta", "text": text}})
     yield _event({"type": "content_block_stop", "index": 0})
