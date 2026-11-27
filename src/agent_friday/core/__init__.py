@@ -3076,6 +3076,7 @@ DEFAULT_SETTINGS = {
     # Which of the owner's memories the household TV may use in a grown-up window (services/tv_memory_access,
     # DECISIONS-FOR-STEPHEN TV-P1, decided 2026-11-26 "All, but options are cool"). all | shareable | none.
     # Kids and non-grown-up turns never get any. Widening takes an owner action (_save_settings below).
+    # Held by tests/unit/test_tv_memory_access.py::test_the_ruling_is_the_default_and_a_bad_value_reads_as_none.
     "tv_memory_access": "all",
     # Claude Sonnet 5 is the default orchestrator — best cost/quality ratio for
     # most tasks; Opus 5 remains available for max-reasoning work. Fallback

@@ -1637,6 +1637,8 @@ function fridaySceneKey(e) {
 // the Settings view reloads on friday:settings-changed and shows what was kept.
 // Settings > Privacy > What the TV may remember (TV-P1). Widening it is accepted only with this owner_action
 // on a click on Friday's own page (routes/core_routes.py); narrowing always goes through.
+// Held by tests/unit/test_tv_memory_controls.py::test_the_settings_route_needs_the_click_for_the_owner_action
+// and ::test_the_settings_control_is_in_both_ui_sources_and_sends_its_owner_action.
 function fridaySetTvMemory(mode) {
   return apiFetch('/api/settings', {
     method: 'POST',
@@ -23487,7 +23489,8 @@ const TrackingSlider = StSlider;
 // ── WHAT THE TV MAY REMEMBER (TV-P1, decided 2026-11-26) ─────────────────
 // Which of the owner's memories a grown-up turn on the household TV may use
 // (services/tv_memory_access). Kids mode and turns without the TV's grown-up
-// PIN never get any, whatever this says. The stored value is what shows.
+// PIN never get any, whatever this says. The stored value is what shows
+// (test_tv_memory_controls.py::test_the_settings_control_is_in_both_ui_sources_and_sends_its_owner_action).
 function TvMemoryPanel({
   s
 }) {
