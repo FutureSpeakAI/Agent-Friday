@@ -450,8 +450,7 @@ def start_model(model_id: str, packing: str | None = None, *, profile: dict | No
         "bytes_total": total, "bytes_done": 0, "rate_mib_s": None, "eta_s": None,
         "needs_runtime": needs_runtime, "runtime": runtime, "engine": engine_override,
         "error": None, "started_at": time.time(), "finished_at": None, "orb_pid": None,
-        "serve": (serve_override if serve_override is not None
-                  else _installed_serve(model_id) or (m.get("serve") or {})),
+        "serve": _serve_for(model_id, m, serve_override),
         "licence": m.get("licence"),
     }
     try:
@@ -471,12 +470,14 @@ def start_model(model_id: str, packing: str | None = None, *, profile: dict | No
     return dict(job)
 
 
-def _installed_serve(model_id: str) -> dict:
-    """The serving flags the installed copy of `model_id` runs with on this machine, kept when a
-    download replaces its file (test_a_new_file_for_an_installed_model_keeps_its_measured_serving_flags)."""
+def _serve_for(model_id: str, entry: dict, serve_override: dict | None) -> dict:
+    """How the new file will be served: the hardware pick's override when given, else the
+    shortlist's defaults with this machine's settings for an installed copy on top
+    (model_store.SEAT_KEYS; test_a_new_file_for_an_installed_model_keeps_its_seat_settings)."""
+    if serve_override is not None:
+        return serve_override
     from agent_friday.services import model_store
-    rec = model_store.get(model_id) or {}
-    return {k: rec[k] for k in ("serve_args", "serve_num_ctx") if rec.get(k)}
+    return {**(entry.get("serve") or {}), **model_store.seat_settings(model_store.get(model_id))}
 
 
 def start_pasted(repo: str, filename: str, *, bytes_: int, sha256: str | None,
@@ -800,7 +801,7 @@ def _register(job: dict) -> dict:
                 "licence": m.get("licence"), "downloaded_at": time.strftime("%Y-%m-%dT%H:%M:%S")},
         label="%s (%s)" % (m.get("label", job["model_id"]), weights.get("packing") or "gguf"),
         engine=engine, serve_args=serve.get("serve_args"),
-        serve_num_ctx=serve.get("serve_num_ctx"), held=held)
+        serve_num_ctx=serve.get("serve_num_ctx"), held=held, vision=serve.get("vision"))
 
 
 # ── controls ────────────────────────────────────────────────────────────────

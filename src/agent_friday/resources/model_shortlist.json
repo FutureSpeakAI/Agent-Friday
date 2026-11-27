@@ -68,7 +68,7 @@
       "repo": "prism-ml/Ternary-Bonsai-2.5-27B-GGUF",
       "repo_url": "https://huggingface.co/prism-ml/Ternary-Bonsai-2.5-27B-GGUF",
       "revision": "28a7093cc25bc151cc2b284c5570f12ce343fdcf",
-      "version_note": "Bonsai 2.5 replaces Bonsai 2 under the same id (PrismML docs: same ternary format, file size and runtimes), so the seat keeps its measurements; the previous file stays in the previous-version slot for rollback.",
+      "version_note": "Bonsai 2.5 replaces Bonsai 2 under the same id (PrismML docs: same ternary format and runtimes, a file 45 MiB larger), so the seat keeps its measurements; the previous file stays in the previous-version slot for rollback.",
       "licence": "Apache-2.0",
       "licence_class": "permissive",
       "telemetry": "none",

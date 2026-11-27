@@ -386,6 +386,16 @@ def get(model_id: str) -> dict | None:
     return all_models().get(model_id)
 
 
+#: How this machine serves a model, as opposed to facts read from its file: a download that
+#: replaces the file and a rollback both keep them
+#: (test_a_new_file_for_an_installed_model_keeps_its_seat_settings).
+SEAT_KEYS = ("serve_args", "serve_num_ctx", "vision")
+
+
+def seat_settings(rec: dict | None) -> dict:
+    return {k: rec[k] for k in SEAT_KEYS if rec and rec.get(k)}
+
+
 def register(model_id: str, path, *, source: str = SOURCE_LOCAL,
              mmproj=None, lora=None, chat_template=None,
              sha256: str | None = None, origin: dict | None = None,
@@ -393,7 +403,8 @@ def register(model_id: str, path, *, source: str = SOURCE_LOCAL,
              local_files: dict | None = None, engine=None,
              serve_args: list | None = None,
              serve_num_ctx: int | None = None,
-             held: str | None = None) -> dict:
+             held: str | None = None,
+             vision: str | None = None) -> dict:
     """Record a model Friday holds, with its facts read from the file.
 
     `engine` is the server binary that can load this file, when stock
@@ -464,6 +475,8 @@ def register(model_id: str, path, *, source: str = SOURCE_LOCAL,
         entry["serve_args"] = [str(a) for a in serve_args]
     if serve_num_ctx:
         entry["serve_num_ctx"] = int(serve_num_ctx)
+    if vision:
+        entry["vision"] = str(vision)
     if held:
         # Installed and verified, but no seat may use it yet; see available().
         entry["held"] = str(held)

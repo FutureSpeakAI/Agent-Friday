@@ -195,10 +195,11 @@ def test_a_shortlist_download_registers_the_model_with_its_engine(store, tmp_pat
         srv.stop()
 
 
-def test_a_new_file_for_an_installed_model_keeps_its_measured_serving_flags(store, tmp_path, monkeypatch):
+def test_a_new_file_for_an_installed_model_keeps_its_seat_settings(store, tmp_path, monkeypatch):
     """Bonsai 2 -> 2.5 is the same seat with a new file. The flags this machine
-    runs it with (KV type, context) were measured here; the shortlist's are a
-    generic default, and taking them would change the seat's VRAM unseen."""
+    runs it with (KV type, context, projector on demand) were measured here; the
+    shortlist's are a generic default, and taking them would change the seat's VRAM
+    unseen. Rollback restores the same settings with the old file."""
     from agent_friday.services import model_remove
     monkeypatch.setattr(model_remove, "previous_dir", lambda: tmp_path / "previous")
     old = store / "gguf" / "old.gguf"
@@ -206,7 +207,7 @@ def test_a_new_file_for_an_installed_model_keeps_its_measured_serving_flags(stor
     old.write_bytes(b"GGUF old")
     measured = ["-b", "4096", "-np", "1", "--cache-type-k", "q4_0", "--cache-type-v", "q4_0"]
     model_store.register("bonsai2:27b", old, engine="fork/llama-server.exe",
-                         serve_args=measured, serve_num_ctx=65536)
+                         serve_args=measured, serve_num_ctx=65536, vision="on_demand")
     payload = _gguf_bytes()
     srv = _Server(payload)
     try:
@@ -225,7 +226,13 @@ def test_a_new_file_for_an_installed_model_keeps_its_measured_serving_flags(stor
         rec = model_store.get("bonsai2:27b")
         assert Path(rec["path"]).name == "new.gguf"
         assert rec["serve_args"] == measured and rec["serve_num_ctx"] == 65536
+        assert rec["vision"] == "on_demand"
         assert model_remove.previous_version("bonsai2:27b")["record"]["path"] == str(old)
+        assert model_remove.rollback("bonsai2:27b")["ok"]
+        back = model_store.get("bonsai2:27b")
+        assert Path(back["path"]) == old and back["engine"] == "fork/llama-server.exe"
+        assert {k: back.get(k) for k in model_store.SEAT_KEYS} == {
+            "serve_args": measured, "serve_num_ctx": 65536, "vision": "on_demand"}
     finally:
         srv.stop()
 
