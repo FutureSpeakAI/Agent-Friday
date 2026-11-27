@@ -316,7 +316,7 @@ def _local_round(provider: str, model: Optional[str], provider_name: Optional[st
     yield from openai_round_events(deltas(), finished, str(model or ""))
 
 
-def run(dev: dict, body: dict, principal: str, window: Optional[dict] = None) -> Iterator[str]:
+def run(dev: dict, body: dict, principal: str, window=None) -> Iterator[str]:
     """Validate, route and run one TV turn. Raises TurnRefused before the
     first event; after that the stream is the turn. `window`: the PC's live grown-up window for this
     turn (tv_grownup_window.window_for), or None."""
@@ -356,7 +356,7 @@ def run(dev: dict, body: dict, principal: str, window: Optional[dict] = None) ->
                         system, messages, tools, max_tokens)
 
 
-def _owner_context(dev: dict, principal: str, messages: list, window: Optional[dict] = None) -> tuple:
+def _owner_context(dev: dict, principal: str, messages: list, window=None) -> tuple:
     """(block, trace) under the TV memory setting (services/tv_memory_access, TV-P1). The block is "" unless
     the setting is All and this is a grown-up turn on the household TV; kids never. The trace goes on the
     turn's ledger row: whether the owner's context was used, the setting, why not, and every source."""
@@ -364,6 +364,8 @@ def _owner_context(dev: dict, principal: str, messages: list, window: Optional[d
     mode = tma.current()
     # The trace names the window (test_the_trace_names_the_pcs_window_that_allowed_the_turn; the route passes
     # it: test_tv_grownup_window_route.py::test_the_messages_route_passes_the_window_only_for_a_grown_up_with_a_live_grant).
+    from agent_friday.services.tv_grownup_window import Window
+    window = window if isinstance(window, Window) else None     # test_only_a_window_this_pc_issued_unlocks_memory
     ok, why = tma.allows(dev, principal, window_ok=window is not None)
     if not ok:
         return "", {"used": False, "mode": mode, "why": why, "sources": []}
@@ -377,12 +379,12 @@ def _owner_context(dev: dict, principal: str, messages: list, window: Optional[d
             action_ledger.append("tv_owner_context", {"principal": device_pairing.principal(dev),
                                                       "device_kind": dev.get("kind"), "surface": "tv_gateway",
                                                       "watching": principal, "mode": mode, "sources": sources,
-                                                      "window": window})
+                                                      "window": window.trace() if window else None})
         except Exception as e:
             _log.warning("TV owner context withheld: its ledger row could not be written (%s)", type(e).__name__)
             return "", {"used": False, "mode": mode, "why": "trace unavailable", "sources": []}
     return block, {"used": bool(block), "mode": mode, "why": "all" if block else "nothing relevant found",
-                   "sources": sources, "window": window}
+                   "sources": sources, "window": window.trace() if window else None}
 
 
 def _row(dev: dict, principal: str, provider: str, model, tools: list, trace: Optional[dict] = None) -> None:

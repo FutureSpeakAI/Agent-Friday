@@ -97,14 +97,14 @@ def test_the_messages_route_passes_the_window_only_for_a_grown_up_with_a_live_gr
     seen = []
 
     def fake_run(dev, body, p, window=None):
-        seen.append(window is not None)
-        if window is not None:
-            import hashlib
-            assert window == {"id": hashlib.sha256(grant.encode()).hexdigest()[:16], "by": win.OPENED_BY_PIN}
+        seen.append(window)
         return iter([turn._event({"type": "message_stop"})])
     monkeypatch.setattr(turn, "run", fake_run)
     hdr = {**h, "X-Friday-Principal": principal}
     if with_grant:
         hdr["X-Friday-Window"] = grant
-    client.post("/tv/v1/messages", json={"messages": [{"role": "user", "content": "hi"}]}, headers=hdr)
-    assert seen == [want]
+    r = client.post("/tv/v1/messages", json={"messages": [{"role": "user", "content": "hi"}]}, headers=hdr)
+    assert r.status_code == 200, r.data
+    import hashlib
+    live = win.Window(id=hashlib.sha256(grant.encode()).hexdigest()[:16], by=win.OPENED_BY_PIN)
+    assert seen == [live if want else None]

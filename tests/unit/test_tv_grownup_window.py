@@ -246,7 +246,7 @@ def test_the_window_a_turn_used_is_named_for_its_trace(_clean):
     win.set_pin(PIN)
     tv, other = _device(), _device()
     g = win.open_with_pin(tv, "s", PIN)
-    assert win.window_for(tv, g) == {"id": hashlib.sha256(g.encode()).hexdigest()[:16], "by": win.OPENED_BY_PIN}
+    assert win.window_for(tv, g) == win.Window(id=hashlib.sha256(g.encode()).hexdigest()[:16], by=win.OPENED_BY_PIN)
     assert win.window_for(other, g) is None and win.window_for(tv, "x") is None
 
 
@@ -280,3 +280,56 @@ def test_no_ledger_row_carries_the_pin(_clean):
 def test_an_eight_digit_pin_is_taken():
     win.set_pin("12345678")
     assert win._matches("12345678")
+
+
+def test_an_old_pin_open_started_during_a_save_gets_no_window(monkeypatch):
+    # Saving a PIN is one step under the lock: the new verifier and the generation move together, so an open
+    # with the old PIN that starts in the middle of a save never leaves a window.
+    import os
+    import threading
+    win.set_pin(PIN)
+    tv = _device()
+    real_replace, got = os.replace, {}
+
+    def race_then_replace(src, dst):
+        # The save is under way and the new verifier is not on disk yet: an open with the old PIN tries now.
+        def old_pin_open():
+            try:
+                got["grant"] = win.open_with_pin(tv, "s", PIN)
+            except win.WindowRefused as e:
+                got["refused"] = e.code
+        t = threading.Thread(target=old_pin_open)
+        t.start()
+        t.join(0.3)
+        got["t"] = t
+        real_replace(src, dst)
+    monkeypatch.setattr(win.os, "replace", race_then_replace)
+    win.set_pin("9999", by="pc_settings")
+    got["t"].join(10)
+    assert "grant" not in got and not win._GRANTS, got
+
+
+def test_two_saves_at_once_leave_one_pin_and_both_finish(monkeypatch):
+    import threading
+    errors = []
+
+    def save(p):
+        try:
+            win.set_pin(p, by="pc_settings")
+        except Exception as e:
+            errors.append(repr(e))
+    ts = [threading.Thread(target=save, args=(p,)) for p in ("1111", "2222")]
+    for t in ts:
+        t.start()
+    for t in ts:
+        t.join()
+    assert not errors and (win._matches("1111") != win._matches("2222"))
+
+
+def test_an_ended_windows_row_carries_no_grant(_clean):
+    win.set_pin(PIN)
+    tv = _device()
+    g = win.open_with_pin(tv, "s", PIN)
+    _clean["clock"]["t"] += win.IDLE_S + 1
+    assert not win.check(tv, g)
+    assert _clean["rows"][-1][1]["event"] == "ended" and g not in repr(_clean["rows"])

@@ -12,6 +12,7 @@ from cryptography.hazmat.primitives.asymmetric import ec
 
 from agent_friday.services import device_pairing
 from agent_friday.services import model_router as mr
+from agent_friday.services import tv_grownup_window as win
 from agent_friday.services import tv_memory_access as tma
 from agent_friday.tv_gateway import household
 from agent_friday.tv_gateway import turn
@@ -100,7 +101,7 @@ def claude(monkeypatch):
     return sealed
 
 
-LIVE_WINDOW = {"id": "0123456789abcdef", "by": "pin"}
+LIVE_WINDOW = win.Window(id="0123456789abcdef", by="pin")
 
 
 def _run(dev, principal, tools=None, window=LIVE_WINDOW):
@@ -220,11 +221,17 @@ def test_the_trace_is_written_first_and_names_the_sources(_clean, setting, claud
 
 
 def test_the_trace_names_the_pcs_window_that_allowed_the_turn(_clean, setting, claude):
-    w = {"id": "fedcba9876543210", "by": "pin"}
+    w = win.Window(id="fedcba9876543210", by="pin")
     _run(_device(), "grownup", window=w)
     kind, rec = _clean["pre"][0]
-    assert kind == "tv_owner_context" and rec["window"] == w
-    assert _clean["rows"][-1][1]["owner_context"]["window"] == w
+    assert kind == "tv_owner_context" and rec["window"] == {"id": "fedcba9876543210", "by": "pin"}
+    assert _clean["rows"][-1][1]["owner_context"]["window"] == {"id": "fedcba9876543210", "by": "pin"}
+
+
+@pytest.mark.parametrize("not_a_window", [True, 1, "window", {"id": "fedcba9876543210", "by": "pin"}])
+def test_only_a_window_this_pc_issued_unlocks_memory(_clean, setting, claude, not_a_window):
+    _run(_device(), "grownup", window=not_a_window)
+    assert "== THE OWNER'S CONTEXT" not in str(claude[0]["system"])
 
 
 def test_no_trace_no_context(_clean, setting, claude, monkeypatch):

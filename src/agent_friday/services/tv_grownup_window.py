@@ -34,6 +34,7 @@ import os
 import secrets
 import threading
 import time
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
@@ -53,6 +54,17 @@ _LOCK = threading.Lock()
 _GRANTS: dict = {}               # sha256(grant) -> {"dev": id, "until": cap, "seen": last turn, "by": "pin"}
 _PIN_GEN = [0]                   # moves on with every set_pin: an open checked against an older PIN is refused
 _MISSES: dict = {}               # _HOUSEHOLD -> {"n": misses, "until": t}
+
+
+@dataclass(frozen=True)
+class Window:
+    """A live window this PC issued, as a turn carries it. Only this type unlocks memory in a TV turn
+    (test_tv_memory_access.py::test_only_a_window_this_pc_issued_unlocks_memory)."""
+    id: str                      # the first 16 hex of sha256(grant): names the window, cannot open it
+    by: str
+
+    def trace(self) -> dict:
+        return {"id": self.id, "by": self.by}
 
 
 class WindowRefused(Exception):
@@ -124,10 +136,13 @@ def set_pin(pin, dev: Optional[dict] = None, *, by: str = "owner") -> None:
     body = {"v": 1, "salt": salt.hex(), **_SCRYPT, "hash": _derive(pin, salt, **_SCRYPT).hex()}
     p = _path()
     p.parent.mkdir(parents=True, exist_ok=True)
-    tmp = p.with_suffix(".tmp")
-    tmp.write_text(json.dumps({"body": body, "sig": _sign(body)}), encoding="utf-8")
-    os.replace(tmp, p)
+    # One step under the lock: the new verifier, the generation and the end of every window move together, so
+    # no open can start between them (test_an_old_pin_open_started_during_a_save_gets_no_window) and two saves
+    # never share the temporary file (test_two_saves_at_once_leave_one_pin_and_both_finish).
     with _LOCK:
+        tmp = p.with_suffix(".tmp")
+        tmp.write_text(json.dumps({"body": body, "sig": _sign(body)}), encoding="utf-8")
+        os.replace(tmp, p)
         _PIN_GEN[0] += 1
         _GRANTS.clear()
         _MISSES.clear()
@@ -199,9 +214,8 @@ def open_with_pin(dev: dict, session_key: str, pin) -> str:
     return grant
 
 
-def window_for(dev: Optional[dict], grant: str, *, touch: bool = False) -> Optional[dict]:
-    """The live window this PC issued to this device, as the turn's trace names it ({"id": the first 16 hex of
-    the grant's hash, "by": how it was opened}; test_the_window_a_turn_used_is_named_for_its_trace), or None.
+def window_for(dev: Optional[dict], grant: str, *, touch: bool = False) -> Optional[Window]:
+    """The live window this PC issued to this device (test_the_window_a_turn_used_is_named_for_its_trace), or None.
     `touch`: a grown-up turn is using it, so the idle clock starts again (the messages route); a status read
     never keeps it open (test_looking_at_a_window_does_not_keep_it_open). An ended window's row names the TV
     that opened it (test_an_ended_window_is_recorded_under_the_tv_that_opened_it)."""
@@ -222,7 +236,7 @@ def window_for(dev: Optional[dict], grant: str, *, touch: bool = False) -> Optio
     if ended:
         _ledger("ended", {"id": v["dev"], "kind": "tv"}, by=ended)
         return None
-    return {"id": h[:16], "by": v["by"]}
+    return Window(id=h[:16], by=v["by"])
 
 
 def check(dev: Optional[dict], grant: str, *, touch: bool = False) -> bool:
