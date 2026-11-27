@@ -33,8 +33,8 @@ $script:Pick = @{
     FridayDiskGb       = 8       # install.ps1's preflight estimate ($neededGb) for Agent Friday itself
     RuntimeAllowanceMib = 650    # the largest runtime asset the app may fetch (CUDA build + its runtime)
     ComputeBufferMib   = 400     # reserves.compute_buffer_mib.ub_512
-    WeightsPtq10Mib    = 5671    # pick.derived.weights_mib (PTQ1_0)
-    WeightsPq20Mib     = 6872    # pick.derived.weights_mib (PQ2_0)
+    WeightsPtq10Mib    = 5716    # pick.derived.weights_mib (PTQ1_0)
+    WeightsPq20Mib     = 6917    # pick.derived.weights_mib (PQ2_0)
     LesserHeadroomMib  = 1475    # KV + compute + runtime for the older, smaller models
     MinRamFloorMib     = 15500   # T1: 16 GB machines report a little under 16384
     MinRamBigMib       = 30000   # T2
@@ -376,7 +376,7 @@ function Get-ModelOptions {
                     if ([int64]$Facts.ram_mib -lt $script:Pick.MinRamFloorMib) { $why = 'needs 16 GB of memory' }
                     elseif (-not [bool]$Facts.avx2) { $why = 'needs a processor with AVX2 support' }
                     elseif ([int]$Facts.cpu_cores -lt 4) { $why = 'needs a processor with at least 4 cores' }
-                    Add-Unfit 'deep_thinker' ([string]$m.id) 'Bonsai 2 27B' ([double]$d27.bytes) 'memory' $why
+                    Add-Unfit 'deep_thinker' ([string]$m.id) 'Bonsai 2.5 27B' ([double]$d27.bytes) 'memory' $why
                 }
                 continue
             }
@@ -386,12 +386,12 @@ function Get-ModelOptions {
             $withComp = $false
             if ($pick.mmproj -eq $true -or $pick.mmproj -eq 'on_demand') { $withComp = $true }
             if ($withComp) { foreach ($c in @($m.companions)) { $bytes += [double]$c.bytes } }
-            if (-not (Fits-Disk $bytes)) { Add-Unfit 'deep_thinker' ([string]$m.id) 'Bonsai 2 27B' $bytes 'disk' (Disk-Reason $bytes); continue }
+            if (-not (Fits-Disk $bytes)) { Add-Unfit 'deep_thinker' ([string]$m.id) 'Bonsai 2.5 27B' $bytes 'disk' (Disk-Reason $bytes); continue }
             $kind = 'on the graphics card'
             if ($pick.profile -eq 'cpu') { $kind = 'on the processor' }
             if ($pick.tier -eq 'T4a') { $kind = 'split between the graphics card and the processor' }
             $deep += [ordered]@{
-                seat = 'deep_thinker'; id = $m.id; packing = $pick.packing; label = 'Bonsai 2 27B'
+                seat = 'deep_thinker'; id = $m.id; packing = $pick.packing; label = 'Bonsai 2.5 27B'
                 bytes = [int64]$bytes; size_text = (Get-FileSizeLine $bytes); recommended = $true
                 older_generation = $false; companions = $withComp
                 note = "The model Friday is tuned for. Runs $kind on this computer."
@@ -418,7 +418,7 @@ function Get-ModelOptions {
         }
         if ($isLesser) {
             $deep += (New-Option -Seat 'deep_thinker' -Model $m -File $f -Older $isOlder `
-                        -Note 'Lighter than Bonsai 2 27B and less capable. An earlier Bonsai generation.')
+                        -Note 'Lighter than Bonsai 2.5 27B and less capable. An earlier Bonsai generation.')
         }
     }
 
@@ -464,7 +464,7 @@ function Get-ModelOptions {
         if ($fast.Count -gt 0 -and -not ($fast | Where-Object { $_.recommended })) { $fast[0].recommended = $true }
     }
 
-    # Recommendations. Deep: Bonsai 2 27B when it fits, else the largest lighter model.
+    # Recommendations. Deep: Bonsai 2.5 27B when it fits, else the largest lighter model.
     if ($deep.Count -gt 0 -and -not ($deep | Where-Object { $_.recommended })) {
         $big = $deep | Sort-Object { $_.bytes } -Descending | Select-Object -First 1
         $big.recommended = $true

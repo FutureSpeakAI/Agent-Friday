@@ -13621,6 +13621,14 @@ try:
 except Exception as _hte:  # never let optional deps break the agent import
     print(f"  [HOLOGRAM] registration skipped: {_hte}")
 
+# What the household TV may remember (tv_memory, DECISIONS-FOR-STEPHEN TV-P1): by voice or chat; widening
+# raises a setting card. See services/tv_memory_tools.py and services/tv_memory_access.py.
+try:
+    from agent_friday.services import tv_memory_tools as _tv_memory_tools
+    _tv_memory_tools.register(CLAUDE_TOOLS, CLAUDE_TOOL_HANDLERS, TOOL_RINGS)
+except Exception as _tvme:  # never let optional deps break the agent import
+    print(f"  [TV MEMORY] registration skipped: {_tvme}")
+
 # The hand cursor and big mode (big_mode, hand_cursor): the large-target layout
 # and "next card", "select", "back" by voice. Shared into voice. See
 # services/hand_cursor_tools.py and docs/design/hig/hand-cursor.md.
@@ -20086,6 +20094,7 @@ ON_DEMAND_TOOLS = (
     "local_models_advise",   # Settings > Models: what this PC can run
     "hand_cursor",           # the hand cursor and big mode, by voice
     "big_mode",
+    "tv_memory",             # what the household TV may remember (TV-P1); widening raises a setting card
     "hologram_window",       # the hologram window's depth, by voice
     "local_voice_readiness",  # can voice run locally; measure it when idle; ask and take the cloud voice answers (only on the owner's own words)
     "laya_learning",         # what Laya learned from the owner's corrections; forget, reset, roll back

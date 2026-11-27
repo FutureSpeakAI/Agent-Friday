@@ -101,7 +101,7 @@ def rollback(model_id: str) -> dict:
                          sha256=rec.get("sha256"), origin=rec.get("origin"), label=rec.get("label"),
                          engine=rec.get("engine"), serve_args=rec.get("serve_args"),
                          serve_num_ctx=rec.get("serve_num_ctx"),
-                         lora_apply=rec.get("lora_apply"))
+                         vision=rec.get("vision"), lora_apply=rec.get("lora_apply"))
     d = _load_previous()
     d.pop(model_id, None)
     _save_previous(d)
