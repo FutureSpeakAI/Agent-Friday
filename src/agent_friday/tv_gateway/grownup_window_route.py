@@ -1,7 +1,7 @@
 """/tv/v1/grownup: the grown-up window this PC issues and checks (services/tv_grownup_window).
 
-  * GET  /tv/v1/grownup         any bound device: is a PIN set, is this session's window open (X-Friday-Window).
-  * POST /tv/v1/grownup/open    the household TV, {"pin": "...."}: a grant on a match, bound to this session.
+  * GET  /tv/v1/grownup         any bound device: is a PIN set, is this TV's window open (X-Friday-Window).
+  * POST /tv/v1/grownup/open    the household TV, {"pin": "...."}: a grant on a match, bound to this TV.
   * POST /tv/v1/grownup/close   the household TV: ends its windows (screen off, kids or family mode, Lock now).
   * POST /tv/v1/grownup/pin     an owner-bound phone, tablet or watch only, {"pin": "...."}: set the verifier.
     A TV or family device gets 403; the TV never sets the PIN it is checked against.

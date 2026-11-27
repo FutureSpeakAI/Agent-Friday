@@ -1,8 +1,7 @@
-"""The TV's grown-up window, issued and checked by this PC (closes the TV-P1 accepted risk, 2026-11-26).
+"""The TV's grown-up window, issued and checked by this PC (DECISIONS-FOR-STEPHEN TV-P1).
 
-The TV says who is watching in its own header (``grownup | family | kids``), and before this module a
-"grownup" header was all it took for a turn to carry the owner's memory (services/tv_memory_access). Now the
-memory gate also needs a window grant this PC issued:
+The TV says who is watching in its own header (``grownup | family | kids``). That header alone never carries
+the owner's memory (services/tv_memory_access): the memory gate also needs a window grant this PC issued:
 
   * The PC keeps its own verifier of the grown-up PIN (scrypt, salted, HMAC-signed with the governance key,
     like household.json). The PIN itself is never stored. It is set from the PC's Settings page or an
@@ -39,6 +38,8 @@ from typing import Optional
 
 TTL_S = 3600                     # the cap, however busy the TV is (test_the_window_is_short)
 IDLE_S = 600                     # no grown-up turn for this long ends it (test_a_window_ends_when_the_tv_goes_idle)
+OPENED_BY_PIN = "pin"
+ENDED_IDLE, ENDED_CAP = "idle", "cap"     # a ledger "ended" row's by
 _HOUSEHOLD = "household"         # one miss count for every TV (test_the_lock_out_counts_every_tv_in_the_household)
 FREE_TRIES = 5
 LOCK_BASE_S = 30                 # the first lock-out; each further miss doubles it
@@ -91,7 +92,6 @@ def _ledger(event: str, dev: Optional[dict], **extra) -> None:
         action_ledger.append("tv_grownup_window", {"event": event, "device_kind": (dev or {}).get("kind"),
                                                    "principal": "device:%s" % (dev or {}).get("id"), **extra})
     except Exception as e:
-        # The window itself still works; the gap shows in the log (the ledger is the trace, not the gate).
         _log.warning("tv_grownup_window: ledger row %s not written (%s)", event, type(e).__name__)
 
 
@@ -158,7 +158,7 @@ def _hash(grant: str) -> str:
 
 
 def open_with_pin(dev: dict, session_key: str, pin) -> str:
-    """A grant for this TV and session, or WindowRefused (403 wrong PIN, 429 locked out, 409 no PIN set,
+    """A grant for this TV (opened on a live session), or WindowRefused (403 wrong PIN, 429 locked out, 409 no PIN set,
     403 not the household TV)."""
     if not _is_household_tv(dev):
         raise WindowRefused(403, "only the household TV opens a grown-up window", "not_household_tv")
@@ -167,25 +167,26 @@ def open_with_pin(dev: dict, session_key: str, pin) -> str:
     if not has_pin():
         raise WindowRefused(409, "set the grown-up PIN on the PC or your phone first", "no_pin")
     dev_id, now = str(dev["id"]), _now()
+    # The try is counted before the PIN is checked, under the lock, so tries sent in parallel cannot outrun the
+    # lock-out (test_wrong_pins_sent_at_once_cannot_outrun_the_lock_out). A right PIN clears the count.
     with _LOCK:
-        m = _MISSES.get(_HOUSEHOLD) or {"n": 0, "until": 0.0}
+        m = _MISSES.setdefault(_HOUSEHOLD, {"n": 0, "until": 0.0})
         if m["until"] > now:
             raise WindowRefused(429, "too many tries; wait %d s" % int(m["until"] - now + 1), "locked")
+        m["n"] += 1
+        tries = m["n"]
+        if tries >= FREE_TRIES:
+            m["until"] = now + min(LOCK_MAX_S, LOCK_BASE_S * 2 ** (tries - FREE_TRIES))
     if not _matches(pin):
-        with _LOCK:
-            m = _MISSES.setdefault(_HOUSEHOLD, {"n": 0, "until": 0.0})
-            m["n"] += 1
-            if m["n"] >= FREE_TRIES:
-                m["until"] = now + min(LOCK_MAX_S, LOCK_BASE_S * 2 ** (m["n"] - FREE_TRIES))
-        _ledger("refused", dev, misses=m["n"])
+        _ledger("refused", dev, misses=tries)
         raise WindowRefused(403, "that PIN is not right", "wrong_pin")
     grant = secrets.token_urlsafe(32)
     with _LOCK:
         _MISSES.pop(_HOUSEHOLD, None)
         for h in [h for h, v in _GRANTS.items() if v["dev"] == dev_id]:
             del _GRANTS[h]                                # one window per TV
-        _GRANTS[_hash(grant)] = {"dev": dev_id, "until": now + TTL_S, "seen": now, "by": "pin"}
-    _ledger("opened", dev, by="pin", seconds=TTL_S, idle_s=IDLE_S)
+        _GRANTS[_hash(grant)] = {"dev": dev_id, "until": now + TTL_S, "seen": now, "by": OPENED_BY_PIN}
+    _ledger("opened", dev, by=OPENED_BY_PIN, seconds=TTL_S, idle_s=IDLE_S)
     return grant
 
 
@@ -202,7 +203,7 @@ def check(dev: Optional[dict], grant: str, *, touch: bool = False) -> bool:
             return False
         if v["until"] <= now or now - v["seen"] >= IDLE_S:
             _GRANTS.pop(h, None)
-            ended = "cap" if v["until"] <= now else "idle"
+            ended = ENDED_CAP if v["until"] <= now else ENDED_IDLE
         elif v["dev"] != str(dev.get("id")):
             return False
         elif touch:

@@ -1,7 +1,7 @@
-"""The grown-up window the PC issues and checks (closes the TV-P1 accepted risk, 2026-11-26).
+"""The grown-up window the PC issues and checks (DECISIONS-FOR-STEPHEN TV-P1).
 
-The TV's own "grownup" header no longer unlocks the owner's memory by itself: a turn needs a live window
-grant the PC issued after checking the PIN against its own verifier, bound to this TV and this session.
+The TV's own "grownup" header does not unlock the owner's memory by itself: a turn needs a live window
+grant the PC issued after checking the PIN against its own verifier, bound to this TV.
 """
 import pytest
 from cryptography.hazmat.primitives import serialization
@@ -176,3 +176,36 @@ def test_the_grown_up_header_alone_no_longer_unlocks_memory():
     assert tma.allows(tv, "grownup", {}, window_ok=True) == (True, "all")
     assert tma.allows(tv, "kids", {}, window_ok=True)[0] is False
     assert tma.allows(tv, "family", {}, window_ok=True)[0] is False
+
+
+def test_wrong_pins_sent_at_once_cannot_outrun_the_lock_out(monkeypatch):
+    # Every try is counted before its PIN is checked, so a burst of tries in parallel gets FREE_TRIES checks,
+    # not one per worker (critic B1 on PR #1163).
+    import threading
+    import time as _time
+    win.set_pin(PIN)
+    tv = _device()
+    checked = []
+    real = win._matches
+
+    def slow(pin):
+        checked.append(pin)
+        _time.sleep(0.05)
+        return real(pin)
+    monkeypatch.setattr(win, "_matches", slow)
+    codes, go = [], threading.Event()
+
+    def guess():
+        go.wait()
+        try:
+            win.open_with_pin(tv, "s", "0000")
+        except win.WindowRefused as e:
+            codes.append(e.status)
+    workers = [threading.Thread(target=guess) for _ in range(40)]
+    for w in workers:
+        w.start()
+    go.set()
+    for w in workers:
+        w.join()
+    assert len(checked) <= win.FREE_TRIES, len(checked)
+    assert codes.count(429) >= 40 - win.FREE_TRIES
