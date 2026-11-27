@@ -2645,6 +2645,8 @@ class Arbiter:
         # the second so `_load_pinned` can pass an adapter and a projector.
         self.gguf_paths = _normalise_seat_files(
             gguf_paths if gguf_paths is not None else rc.seat_files())
+        # Built from the store: `_seat_files` reads the store again per spawn.
+        self._store_owned = gguf_paths is None
         self.state = STATE_DEFAULT
         self.plan = None
         self.planned_at = None          # when self.plan was computed
@@ -4027,7 +4029,29 @@ class Arbiter:
             pass
 
     def _seat_files(self, model_id) -> dict:
-        """The files a seat is spawned from, or an empty map."""
+        """The files a seat is spawned from, or an empty map.
+
+        For a model Friday's store records, the store is read again here: a
+        download or a rollback re-registers the model at another file and moves
+        the old one away, so the map read at boot would spawn a file that is
+        gone (11-27, Bonsai 2 -> 2.5) or, after a rollback, the replaced one.
+        A record the store holds but cannot serve gives an empty map. Injected
+        maps, models the store does not know, and a store that cannot be read
+        keep the boot map. Held by tests/unit/test_arbiter_seat_files_follow_the_store.py.
+        """
+        if getattr(self, "_store_owned", False):
+            try:
+                from agent_friday.services import model_store as ms
+                if ms.get(model_id) is not None:
+                    fresh = _normalise_seat_files(
+                        {model_id: ms.seat_file_map().get(model_id)})
+                    if model_id in fresh:
+                        self.gguf_paths[model_id] = fresh[model_id]
+                    else:
+                        self.gguf_paths.pop(model_id, None)
+                    return dict(fresh.get(model_id) or {})
+            except Exception:
+                pass
         return dict(self.gguf_paths.get(model_id) or {})
 
     def _llama_kwargs(self, files: dict) -> dict:
