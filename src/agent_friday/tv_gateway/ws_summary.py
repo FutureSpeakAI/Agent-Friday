@@ -45,11 +45,22 @@ def _plain(text) -> str:
     """One line: no control or format characters (no bidi overrides, no zero-width), single spaces, an ellipsis cut."""
     s = "".join(c if not unicodedata.category(c).startswith("C") else " " for c in str(text or ""))
     s = " ".join(s.split())
-    if len(s) <= TEXT_MAX:
+    return _fit(s, TEXT_MAX)
+
+
+_SEPARATORS = " ·,;:-–—"
+
+
+def _fit(s: str, room: int) -> str:
+    """s in at most room characters: whole, or its whole words up to an ellipsis, never ending on a separator. When
+    whole words would keep under half the room (one very long word), the text is cut inside the word instead."""
+    if len(s) <= room:
         return s
-    cut = s[:TEXT_MAX]                                  # room for TEXT_MAX - 1 characters and the ellipsis
-    words = cut.rsplit(" ", 1)[0].rstrip() if " " in cut else ""
-    return (words or s[:TEXT_MAX - 1].rstrip()) + "…"   # ends at a whole word; one word longer than the line is cut
+    cut = s[:room]                                      # room for room - 1 characters and the ellipsis
+    words = cut.rsplit(" ", 1)[0].rstrip(_SEPARATORS) if " " in cut else ""
+    if len(words) < room // 2:
+        words = s[:room - 1].rstrip(_SEPARATORS)
+    return words + "…"
 
 
 def _newest(rows: list[dict]) -> Optional[tuple[str, dict]]:
@@ -82,12 +93,16 @@ def _plural(n: int, noun: str) -> str:
 
 
 def _repos(rows: list[dict]) -> Optional[tuple[str, dict]]:
-    """Code: how many repositories, and how many hold changes not yet committed (UI-CRITIC R3.1)."""
+    """Code: how many repositories, how many hold changes not yet committed, and how many could not be read. "All
+    clean" only when every one was read and is clean (UI-CRITIC R3.1)."""
     if not rows:
         return None
     changed = sum(1 for r in rows if r.get("state") == "changed")
-    return ("%s · %d with changes" % (_plural(len(rows), "repo"), changed) if changed
-            else "%s, all clean" % _plural(len(rows), "repo")), {}
+    unread = sum(1 for r in rows if r.get("state") == "error")
+    if all(r.get("state") == "clean" for r in rows):
+        return "%s, all clean" % _plural(len(rows), "repo"), {}
+    parts = [_plural(len(rows), "repo"), "%d with changes" % changed if changed else "", "%d unreadable" % unread if unread else ""]
+    return " · ".join(p for p in parts if p), {}
 
 
 def _agents(rows: list[dict]) -> Optional[tuple[str, dict]]:
@@ -100,21 +115,42 @@ def _agents(rows: list[dict]) -> Optional[tuple[str, dict]]:
     return (" · ".join(p for p in parts if p) or _plural(len(rows), "agent")), {}
 
 
-def _day(when: datetime) -> str:
-    """today / yesterday / 9 Nov, on the PC's own calendar."""
-    then = time.localtime(when.timestamp())
+def _day(stamp: float) -> str:
+    """today / yesterday / 9 Nov / 9 Nov 2025, on the PC's own calendar."""
+    then = time.localtime(stamp)
     now = time.localtime(_clock())
     days = (datetime(*now[:3]) - datetime(*then[:3])).days
-    return "today" if days <= 0 else "yesterday" if days == 1 else "%d %s" % (then.tm_mday, time.strftime("%b", then))
+    if days <= 0:
+        return "today"
+    if days == 1:
+        return "yesterday"
+    return "%d %s" % (then.tm_mday, time.strftime("%b", then)) + ("" if then.tm_year == now.tm_year else " %d" % then.tm_year)
+
+
+def _stamp_of(value) -> Optional[float]:
+    """A row's time as seconds, only when it carries an offset, the PC can place it on its calendar, and it is not in
+    the future (a wrong clock or a forged date never names the project)."""
+    when = _parse_when(value)
+    if when is None or when.tzinfo is None:
+        return None
+    try:
+        stamp = when.timestamp()
+        time.localtime(stamp)                       # Windows refuses dates its calendar can't hold
+    except (OverflowError, OSError, ValueError):
+        return None
+    return stamp if stamp <= _clock() + 3600 else None
 
 
 def _last_change(rows: list[dict]) -> Optional[tuple[str, dict]]:
-    """FutureSpeak: the project changed last, and when (its last commit). A project with no date says nothing."""
-    dated = [(w, r) for r in rows for w in [_parse_when(r.get("when"))] if w is not None and w.tzinfo is not None and r.get("title")]
+    """FutureSpeak: the project changed last, and when (its last commit). A project with no usable date says nothing;
+    a long name gives way before its day."""
+    dated = [(s, r) for r in rows for s in [_stamp_of(r.get("when"))] if s is not None and r.get("title")]
     if not dated:
         return None
-    when, row = max(dated, key=lambda d: d[0])
-    return "%s · changed %s" % (row["title"], _day(when)), row
+    stamp, row = max(dated, key=lambda d: d[0])
+    tail = " · changed %s" % _day(stamp)
+    name = " ".join(str(row["title"]).split())
+    return _fit(name, TEXT_MAX - len(tail)) + tail, row
 
 
 def _count(noun: str) -> Callable[[list[dict]], Optional[tuple[str, dict]]]:

@@ -46,7 +46,7 @@ def _more(monkeypatch):
 
 
 def test_code_says_how_many_repos_have_changes(client):
-    assert ws_summary._repos(_code("clean", "changed", "clean", "changed", "error"))[0] == "5 repos · 2 with changes"
+    assert ws_summary._repos(_code("clean", "changed", "clean", "changed", "error"))[0] == "5 repos · 2 with changes · 1 unreadable"
     assert ws_summary._repos(_code("clean", "clean"))[0] == "2 repos, all clean"
     assert ws_summary._repos(_code("changed"))[0] == "1 repo · 1 with changes"
     assert ws_summary._repos(_code("clean", "error"))[0] == "2 repos · 1 unreadable", "a repo that can't be read is never called clean"
