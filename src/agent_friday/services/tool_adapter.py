@@ -6,7 +6,8 @@ request to it names the strength, and it is 1 only when all of these hold:
 
   * the owner's `tool_adapter.mode` is `tool_turns` (it ships `off`);
   * Laya's turn shape routed the turn as a confident short tool turn ("reflex", not degraded);
-  * the model is choosing a tool for the owner's words, not reading tool results back;
+  * no tool has run in this request: no tool result and no tool call anywhere in the
+    messages, whatever role a later message has (a loop's automated nudge is role "user");
   * the sensitivity classifier, run here on the owner's words, rates them public. Any error,
     and any vault mark already on the turn, counts as private.
 
@@ -54,10 +55,18 @@ def is_tool_turn(turn_shape: Optional[dict]) -> bool:
     return shape.get("route") == "reflex" and not shape.get("degraded")
 
 
+def _is_tool_round(m) -> bool:
+    return not isinstance(m, dict) or m.get("role") in ("tool", "function") \
+        or bool(m.get("tool_calls") or m.get("function_call"))
+
+
 def choosing_a_tool(messages) -> bool:
-    """The last message is the owner's: no tool result has come back in this turn yet."""
+    """The first round of a turn: the request ends with a user message and holds no tool call
+    or tool result at all. A history that kept earlier tool rounds therefore gets strength 0,
+    which is the safe side."""
     msgs = list(messages or [])
-    return bool(msgs) and isinstance(msgs[-1], dict) and msgs[-1].get("role") == "user"
+    return (bool(msgs) and isinstance(msgs[-1], dict) and msgs[-1].get("role") == "user"
+            and not any(_is_tool_round(m) for m in msgs))
 
 
 def _owner_text(messages) -> str:

@@ -2222,7 +2222,9 @@ class LlamaServerBackend:
                 except Exception:
                     scale = 0.0
                 if per_request:
-                    return None if scale == 0 else                         "per-request adapter applied at launch (scale %s)" % scale
+                    if scale == 0:
+                        return None
+                    return "per-request adapter applied at launch (scale %s)" % scale
                 if scale > 0:
                     return None
                 return "adapter listed at scale %s" % scale

@@ -25,8 +25,12 @@ from tests.unit.test_reasoning_effort_follows_turn_shape import (DEEP, DEGRADED,
 ON = {"tool_adapter": {"mode": "tool_turns"}}
 ASK = [{"role": "system", "content": "s"}, {"role": "user", "content": "turn on the lights"}]
 PRIVATE_ASK = [{"role": "user", "content": "what's my social security number and bank balance"}]
-READING_RESULTS = ASK + [{"role": "assistant", "content": "", "tool_calls": []},
+READING_RESULTS = ASK + [{"role": "assistant", "content": "", "tool_calls": [{"id": "1"}]},
                          {"role": "tool", "content": "ok"}]
+#: Critic B3 on 1e757b691: after an empty reply the local loop appends an empty assistant
+#: message and a role-"user" nudge (services/agent.py); the tool result is still in context.
+NUDGED = READING_RESULTS + [{"role": "assistant", "content": ""},
+                            {"role": "user", "content": "(Automated check: answer the user.)"}]
 MODE_T_SEAT = {"lora": "/x/fw27b-lora.gguf", "lora_apply": "per_request"}
 
 
@@ -44,7 +48,9 @@ def test_strength_is_one_exactly_on_a_confident_public_tool_choice(monkeypatch):
              {"tool_adapter": {"mode": "always"}}, {"tool_adapter": None}]
     shapes = [None, {}, REFLEX, ORDINARY, DEEP, DEGRADED, dict(REFLEX, degraded=True)]
     convos = [None, [], ASK, READING_RESULTS, [{"role": "user", "content": "a secret"}],
-              [{"role": "user", "content": [{"type": "text", "text": "lights"}]}]]
+              [{"role": "user", "content": [{"type": "text", "text": "lights"}]}], NUDGED,
+              [{"role": "assistant", "content": "", "function_call": {"name": "x"}},
+               {"role": "user", "content": "lights"}]]
     ctxs = [None, {}, {"vault_access": False}, {"vault_access": True}]
     for settings, shape, convo, ctx in itertools.product(modes, shapes, convos, ctxs):
         want = int(settings is ON and shape is REFLEX
