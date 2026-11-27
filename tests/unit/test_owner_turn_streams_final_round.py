@@ -79,3 +79,34 @@ def test_a_streamed_start_that_the_final_answer_does_not_continue_is_followed_by
     wire(_cloud_turn(final="A different final answer, as saved on the PC."))
     r = ask(client, phone())
     assert spoken(r).endswith("A different final answer, as saved on the PC.")
+
+
+def test_a_placeholder_split_over_deltas_never_reaches_the_phone(client, wire):
+    """The critic's probe: "[" in one delta, "PII:email:3f2a]" in the next, after the stream is live."""
+    frames = _cloud_turn()[:-1] + [{"delta": " Ask ["}, {"delta": "PII:email:3f2a] for details."},
+                                   {"done": True, "payload": {"response": ANSWER + " Ask sam@example.test for details.",
+                                                              "model": "claude-opus-5-5", "seat": "cloud"}}]
+    wire(frames)
+    r = ask(client, phone())
+    assert "PII:" not in r.get_data(as_text=True)
+    assert spoken(r).endswith("Ask sam@example.test for details.")
+
+
+def test_a_think_tag_split_over_deltas_stops_the_stream(client, wire):
+    frames = _cloud_turn()[:-1] + [{"delta": " <thi"}, {"delta": "nk>private reasoning"},
+                                   {"done": True, "payload": {"response": ANSWER, "model": "claude-opus-5-5",
+                                                              "seat": "cloud"}}]
+    wire(frames)
+    r = ask(client, phone())
+    assert "private reasoning" not in r.get_data(as_text=True) and spoken(r) == ANSWER
+
+
+def test_deltas_after_the_round_ends_are_not_streamed(client, wire):
+    """A fallback model publishing deltas after the cloud round closed is held to the final reply."""
+    frames = _cloud_turn()[:-1] + [{"round": {"kind": "end", "round": 2}},
+                                   {"delta": " FALLBACK DRAFT TEXT"},
+                                   {"done": True, "payload": {"response": ANSWER, "model": "claude-opus-5-5",
+                                                              "seat": "cloud"}}]
+    wire(frames)
+    r = ask(client, phone())
+    assert "FALLBACK DRAFT" not in r.get_data(as_text=True) and spoken(r) == ANSWER

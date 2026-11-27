@@ -39,7 +39,8 @@ HEAD = ("Before this turn, Friday read the page(s) of the owner's wiki that the 
 
 def eligible(text: str, session_ctx: Optional[dict]) -> bool:
     ctx = session_ctx or {}
-    if not ENABLED or ctx.get("is_background_task") or str(ctx.get("kind") or "") != "chat":
+    # Only a person's chat turn: the chat routes mark theirs (routes/chat.py, "interactive_chat").
+    if not ENABLED or ctx.get("is_background_task") or not ctx.get("interactive_chat"):
         return False
     t = str(text or "").strip()
     if not t or len(t) > MAX_QUESTION_CHARS:
@@ -71,7 +72,9 @@ def prefetch(text: str, read: Callable[[str], Optional[str]]) -> List[Tuple[str,
             except Exception:
                 got = None
             if got:
-                out.append((rel, str(got)[:MAX_CHARS_PER_PAGE]))
+                # `read` cut the page to MAX_CHARS_PER_PAGE BEFORE its envelope: never cut here,
+                # or the envelope's close marker is lost (untrusted_input).
+                out.append((rel, str(got)))
     except Exception:
         return out
     return out

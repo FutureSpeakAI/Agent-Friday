@@ -3042,36 +3042,36 @@ def _tool_read_wiki(inp):
         return f"Read error: {e}"
 
 
-def _tool_search_wiki(inp):
-    """Keyword-search the wiki and return up to N hits with excerpts."""
+def _search_wiki_args(inp):
+    """(query, limit) of a search_wiki call, or (None, error text)."""
     inp = inp or {}
     query = (inp.get('query') or '').strip()
     if not query:
-        return "search_wiki error: 'query' is required."
+        return None, "search_wiki error: 'query' is required."
     try:
         limit = int(inp.get('limit') or 5)
     except (TypeError, ValueError):
         limit = 5
-    limit = max(1, min(20, limit))
-    q_low = query.lower()
+    return query, max(1, min(20, limit))
 
-    results = []
-    # The memory card's lines about the owner are searched first: the facts
-    # the owner stated (who is in the household, their ages) live there, not
-    # in a wiki page. Gated for a cloud reader like the prompt head.
-    try:
-        from agent_friday.services import core_memory_tools as _cmt
-        results.extend(_cmt.search_card(query, limit=min(3, limit)))
-    except Exception:
-        pass
-    # The walk below stops at its own budget on every seat (services/wiki_index_search,
-    # SCAN_BUDGET_S), or sooner under a call's budget (a local seat's,
-    # services/tool_deadline.py), and returns the hits found so far.
+
+def _search_wiki_pages(query, room):
+    """Up to `room` wiki page hits for `query`, and whether the time budget cut the search short.
+
+    The part of search_wiki that reads no state of the call (no origin, provider or turn): the
+    pages the knowledge graph's index names, then the walk. So it may start early, beside a
+    round's other reads (services/parallel_reads); the memory-card part never does. The walk
+    stops at its own budget on every seat (services/wiki_index_search, SCAN_BUDGET_S), or sooner
+    under a call's budget (a local seat's, services/tool_deadline.py)."""
     from agent_friday.services import tool_deadline as _td
     from agent_friday.services import wiki_index_search as _wis
     _deadline = _td.deadline(_wis.SCAN_BUDGET_S)
+    q_low = query.lower()
     qwords = _wis.words(query)
+    hits = []
     partial = False
+    if room <= 0:
+        return hits, partial
     # One root: the serving wiki the knowledge graph indexes and read_wiki
     # resolves against, so every hit's path opens with read_wiki as returned.
     from agent_friday.services.knowledge_graph import wiki_graph as _wg
@@ -3088,11 +3088,11 @@ def _tool_search_wiki(inp):
             if not (from_index or q_low in f.stem.lower()):
                 return
             excerpt = content[:400].strip()
-        results.append({'root': label, 'path': rel, 'excerpt': excerpt})
+        hits.append({'root': label, 'path': rel, 'excerpt': excerpt})
 
     # 1. The knowledge graph's index names the pages the query is about: read those first.
-    for rel in _wis.candidate_pages(query, limit=limit):
-        if len(results) >= limit or _td.expired() or _time.monotonic() >= _deadline:
+    for rel in _wis.candidate_pages(query, limit=room):
+        if len(hits) >= room or _td.expired() or _time.monotonic() >= _deadline:
             break
         f = _wg.resolve_page(rel)
         if f is None or not Path(f).is_file():
@@ -3105,9 +3105,9 @@ def _tool_search_wiki(inp):
         seen.add(str(Path(f).resolve()))
         _hit(Path(f), rel.replace('\\', '/'), from_index=True)
     # 2. The walk, for what the index does not know.
-    if root.exists() and len(results) < limit:
+    if root.exists() and len(hits) < room:
         for f in root.rglob('*'):
-            if len(results) >= limit:
+            if len(hits) >= room:
                 break
             if _td.expired() or _time.monotonic() >= _deadline:
                 partial = True
@@ -3123,6 +3123,44 @@ def _tool_search_wiki(inp):
             except ValueError:
                 rel = str(f)
             _hit(f, rel)
+    return hits, partial
+
+
+def _search_wiki_early(inp):
+    """The early half of a search_wiki call (services/parallel_reads): its pages, at full room."""
+    query, limit = _search_wiki_args(inp)
+    if query is None:
+        return None
+    return _search_wiki_pages(query, limit)
+
+
+def _tool_search_wiki(inp, _early_pages=None):
+    """Keyword-search the wiki and return up to N hits with excerpts.
+
+    `_early_pages`: (hits, partial) from _search_wiki_early for this same input, computed beside
+    the round's other reads; the memory-card part still runs here, in this call's own context."""
+    query, limit = _search_wiki_args(inp)
+    if query is None:
+        return limit
+
+    results = []
+    # The memory card's lines about the owner are searched first: the facts
+    # the owner stated (who is in the household, their ages) live there, not
+    # in a wiki page. Gated for a cloud reader like the prompt head.
+    try:
+        from agent_friday.services import core_memory_tools as _cmt
+        results.extend(_cmt.search_card(query, limit=min(3, limit)))
+    except Exception:
+        pass
+    room = limit - len(results)
+    if _early_pages is not None:
+        # The same walk at full room, in the same order: its first `room` hits are the ones this
+        # call would find, and it was cut short for them only if it stopped before `room`.
+        early_hits, early_partial = _early_pages
+        pages, partial = list(early_hits[:max(0, room)]), bool(early_partial and len(early_hits) < room)
+    else:
+        pages, partial = _search_wiki_pages(query, room)
+    results.extend(pages)
 
     note = ("The time budget ran out before the whole wiki was searched; these "
             "are the hits found so far. Narrow the query to search further."
@@ -15260,7 +15298,11 @@ def _execute_tool(name, tool_input, pii_lookup=None, session_ctx=None, handler=N
     session_ctx: ring-2/3 policy evaluation + hook attribution (workspace/run).
     handler: for an executor whose tool is not in CLAUDE_TOOL_HANDLERS (the
     voice surface's own helpers). It runs through exactly the same chain;
-    there is no other way to invoke a tool handler.
+    there is no other way to invoke a tool handler that acts. The one
+    exception, for reads only: the cloud loop may start read_wiki,
+    knowledge_query and search_wiki's page search early (services/
+    parallel_reads); their result is used only through this chain, via
+    `handler=`, and a call a gate refuses never uses it.
     """
     # Every return before the handler runs is Friday's own line about the call (a
     # refusal, a fix-it, a hold), not a tool's output: marked so the loops hand it
@@ -18311,7 +18353,9 @@ def _kg_fastpath_prefill(convo, session_ctx, model, pii_lookup, tool_trace, orb_
             _ms = int((_time.time() - _t) * 1000)
             tool_trace.append({"name": "read_wiki", "input": args, "result": clip(result, 2000), "prefetched": True})
             _ledger_tool_call("read_wiki", result, _ms, orb_id, session_ctx)
-            return _untrusted.wrap(_qgate.read_through("read_wiki", args, result, session_ctx))
+            # Cut BEFORE the envelope, so its close marker always survives.
+            page = str(result)[:_kf.MAX_CHARS_PER_PAGE]
+            return _untrusted.wrap(_qgate.read_through("read_wiki", args, page, session_ctx))
 
         pages = _kf.prefetch(text, read)
         if pages:
@@ -18770,6 +18814,7 @@ def _call_claude_agent_run(messages, system=None, model=None, max_tokens=16384, 
                             except Exception:
                                 pass
                         resp = _stream.get_final_message()
+                    _round_says("end", iter_count)
                 else:
                     resp = client.messages.create(**kwargs)
             except Exception as _gexc:
@@ -18957,8 +19002,13 @@ def _call_claude_agent_run(messages, system=None, model=None, max_tokens=16384, 
             # Two or more read-only lookups of this PC's wiki/graph start together (services/
             # parallel_reads); each call below still passes every gate in order before its result is used.
             from agent_friday.services import parallel_reads as _par_reads
-            _early = _par_reads.start(tool_uses, CLAUDE_TOOL_HANDLERS,
-                                      lambda _n, _i: _prefetch_prepare(_n, _i, pii_lookup))
+            # search_wiki starts only its page search early; its memory-card half, gated on this
+            # call's origin and provider, runs inside the real call (_tool_search_wiki(_early_pages=)).
+            _early = _par_reads.start(
+                tool_uses, CLAUDE_TOOL_HANDLERS, lambda _n, _i: _prefetch_prepare(_n, _i, pii_lookup),
+                split=({"search_wiki": (_search_wiki_early,
+                                        lambda _i, _d: _tool_search_wiki(_i, _early_pages=_d))}
+                       if CLAUDE_TOOL_HANDLERS.get("search_wiki") is _tool_search_wiki else None))
             for tu in tool_uses:
                 # No gate note from anything before this call (an earlier call, a
                 # helper's tool run on this thread) reaches this call's tool_call

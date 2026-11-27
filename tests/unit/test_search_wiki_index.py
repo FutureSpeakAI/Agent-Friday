@@ -81,3 +81,15 @@ def test_the_walk_stops_at_its_budget_on_any_seat(wiki, monkeypatch):
 def test_words_drop_stop_words_and_repeats():
     assert wis.words("What is the core philosophy of the FutureSpeak aesthetic?") == [
         "core", "philosophy", "futurespeak", "aesthetic"]
+
+
+def test_a_one_word_title_names_only_a_short_question(monkeypatch):
+    _entities(monkeypatch, [{"title": "Family", "description": "", "provenance": {"wiki_pages": ["personal/family.md"]}},
+                            {"title": "Home", "description": "", "provenance": {"wiki_pages": ["home.md"]}},
+                            {"title": "Northwind Aesthetic", "description": "",
+                             "provenance": {"wiki_pages": ["brand/northwind.md"]}}])
+    wis.reset_cache()
+    assert wis.strong_pages("What do you know about my family?") == ["personal/family.md"]
+    assert wis.strong_pages("Remind me which family photos to print for the holiday cards") == []
+    assert wis.strong_pages("When do I get home tonight?") == []                     # 'home': too short a title
+    assert wis.strong_pages("Explain the Northwind aesthetic and how it changed this year") == ["brand/northwind.md"]

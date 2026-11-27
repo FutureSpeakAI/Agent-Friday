@@ -102,6 +102,19 @@ MAX_TURN_S = 30 * 60.0
 COMMIT_CHARS = 160
 #: A privacy placeholder in model text: the saved reply restores it, so a stream must never show it.
 _PLACEHOLDER = re.compile(r"\[(?:PII|REDACTED|SECRET)[:_\]]")
+#: How much of what was sent is kept to judge a placeholder or tag split over deltas.
+_TAIL = 48
+
+
+def _open_fragment(s: str) -> int:
+    """How much of `s` may be sent now: all of it but an unfinished "[..." or "<..." near its end
+    (held back until it resolves, since it may become a placeholder or a scratchpad tag) and any
+    trailing whitespace."""
+    i = max(s.rfind("["), s.rfind("<"))
+    if i >= 0 and len(s) - i <= _TAIL and "]" not in s[i:] and ">" not in s[i:]:
+        s = s[:i]
+    # trailing whitespace waits for what follows it (a dropped round must not leave a stray space)
+    return len(s.rstrip())
 
 
 def _call_desktop(text: str, conversation_id: Optional[str], outside: Optional[list] = None):
@@ -704,6 +717,8 @@ def _stream(response, dev: Optional[dict] = None, requested: str = "", cid: Opti
     rnd_state = "hold"      # hold | live | off (narration, scratchpad or placeholder: not this round)
     rnd_buf: list = []
     sent: list = []
+    sent_tail = ""          # the last _TAIL chars sent, to judge a placeholder split over deltas
+    pend = ""               # an unfinished "[..." / "<..." held back until it resolves
     try:
         for f in _frames_of(response):
             if time.time() - started > MAX_TURN_S:
@@ -718,32 +733,41 @@ def _stream(response, dev: Optional[dict] = None, requested: str = "", cid: Opti
             elif "round" in f:
                 kind = str((f.get("round") or {}).get("kind") or "")
                 if kind == "start":
-                    rnd_seen, rnd_state, rnd_buf = True, "hold", []
-                elif kind == "tool_use":
-                    rnd_state, rnd_buf = "off", []
+                    rnd_seen, rnd_state, rnd_buf, pend = True, "hold", [], ""
+                elif kind in ("tool_use", "end"):
+                    # A tool call: what was held is narration. The round's end: anything after it
+                    # (a fallback model publishing deltas in the same turn) is not this round's answer.
+                    rnd_state, rnd_buf, pend = "off", [], ""
             elif "delta" in f:
                 piece = str(f["delta"])
                 spoken.append(piece)
                 if not (live_ok and rnd_seen) or rnd_state == "off" or not piece:
                     continue
-                if rnd_state == "live":
-                    if _PLACEHOLDER.search(piece) or "<think>" in piece:
-                        rnd_state = "off"
+                if rnd_state == "hold":
+                    rnd_buf.append(piece)
+                    held = "".join(rnd_buf)
+                    if "<think>" in held or _PLACEHOLDER.search(held):
+                        rnd_state, rnd_buf = "off", []
                         continue
-                    sent.append(piece)
-                    yield _event({"type": "content_block_delta", "index": 0,
-                                  "delta": {"type": "text_delta", "text": piece}})
-                    continue
-                rnd_buf.append(piece)
-                held = "".join(rnd_buf)
-                if "<think>" in held or _PLACEHOLDER.search(held):
-                    rnd_state, rnd_buf = "off", []
-                elif len(held.strip()) >= COMMIT_CHARS:
+                    if len(held.strip()) < COMMIT_CHARS:
+                        continue
                     rnd_state, rnd_buf = "live", []
-                    held = held.lstrip() if not sent else held
-                    sent.append(held)
+                    piece = held.lstrip() if not sent else held
+                # live: a placeholder or a scratchpad tag can arrive split over deltas ("[" then
+                # "PII:email:3f2a]"), so each piece is judged with the tail already sent and an
+                # unfinished "[..." / "<..." is held back until it resolves.
+                s = pend + piece
+                probe = sent_tail + s
+                if _PLACEHOLDER.search(probe) or "<think>" in probe:
+                    rnd_state, pend = "off", ""
+                    continue
+                cut = _open_fragment(s)
+                out, pend = s[:cut], s[cut:]
+                if out:
+                    sent.append(out)
+                    sent_tail = (sent_tail + out)[-_TAIL:]
                     yield _event({"type": "content_block_delta", "index": 0,
-                                  "delta": {"type": "text_delta", "text": held}})
+                                  "delta": {"type": "text_delta", "text": out}})
             elif "error" in f:
                 failed = str(f["error"])
             elif f.get("done"):
@@ -788,9 +812,12 @@ def _stream(response, dev: Optional[dict] = None, requested: str = "", cid: Opti
         truth["formatted"] = text                               # the screen's copy; the stream text is what is spoken
         text = truth["speech"] or text                          # an answer that is only a table or code is still sent
     already = "".join(sent)
-    if already and text.startswith(already):
-        text = text[len(already):]                              # the rest of what was being written
-    elif already:
+    _a = already.rstrip()
+    if _a and text.startswith(_a):
+        text = text[len(_a):]                                   # the rest of what was being written
+        if already != _a:
+            text = text.lstrip(" ")                             # the space was already sent
+    elif already.strip():
         # What was streamed is not how the saved reply begins (a guard or placeholder restore
         # changed it): the saved reply follows in full, so the phone always ends on the PC's copy.
         _log.warning("owner turn: streamed text differs from the final reply (%d chars streamed); final sent in full",

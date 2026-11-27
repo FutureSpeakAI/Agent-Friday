@@ -2740,6 +2740,8 @@ def chat():
         _sess_ctx = {
             "_laya_pilot": _pilot,
             "authenticated": bool(session.get("authenticated")) or not bool(FRIDAY_PASSWORD),
+            # A person's chat turn, waiting on the answer (services/kg_fastpath reads it).
+            "interactive_chat": True,
             "provider": _provider,
             # The routed model, read by the governance receipt's `chosen_by`.
             "model": str(_route_info.get('model') or ''),
@@ -4225,6 +4227,7 @@ def chat_send():
         _sess_ctx = {
             "_laya_pilot": _pilot,
             "authenticated": bool(session.get("authenticated")) or not bool(FRIDAY_PASSWORD),
+            "interactive_chat": True,                   # a person's chat turn (services/kg_fastpath)
             "conversation_id": _conversation_id,
             "off_record_turn": _turn_off_record,        # household capture (NS-15.8-2)
         }

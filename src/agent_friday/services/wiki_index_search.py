@@ -27,6 +27,8 @@ from typing import Dict, List, Optional, Tuple
 
 #: Seconds the fallback walk may take before it returns what it has, on any seat.
 SCAN_BUDGET_S = 4.0
+#: A one-word entity title names a question (strong_pages) only in a question this short.
+ONE_WORD_TITLE_MAX_QUESTION_WORDS = 3
 
 _STOP = frozenset("""
 a about above after again all also am an and any are as at be been before being below between both but
@@ -148,6 +150,10 @@ def strong_pages(question: str, limit: int = 2) -> List[str]:
     for title, _hay, page in rows:
         tw = words(title)
         if not tw or not any(len(w) >= 4 for w in tw) or not set(tw) <= qwords:
+            continue
+        # A one-word title ("Home", "Health", a first name) is shared by too many questions: it
+        # counts only when it is most of a short question ("what do you know about my family?").
+        if len(tw) == 1 and (len(tw[0]) < 5 or len(qwords) > ONE_WORD_TITLE_MAX_QUESTION_WORDS):
             continue
         if len(tw) > best.get(page, 0):
             best[page] = len(tw)
