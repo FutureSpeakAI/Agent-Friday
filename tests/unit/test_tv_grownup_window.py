@@ -407,3 +407,37 @@ def test_the_pin_file_is_read_only_under_the_lock(monkeypatch):
     win._matches(PIN)
     win.open_with_pin(_device(), "s", PIN)
     assert not unlocked
+
+
+def test_an_old_pin_open_just_before_a_save_takes_the_lock_gets_no_window(monkeypatch):
+    # Everything a save changes (verifier, generation, the end of every window) happens inside its one locked
+    # step: an old-PIN open that runs to the end just before the save takes the lock leaves no window after it.
+    import threading
+    win.set_pin(PIN)
+    tv = _device()
+    real, saver, fired, got = win._LOCK, [None], [False], {}
+
+    class HookedLock:
+        def __enter__(self):
+            if threading.current_thread() is saver[0] and not fired[0]:
+                fired[0] = True
+                def old_pin_open():
+                    try:
+                        got["grant"] = win.open_with_pin(tv, "s", PIN)
+                    except win.WindowRefused as e:
+                        got["refused"] = e.code
+                t = threading.Thread(target=old_pin_open)
+                t.start()
+                t.join(10)
+            return real.__enter__()
+
+        def __exit__(self, *a):
+            return real.__exit__(*a)
+
+        def locked(self):
+            return real.locked()
+    monkeypatch.setattr(win, "_LOCK", HookedLock())
+    saver[0] = threading.current_thread()
+    win.set_pin("9999", by="pc_settings")
+    assert fired[0]
+    assert not win.check(tv, got.get("grant", "")) and not win._GRANTS, got

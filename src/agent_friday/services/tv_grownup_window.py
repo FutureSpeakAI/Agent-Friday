@@ -141,7 +141,8 @@ def set_pin(pin, dev: Optional[dict] = None, *, by: str = "owner") -> None:
     p = _path()
     p.parent.mkdir(parents=True, exist_ok=True)
     # One step under the lock: the new verifier, the generation and the end of every window move together, so
-    # no open can start between them (test_an_old_pin_open_started_during_a_save_gets_no_window) and two saves
+    # no open can start between them (test_an_old_pin_open_started_during_a_save_gets_no_window,
+    # test_an_old_pin_open_just_before_a_save_takes_the_lock_gets_no_window) and two saves
     # never share the temporary file (test_two_saves_at_once_leave_one_pin_and_both_finish).
     with _LOCK:
         tmp = p.with_suffix(".tmp")
