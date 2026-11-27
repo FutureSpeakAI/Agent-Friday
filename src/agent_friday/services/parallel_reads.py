@@ -23,13 +23,17 @@ import logging
 from concurrent.futures import Future, ThreadPoolExecutor
 from typing import Callable, Dict, Optional
 
+from agent_friday.governance import action_gate
+
 _log = logging.getLogger(__name__)
 
 #: The early half's result, for the handler of a SPLIT tool while `_execute_tool` runs it (its
 #: real handler reads this instead of redoing that half). Set only around that one call.
 EARLY = contextvars.ContextVar("friday_parallel_read_early", default=None)
 
-#: Only these: they read this PC's own wiki and knowledge graph and change nothing.
+#: Only these: they read this PC's own wiki and knowledge graph and change nothing. A tool here or
+#: in `split` runs early only if the governance gate also classes it internal (`_internal`);
+#: tests/unit/test_parallel_reads_internal_only.py holds both.
 PARALLEL_READ_TOOLS = frozenset({"read_wiki", "knowledge_query"})
 MAX_WORKERS = 4
 
@@ -37,7 +41,7 @@ MAX_WORKERS = 4
 class Prefetch:
     def __init__(self, handlers: Optional[Dict[str, Callable]] = None):
         self._handlers = handlers or {}
-        self._started: Dict[str, tuple] = {}        # tool_use id -> (name, input, future, finish)
+        self._started: Dict[str, tuple] = {}        # tool_use id -> (name, input, future, is_split)
 
     def __len__(self) -> int:
         return len(self._started)
@@ -66,6 +70,10 @@ class Prefetch:
         return handler
 
 
+def _internal(name) -> bool:
+    return name in action_gate.INTERNAL_TOOLS
+
+
 def start(tool_uses, handlers: Dict[str, Callable], prepare: Callable[[str, dict], Optional[dict]],
           split: Optional[Dict[str, Callable]] = None) -> Prefetch:
     """Start the round's read-only lookups together. `prepare(name, input)` gives the input the
@@ -76,8 +84,8 @@ def start(tool_uses, handlers: Dict[str, Callable], prepare: Callable[[str, dict
     split = split or {}
     try:
         reads = [tu for tu in tool_uses or ()
-                 if (getattr(tu, "name", None) in PARALLEL_READ_TOOLS and handlers.get(tu.name))
-                 or getattr(tu, "name", None) in split]
+                 if _internal(getattr(tu, "name", None))
+                 and ((tu.name in PARALLEL_READ_TOOLS and handlers.get(tu.name)) or tu.name in split)]
         if len(reads) < 2:
             return pre
         pool = ThreadPoolExecutor(max_workers=min(MAX_WORKERS, len(reads)), thread_name_prefix="friday-read")

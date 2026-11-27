@@ -15305,7 +15305,9 @@ def _execute_tool(name, tool_input, pii_lookup=None, session_ctx=None, handler=N
     exception, for reads only: the cloud loop may start read_wiki,
     knowledge_query and search_wiki's page search early (services/
     parallel_reads); their result is used only through this chain, via
-    `handler=`, and a call a gate refuses never uses it.
+    `handler=`, and a call a gate refuses never uses it. Held by
+    tests/unit/test_every_action_is_governed.py (executor scan) and
+    tests/unit/test_parallel_reads_internal_only.py (gate-internal tools only).
     """
     # Every return before the handler runs is Friday's own line about the call (a
     # refusal, a fix-it, a hold), not a tool's output: marked so the loops hand it
