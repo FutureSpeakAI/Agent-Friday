@@ -19,7 +19,8 @@ the owner's memory (services/tv_memory_access): the memory gate also needs a win
     starts it again; the TV cannot restart the PC.
   * Only the household TV (kind tv, bound to the family member) may open one. Kids get no memory whatever
     the window says (tv_memory_access.allows).
-  * Every open, refusal and close leaves a ledger row (``tv_grownup_window``), never the PIN.
+  * Every open, refusal and close leaves a ledger row (``tv_grownup_window``), never the PIN or the grant
+    (test_no_ledger_row_carries_the_pin).
 
 Tests: tests/unit/test_tv_grownup_window.py.
 """
@@ -50,6 +51,7 @@ _PIN_MIN, _PIN_MAX = 4, 8        # the TV's own grown-up PIN (safety/Pin.java; t
 _log = logging.getLogger(__name__)
 _LOCK = threading.Lock()
 _GRANTS: dict = {}               # sha256(grant) -> {"dev": id, "until": cap, "seen": last turn, "by": "pin"}
+_PIN_GEN = [0]                   # moves on with every set_pin: an open checked against an older PIN is refused
 _MISSES: dict = {}               # _HOUSEHOLD -> {"n": misses, "until": t}
 
 
@@ -126,6 +128,7 @@ def set_pin(pin, dev: Optional[dict] = None, *, by: str = "owner") -> None:
     tmp.write_text(json.dumps({"body": body, "sig": _sign(body)}), encoding="utf-8")
     os.replace(tmp, p)
     with _LOCK:
+        _PIN_GEN[0] += 1
         _GRANTS.clear()
         _MISSES.clear()
     _ledger("pin_set", dev, by=by)
@@ -169,13 +172,15 @@ def open_with_pin(dev: dict, session_key: str, pin) -> str:
         raise WindowRefused(409, "set the grown-up PIN on the PC or your phone first", "no_pin")
     dev_id, now = str(dev["id"]), _now()
     # The try is counted before the PIN is checked, under the lock, so tries sent in parallel cannot outrun the
-    # lock-out (test_wrong_pins_sent_at_once_cannot_outrun_the_lock_out). A right PIN clears the count.
+    # lock-out (test_wrong_pins_sent_at_once_cannot_outrun_the_lock_out). A right PIN clears the household count,
+    # so each real unlock gives the next FREE_TRIES again (test_a_wrong_pin_is_refused_and_repeated_misses_lock_it).
     with _LOCK:
         m = _MISSES.setdefault(_HOUSEHOLD, {"n": 0, "until": 0.0})
         if m["until"] > now:
             raise WindowRefused(429, "too many tries; wait %d s" % int(m["until"] - now + 1), "locked")
         m["n"] += 1
         tries = m["n"]
+        gen = _PIN_GEN[0]
         if tries >= FREE_TRIES:
             m["until"] = now + min(LOCK_MAX_S, LOCK_BASE_S * 2 ** (tries - FREE_TRIES))
     if not _matches(pin):
@@ -183,6 +188,9 @@ def open_with_pin(dev: dict, session_key: str, pin) -> str:
         raise WindowRefused(403, "that PIN is not right", "wrong_pin")
     grant = secrets.token_urlsafe(32)
     with _LOCK:
+        if gen != _PIN_GEN[0]:
+            # The PIN changed while this one was being checked (test_a_pin_changed_while_an_open_is_checking_wins).
+            raise WindowRefused(409, "the grown-up PIN was just changed; enter the new one", "pin_changed")
         _MISSES.pop(_HOUSEHOLD, None)
         for h in [h for h, v in _GRANTS.items() if v["dev"] == dev_id]:
             del _GRANTS[h]                                # one window per TV

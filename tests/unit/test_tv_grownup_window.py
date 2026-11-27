@@ -180,7 +180,7 @@ def test_the_grown_up_header_alone_no_longer_unlocks_memory():
 
 def test_wrong_pins_sent_at_once_cannot_outrun_the_lock_out(monkeypatch):
     # Every try is counted before its PIN is checked, so a burst of tries in parallel gets FREE_TRIES checks,
-    # not one per worker (critic B1 on PR #1163).
+    # not one per worker.
     import threading
     import time as _time
     win.set_pin(PIN)
@@ -248,3 +248,35 @@ def test_the_window_a_turn_used_is_named_for_its_trace(_clean):
     g = win.open_with_pin(tv, "s", PIN)
     assert win.window_for(tv, g) == {"id": hashlib.sha256(g.encode()).hexdigest()[:16], "by": win.OPENED_BY_PIN}
     assert win.window_for(other, g) is None and win.window_for(tv, "x") is None
+
+
+def test_a_pin_changed_while_an_open_is_checking_wins(monkeypatch):
+    # An open checked against the old PIN must not leave a window after the new PIN is saved.
+    win.set_pin(PIN)
+    tv = _device()
+    real = win._matches
+
+    def check_then_owner_changes_pin(pin):
+        ok = real(pin)
+        win.set_pin("9999", by="pc_settings")
+        return ok
+    monkeypatch.setattr(win, "_matches", check_then_owner_changes_pin)
+    with pytest.raises(win.WindowRefused) as e:
+        win.open_with_pin(tv, "s", PIN)
+    assert e.value.status == 409 and not win._GRANTS
+
+
+def test_no_ledger_row_carries_the_pin(_clean):
+    win.set_pin(PIN, by="pc_settings")
+    tv = _device()
+    with pytest.raises(win.WindowRefused):
+        win.open_with_pin(tv, "s", "7364")
+    g = win.open_with_pin(tv, "s", PIN)
+    win.close(tv)
+    rows = repr(_clean["rows"])
+    assert _clean["rows"] and PIN not in rows and "7364" not in rows and g not in rows
+
+
+def test_an_eight_digit_pin_is_taken():
+    win.set_pin("12345678")
+    assert win._matches("12345678")

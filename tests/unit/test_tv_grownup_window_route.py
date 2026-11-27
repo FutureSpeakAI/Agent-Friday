@@ -81,7 +81,7 @@ def test_a_grown_up_turn_keeps_the_window_from_going_idle(client, monkeypatch):
     touched = []
     real = win.window_for
     monkeypatch.setattr(win, "window_for", lambda dev, g, touch=False: touched.append(touch) or real(dev, g, touch=touch))
-    monkeypatch.setattr(turn, "run", lambda dev, body, p, window_ok=False: iter([turn._event({"type": "message_stop"})]))
+    monkeypatch.setattr(turn, "run", lambda dev, body, p, window=None: iter([turn._event({"type": "message_stop"})]))
     client.post("/tv/v1/messages", json={"messages": [{"role": "user", "content": "hi"}]},
                 headers={**h, "X-Friday-Principal": "grownup", "X-Friday-Window": grant})
     assert touched == [True]
@@ -96,8 +96,11 @@ def test_the_messages_route_passes_the_window_only_for_a_grown_up_with_a_live_gr
     grant = client.post("/tv/v1/grownup/open", json={"pin": PIN}, headers=h).get_json()["window"]
     seen = []
 
-    def fake_run(dev, body, p, window_ok=False):
-        seen.append(bool(window_ok))
+    def fake_run(dev, body, p, window=None):
+        seen.append(window is not None)
+        if window is not None:
+            import hashlib
+            assert window == {"id": hashlib.sha256(grant.encode()).hexdigest()[:16], "by": win.OPENED_BY_PIN}
         return iter([turn._event({"type": "message_stop"})])
     monkeypatch.setattr(turn, "run", fake_run)
     hdr = {**h, "X-Friday-Principal": principal}

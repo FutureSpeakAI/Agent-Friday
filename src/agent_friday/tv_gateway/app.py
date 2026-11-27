@@ -277,10 +277,10 @@ def create_app(tailnet: bool = False) -> Flask:
         from agent_friday.services import tv_grownup_window as _win
         # A grown-up turn on a live window keeps it from going idle and names it in the turn's trace
         # (services/tv_grownup_window.window_for).
-        window_ok = (_win.window_for(g.device, request.headers.get("X-Friday-Window", ""), touch=True)
-                     if principal == "grownup" else None)
+        window = (_win.window_for(g.device, request.headers.get("X-Friday-Window", ""), touch=True)
+                  if principal == "grownup" else None)
         try:
-            events = turn.run(g.device, request.get_json(silent=True) or {}, principal, window_ok)
+            events = turn.run(g.device, request.get_json(silent=True) or {}, principal, window)
             first = next(events, None)
         except turn.TurnRefused as e:
             return _refuse(e.status, str(e), **({"code": e.code} if e.code else {}), **e.extra)
