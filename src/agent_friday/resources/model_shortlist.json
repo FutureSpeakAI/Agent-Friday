@@ -60,13 +60,15 @@
   "models": [
     {
       "id": "bonsai2:27b",
-      "label": "Bonsai 2 27B",
+      "label": "Bonsai 2.5 27B",
       "publisher": "PrismML",
       "friday_standard": true,
       "roles": ["brain", "deep_reasoner"],
       "runtime": "prism-fork",
-      "repo": "prism-ml/Ternary-Bonsai-2-27B-gguf",
-      "repo_url": "https://huggingface.co/prism-ml/Ternary-Bonsai-2-27B-gguf",
+      "repo": "prism-ml/Ternary-Bonsai-2.5-27B-GGUF",
+      "repo_url": "https://huggingface.co/prism-ml/Ternary-Bonsai-2.5-27B-GGUF",
+      "revision": "28a7093cc25bc151cc2b284c5570f12ce343fdcf",
+      "version_note": "Bonsai 2.5 replaces Bonsai 2 under the same id (PrismML docs: same ternary format, file size and runtimes), so the seat keeps its measurements; the previous file stays in the previous-version slot for rollback.",
       "licence": "Apache-2.0",
       "licence_class": "permissive",
       "telemetry": "none",
@@ -74,14 +76,14 @@
       "params_total_b": 27.4,
       "context_training": 262144,
       "kv_layout": {"full_attention_layers": 16, "kv_heads": 4, "head_dim": 256, "note": "64 blocks, full attention every 4th; the recurrent layers hold a small fixed state"},
-      "published_speed": {"RTX 5090": {"PTQ1_0": 120.5, "PQ2_0": 129.9}, "RTX 4090": {"PTQ1_0": 91.1, "PQ2_0": 81.2}, "L4": {"PTQ1_0": 32.1, "PQ2_0": 29.8}, "M5 Max": {"PQ2_0": 47.0}, "M5 Pro": {"PQ2_0": 28.1}, "source": "https://huggingface.co/prism-ml/Ternary-Bonsai-2-27B-gguf"},
+      "published_speed": {"RTX 5090": {"PTQ1_0": 120.5, "PQ2_0": 129.9}, "RTX 4090": {"PTQ1_0": 91.1, "PQ2_0": 81.2}, "L4": {"PTQ1_0": 32.1, "PQ2_0": 29.8}, "M5 Max": {"PQ2_0": 47.0}, "M5 Pro": {"PQ2_0": 28.1}, "source": "https://huggingface.co/prism-ml/Ternary-Bonsai-2-27B-gguf", "note": "Bonsai 2 27B's published figures; 2.5 publishes none and keeps the same format and size"},
       "serve": {"serve_num_ctx": 131072, "serve_args": ["-b", "4096", "-ub", "512", "-np", "1", "--cache-type-k", "q8_0", "--cache-type-v", "q8_0"]},
       "files": [
-        {"file": "Ternary-Bonsai-2-27B-PTQ1_0.gguf", "packing": "PTQ1_0", "bits_per_weight": 1.75, "bytes": 5946648928, "sha256": "53107f530aa52eb00912263ab1ee29bd199261c87cd7b4ad4ca1318c1fe33ee3", "default": true, "note": "smallest; faster decode on Ada-class cards and every CPU"},
-        {"file": "Ternary-Bonsai-2-27B-PQ2_0.gguf", "packing": "PQ2_0", "bits_per_weight": 2.13, "bytes": 7206168928, "sha256": "3907dc1658db1f78a9826bf8d5bcb8dc65db0d466388937af57f2294fae62ec1", "note": "faster decode on Ampere, Hopper, Blackwell, RDNA and Apple M5"}
+        {"file": "Ternary-Bonsai-2.5-27B-PTQ1_0.gguf", "packing": "PTQ1_0", "bits_per_weight": 1.76, "bytes": 5993834848, "sha256": "929560ec9d37cf3cadd4b00cc87b51c570082a628dd830b4692dc0b2ed18dbbe", "default": true, "note": "smallest; faster decode on Ada-class cards and every CPU"},
+        {"file": "Ternary-Bonsai-2.5-27B-PQ2_0.gguf", "packing": "PQ2_0", "bits_per_weight": 2.12, "bytes": 7253354848, "sha256": "103a11c94324029d8bae3f8152f30bba414730064cfb77438f8589db72e1aa85", "note": "faster decode on Ampere, Hopper, Blackwell, RDNA and Apple M5"}
       ],
       "companions": [
-        {"file": "Ternary-Bonsai-2-27B-mmproj-Q8_0.gguf", "kind": "mmproj", "bytes": 629246976, "sha256": "6807ede61d570bb86ba34b756a0fa109edc33668604de867c6ea6d8f1d631903", "note": "vision tower; loaded for image turns only"}
+        {"file": "Ternary-Bonsai-2.5-27B-mmproj-Q8_0.gguf", "kind": "mmproj", "bytes": 629246976, "sha256": "6807ede61d570bb86ba34b756a0fa109edc33668604de867c6ea6d8f1d631903", "note": "vision tower; loaded for image turns only"}
       ]
     },
     {

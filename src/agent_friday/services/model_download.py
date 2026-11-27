@@ -450,7 +450,8 @@ def start_model(model_id: str, packing: str | None = None, *, profile: dict | No
         "bytes_total": total, "bytes_done": 0, "rate_mib_s": None, "eta_s": None,
         "needs_runtime": needs_runtime, "runtime": runtime, "engine": engine_override,
         "error": None, "started_at": time.time(), "finished_at": None, "orb_pid": None,
-        "serve": (serve_override if serve_override is not None else (m.get("serve") or {})),
+        "serve": (serve_override if serve_override is not None
+                  else _installed_serve(model_id) or (m.get("serve") or {})),
         "licence": m.get("licence"),
     }
     try:
@@ -468,6 +469,14 @@ def start_model(model_id: str, packing: str | None = None, *, profile: dict | No
         threading.Thread(target=run_job, args=(job["id"],), daemon=True,
                          name="download-%s" % job["id"]).start()
     return dict(job)
+
+
+def _installed_serve(model_id: str) -> dict:
+    """The serving flags the installed copy of `model_id` runs with on this machine, kept when a
+    download replaces its file (test_a_new_file_for_an_installed_model_keeps_its_measured_serving_flags)."""
+    from agent_friday.services import model_store
+    rec = model_store.get(model_id) or {}
+    return {k: rec[k] for k in ("serve_args", "serve_num_ctx") if rec.get(k)}
 
 
 def start_pasted(repo: str, filename: str, *, bytes_: int, sha256: str | None,
