@@ -63517,6 +63517,55 @@ function TvMemoryPanel({
     }
   }, o.d)))));
 }
+// The TV's grown-up PIN (services/tv_grownup_window). The PC checks it before it opens a grown-up
+// window for the household TV; only a window lets a TV turn use your memories. Setting it needs a press on
+// this page on this PC (routes/control.py); the page only ever learns whether one is set
+// (tests/api/test_tv_grownup_pin_route.py).
+function TvGrownupPinPanel() {
+  const [has, setHas] = useState(null);
+  const [pin, setPin] = useState('');
+  const [msg, setMsg] = useState('');
+  useEffect(() => {
+    apiFetch('/api/tv-grownup-pin').then(r => r.json()).then(d => setHas(!!(d && d.has_pin))).catch(() => {});
+  }, []);
+  const ok = /^[0-9]{4,12}$/.test(pin);
+  const send = () => apiFetch('/api/tv-grownup-pin', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ pin: pin })
+  }).then(r => r.json().then(d => ({ ok: r.ok, d: d }))).then(({ ok, d }) => {
+    setPin('');
+    if (ok) { setHas(true); setMsg("Saved. Any grown-up window open on the TV has ended; enter the new PIN there."); }
+    else setMsg((d && d.error) || 'Not saved.');
+  }).catch(() => setMsg('Not saved: this computer did not answer.'));
+  return /*#__PURE__*/React.createElement(StSection, {
+    title: "The TV's grown-up PIN",
+    desc: "The TV asks for this PIN before a grown-up can use your memories there. This computer keeps only a check value, never the PIN itself, and locks out repeated wrong tries."
+  }, /*#__PURE__*/React.createElement("div", {
+    style: { fontSize: 12, color: 'var(--st-dim)', marginBottom: 6 }
+  }, has === null ? '' : has ? 'A PIN is set. Saving a new one replaces it.' : "No PIN is set, so the TV can't open a grown-up window and gets none of your memories."),
+  /*#__PURE__*/React.createElement("div", { style: { display: 'flex', gap: 6, alignItems: 'center' } },
+  /*#__PURE__*/React.createElement("input", {
+    type: "password",
+    inputMode: "numeric",
+    autoComplete: "new-password",
+    "aria-label": "New grown-up PIN for the TV, 4 to 12 digits",
+    placeholder: "4 to 12 digits",
+    maxLength: 12,
+    value: pin,
+    onChange: e => { setPin(e.target.value.replace(/[^0-9]/g, '')); setMsg(''); },
+    style: { fontSize: 12, fontFamily: 'var(--st-font)', width: 140 }
+  }), /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    className: "settings-btn",
+    disabled: !ok,
+    style: { fontSize: 12, fontFamily: 'var(--st-font)' },
+    onClick: send
+  }, has ? 'Change PIN' : 'Set PIN')), msg && /*#__PURE__*/React.createElement("div", {
+    role: "status",
+    style: { fontSize: 11, color: 'var(--st-dim)', marginTop: 4 }
+  }, msg));
+}
 function CallModePanel({
   s,
   save
@@ -68405,7 +68454,7 @@ function SettingsWS() {
     save: save
   }), /*#__PURE__*/React.createElement(TvMemoryPanel, {
     s: s
-  })), tab === 'laya' && /*#__PURE__*/React.createElement(SettingsTabLaya, { s: s, save: save }), tab === 'appearance' && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement(SettingsTabAppearance, {
+  }), /*#__PURE__*/React.createElement(TvGrownupPinPanel, null)), tab === 'laya' && /*#__PURE__*/React.createElement(SettingsTabLaya, { s: s, save: save }), tab === 'appearance' && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement(SettingsTabAppearance, {
     s: s,
     save: save
   }), /*#__PURE__*/React.createElement(StSection, {

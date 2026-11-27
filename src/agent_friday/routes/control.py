@@ -231,6 +231,35 @@ def pairing_window_close():
     return jsonify(device_pairing.close_pairing_window(by="owner:desk"))
 
 
+# ── The TV's grown-up PIN (services/tv_grownup_window) ───────────────────────
+#
+# The PC checks this PIN before it opens a grown-up window for the household TV, and only a window lets a
+# TV turn use the owner's memories (TV-P1). Setting it is a press on Friday's own page on this PC (the same
+# proof as opening pairing); reading says only whether one is set, never the PIN.
+# Tests: tests/api/test_tv_grownup_pin_route.py.
+
+@control_bp.route('/api/tv-grownup-pin', methods=['GET'])
+@login_required
+def tv_grownup_pin_state():
+    from agent_friday.services import tv_grownup_window as win
+    return jsonify({"has_pin": win.has_pin()})
+
+
+@control_bp.route('/api/tv-grownup-pin', methods=['POST'])
+@login_required
+def tv_grownup_pin_set():
+    from agent_friday.services import screen_click, tv_grownup_window as win
+    if not (screen_click.screen_session(request) and core._is_local_request()):
+        return jsonify({"status": "refused", "code": "tv_pin_needs_press",
+                        "error": "The TV's grown-up PIN is set by a press on Friday's own screen on this PC."}), 403
+    body = request.get_json(silent=True) or {}
+    try:
+        win.set_pin(body.get("pin"))
+    except ValueError as e:
+        return jsonify({"status": "refused", "code": "bad_pin", "error": str(e)}), 400
+    return jsonify({"status": "ok", "has_pin": True})
+
+
 _PAIRING_PAGE = Path(__file__).resolve().parents[3] / "static" / "pairing.html"
 
 
