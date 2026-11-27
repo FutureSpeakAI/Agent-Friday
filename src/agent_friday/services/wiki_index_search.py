@@ -132,6 +132,28 @@ def candidate_pages(query: str, limit: int = 8) -> List[str]:
     return [p for p, _ in sorted(scored.items(), key=lambda kv: (-kv[1], kv[0]))[:max(1, int(limit))]]
 
 
+def strong_pages(question: str, limit: int = 2) -> List[str]:
+    """Pages whose entity TITLE the question names outright (every content word of the title is in
+    the question, and one of them is at least four letters), most specific title first. This is the
+    bar for reading a page before the model asks (services/kg_fastpath): a title the question
+    names, not a word it happens to share. Never raises."""
+    qwords = set(words(question))
+    if not qwords:
+        return []
+    try:
+        rows = _rows()
+    except Exception:
+        return []
+    best: Dict[str, int] = {}
+    for title, _hay, page in rows:
+        tw = words(title)
+        if not tw or not any(len(w) >= 4 for w in tw) or not set(tw) <= qwords:
+            continue
+        if len(tw) > best.get(page, 0):
+            best[page] = len(tw)
+    return [p for p, _ in sorted(best.items(), key=lambda kv: (-kv[1], kv[0]))[:max(1, int(limit))]]
+
+
 def reset_cache() -> None:
     with _LOCK:
         _CACHE["key"], _CACHE["rows"] = None, []

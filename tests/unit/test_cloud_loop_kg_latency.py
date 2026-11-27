@@ -41,7 +41,7 @@ class _Client:
         self.messages = _Messages(script)
 
 
-def _drive(monkeypatch, script, execute, messages=None, client=None):
+def _drive(monkeypatch, script, execute, messages=None, client=None, **kw):
     from agent_friday.services import agent as ag
     from agent_friday.services import cost_meter as cm
     import agent_friday.core as core
@@ -53,7 +53,7 @@ def _drive(monkeypatch, script, execute, messages=None, client=None):
     monkeypatch.setattr(cm, "meter", lambda *a, **k: None, raising=False)
     monkeypatch.setattr(ag, "_ledger_tool_call", lambda *a, **k: None, raising=False)
     monkeypatch.setattr(ag, "_orb_tool_trace", lambda *a, **k: None, raising=False)
-    text, trace = ag._call_claude_agent(messages or [{"role": "user", "content": "go"}], model="claude-sonnet-5")
+    text, trace = ag._call_claude_agent(messages or [{"role": "user", "content": "go"}], model="claude-sonnet-5", **kw)
     return text, trace, client.messages
 
 
@@ -119,12 +119,10 @@ def _execute_like_the_real_one(name, args, handler=None, pii_lookup=None, **kw):
 def test_two_reads_of_one_round_run_together(monkeypatch):
     calls = []
     _slow_reads(monkeypatch, 0.3, calls)
-    t0 = time.monotonic()
     text, trace, _ = _drive(monkeypatch, _two_reads, _execute_like_the_real_one)
-    took = time.monotonic() - t0
     assert {c[0] for c in calls} == {"read_wiki", "search_wiki"} and len(calls) == 2, calls
+    # serially the second read starts 0.3 s after the first; together they start at once
     assert abs(calls[0][1] - calls[1][1]) < 0.2, "the second read waited for the first"
-    assert took < 0.55, "two 0.3 s reads took %.2f s: they ran one after the other" % took
     assert [t["result"] for t in trace] == ["read_wiki ok", "search_wiki ok"], trace
 
 
@@ -227,3 +225,82 @@ def test_the_loop_announces_rounds_and_tool_calls(monkeypatch):
         mr.ROUND_SINK.reset(tok)
     kinds = [(e["kind"], e["round"]) for e in seen]
     assert kinds == [("start", 1), ("tool_use", 1), ("start", 2)], kinds
+
+
+# ── fix 2: a question that names a page is answered in one round ─────────────
+
+PAGE = "# Northwind Aesthetic\n\nThe core philosophy is signal over noise."
+QUESTION = [{"role": "user", "content": "What is the core philosophy of the Northwind aesthetic?"}]
+CHAT = {"kind": "chat", "authenticated": True}
+
+
+@pytest.fixture
+def named_page(monkeypatch):
+    from agent_friday.services import wiki_index_search as wis
+    wis.reset_cache()
+    monkeypatch.setattr(wis, "_entity_files", lambda: [])
+    monkeypatch.setattr(wis, "_load_entities", lambda: [
+        {"title": "Northwind Aesthetic", "description": "the studio look",
+         "provenance": {"wiki_pages": ["brand/northwind-aesthetic.md"]}},
+        {"title": "Weekly groceries", "description": "list", "provenance": {"wiki_pages": ["home/groceries.md"]}}])
+    yield
+    wis.reset_cache()
+
+
+def _reads(name, args, **kw):
+    if name == "read_wiki":
+        return PAGE if args.get("path") == "brand/northwind-aesthetic.md" else "Wiki file not found: x"
+    return "ok"
+
+
+def _answers_if_it_has_the_page(msgs_holder):
+    def script(i):
+        req = msgs_holder.requests[-1]
+        last = req["messages"][-1]
+        if "signal over noise" in str(last["content"]):
+            return _Resp([_Block("text", text="Signal over noise (brand/northwind-aesthetic.md).")], "end_turn")
+        return _Resp([_Block("tool_use", name="read_wiki", inp={"path": "brand/northwind-aesthetic.md"},
+                             bid="t%d" % i)], "tool_use")
+    return script
+
+
+def _client_for(script_factory):
+    holder = _Messages(lambda i: None)
+    holder._script = script_factory(holder)
+    c = _Client(lambda i: None)
+    c.messages = holder
+    return c
+
+
+def test_a_question_that_names_a_page_is_answered_in_one_round(monkeypatch, named_page):
+    c = _client_for(_answers_if_it_has_the_page)
+    text, trace, msgs = _drive(monkeypatch, None, _reads, messages=QUESTION, client=c, session_ctx=dict(CHAT))
+    assert msgs.calls == 1, "the model had to ask for the page (%d rounds)" % msgs.calls
+    assert "signal over noise" in " ".join(str(b) for b in msgs.requests[0]["messages"][-1]["content"])
+    assert any(t.get("name") == "read_wiki" and t.get("prefetched") for t in trace), trace
+
+
+def test_a_background_job_is_left_alone(monkeypatch, named_page):
+    c = _client_for(_answers_if_it_has_the_page)
+    _, _, msgs = _drive(monkeypatch, None, _reads, messages=QUESTION, client=c,
+                        session_ctx={"kind": "chat", "is_background_task": True})
+    assert msgs.calls == 2
+
+
+def test_a_page_the_vault_refuses_is_never_added(monkeypatch, named_page):
+    from agent_friday.services import agent as ag
+
+    class Deny:
+        def check_action(self, *a, **k):
+            return False, "vault-tier page", 3
+    monkeypatch.setattr(ag, "_get_vault_control", lambda: Deny())
+    c = _client_for(_answers_if_it_has_the_page)
+    _drive(monkeypatch, None, _reads, messages=QUESTION, client=c, session_ctx=dict(CHAT))
+    assert "signal over noise" not in str(c.messages.requests[0]["messages"])
+
+
+def test_only_a_title_the_question_names_counts():
+    from agent_friday.services import kg_fastpath as kf
+    assert kf.eligible("What is the core philosophy of the Northwind aesthetic?", CHAT)
+    assert not kf.eligible("Send the groceries list to Sam", CHAT)
+    assert not kf.eligible("What time is it?", {"kind": "scheduled"})

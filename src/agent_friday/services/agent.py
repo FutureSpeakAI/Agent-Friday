@@ -18276,6 +18276,52 @@ def _append_steer(convo: list, text: str) -> None:
     convo[i] = {**last, "content": list(content or []) + [block]}
 
 
+def _kg_fastpath_prefill(convo, session_ctx, model, pii_lookup, tool_trace, orb_id):
+    """The cloud loop's conversation with the page(s) the question names added (services/kg_fastpath).
+
+    Each page is read as the loop reads one for the model: the vault's zero-trust check for this
+    provider first (a refusal leaves the page out), then _execute_tool's whole chain, then the
+    untrusted-input envelope. Recorded in the tool trace and the activity ledger like any read.
+    Any failure returns the conversation unchanged."""
+    try:
+        from agent_friday.services import kg_fastpath as _kf
+        text = _kf.last_user_text(convo)
+        if not _kf.eligible(text, session_ctx):
+            return convo
+        provider = (session_ctx or {}).get("provider", "cloud")
+
+        def read(rel):
+            _t = _time.time()
+            args = {"path": rel}
+            ctx = session_ctx
+            _ctl = _get_vault_control() if VaultAccessControl else None
+            if _ctl is not None:
+                ok, detail, _tier = _ctl.check_action(
+                    provider, "read_wiki", json.dumps(args), model=model or "",
+                    access_log_path=str(FRIDAY_DIR / "vault" / "access-log.jsonl"),
+                    taint_key=_taint_mod.ledger_key(session_ctx),
+                    author_provider=_LOOP_PROVIDER.get() or provider, author_model=str(model or ""))
+                if not ok:
+                    return None
+                ctx = _cloud_send_ctx(session_ctx, detail)
+            result = _execute_tool("read_wiki", args, pii_lookup=pii_lookup, session_ctx=ctx)
+            if (not isinstance(result, str) or isinstance(result, _untrusted.FridaysWords)
+                    or result.startswith(("Wiki file not found", "Read error", "Path escapes"))):
+                return None
+            _ms = int((_time.time() - _t) * 1000)
+            tool_trace.append({"name": "read_wiki", "input": args, "result": clip(result, 2000), "prefetched": True})
+            _ledger_tool_call("read_wiki", result, _ms, orb_id, session_ctx)
+            return _untrusted.wrap(_qgate.read_through("read_wiki", args, result, session_ctx))
+
+        pages = _kf.prefetch(text, read)
+        if pages:
+            _log.info("kg fast path: %d page(s) read before round 1", len(pages))
+        return _kf.with_pages(convo, pages)
+    except Exception as e:  # noqa: BLE001  the turn runs exactly as before
+        _log.debug("kg fast path skipped: %s", e)
+        return convo
+
+
 def _call_claude_agent(*args, **kwargs):
     """Tool-using Claude loop (always a cloud provider). See _call_claude_agent_run."""
     _tok = _LOOP_PROVIDER.set("anthropic")
@@ -18531,6 +18577,11 @@ def _call_claude_agent_run(messages, system=None, model=None, max_tokens=16384, 
     _summary_budget.append(_budget)
 
     try:
+        # A question that names a wiki page's title gets that page before round 1 (services/
+        # kg_fastpath), read through the same gates as the model's own read_wiki call, so most
+        # knowledge questions are answered in one round instead of two or three.
+        if not resumed_tool_trace:
+            convo = _kg_fastpath_prefill(convo, session_ctx, model, pii_lookup, tool_trace, orb_id)
         iter_count = 0
         while _rounds_left is None or _rounds_left > 0:
             if _rounds_left is not None:
