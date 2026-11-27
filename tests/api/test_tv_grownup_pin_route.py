@@ -56,8 +56,8 @@ def test_a_press_on_this_pcs_page_sets_it_and_never_echoes_it(client, _scratch_v
     assert got.get_json()["has_pin"] is True and PIN not in got.get_data(as_text=True)
 
 
-@pytest.mark.parametrize("bad", ["", "12", "abcd", "1" * 13])
-def test_a_pin_that_is_not_4_to_12_digits_is_a_400_and_changes_nothing(client, _scratch_verifier, bad):
+@pytest.mark.parametrize("bad", ["", "12", "abcd", "1" * 9])
+def test_a_pin_that_is_not_4_to_8_digits_is_a_400_and_changes_nothing(client, _scratch_verifier, bad):
     r = client.post("/api/tv-grownup-pin", json={"pin": bad}, headers=desk_headers())
     assert r.status_code == 400 and r.get_json()["code"] == "bad_pin"
     assert not _scratch_verifier.has_pin()

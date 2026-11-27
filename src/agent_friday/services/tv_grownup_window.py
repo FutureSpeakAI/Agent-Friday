@@ -45,7 +45,7 @@ FREE_TRIES = 5
 LOCK_BASE_S = 30                 # the first lock-out; each further miss doubles it
 LOCK_MAX_S = 3600
 _SCRYPT = {"n": 2 ** 14, "r": 8, "p": 1}
-_PIN_MIN, _PIN_MAX = 4, 12
+_PIN_MIN, _PIN_MAX = 4, 8        # the TV's own grown-up PIN (safety/Pin.java; test_the_pins_length_is_the_tvs)
 
 _log = logging.getLogger(__name__)
 _LOCK = threading.Lock()
@@ -90,7 +90,8 @@ def _ledger(event: str, dev: Optional[dict], **extra) -> None:
     try:
         from agent_friday.services import action_ledger
         action_ledger.append("tv_grownup_window", {"event": event, "device_kind": (dev or {}).get("kind"),
-                                                   "principal": "device:%s" % (dev or {}).get("id"), **extra})
+                                                   "principal": ("device:%s" % dev.get("id")) if dev
+                                                   else "owner:%s" % extra.get("by", "owner"), **extra})
     except Exception as e:
         _log.warning("tv_grownup_window: ledger row %s not written (%s)", event, type(e).__name__)
 
@@ -116,7 +117,7 @@ def set_pin(pin, dev: Optional[dict] = None, *, by: str = "owner") -> None:
     """Store a verifier for `pin`. Only an owner action calls this (the Settings page's verified click, an
     owner-bound device). Every open window ends: a new PIN is a new start."""
     if not _valid_pin(pin):
-        raise ValueError("the PIN is 4 to 12 digits")
+        raise ValueError("the PIN is 4 to 8 digits")
     salt = os.urandom(16)
     body = {"v": 1, "salt": salt.hex(), **_SCRYPT, "hash": _derive(pin, salt, **_SCRYPT).hex()}
     p = _path()
@@ -190,28 +191,35 @@ def open_with_pin(dev: dict, session_key: str, pin) -> str:
     return grant
 
 
-def check(dev: Optional[dict], grant: str, *, touch: bool = False) -> bool:
-    """True only for a live grant this PC issued to this device. `touch`: a grown-up turn is using it, so the
-    idle clock starts again (the messages route); a status read never keeps it open
-    (test_looking_at_a_window_does_not_keep_it_open)."""
+def window_for(dev: Optional[dict], grant: str, *, touch: bool = False) -> Optional[dict]:
+    """The live window this PC issued to this device, as the turn's trace names it ({"id": the first 16 hex of
+    the grant's hash, "by": how it was opened}; test_the_window_a_turn_used_is_named_for_its_trace), or None.
+    `touch`: a grown-up turn is using it, so the idle clock starts again (the messages route); a status read
+    never keeps it open (test_looking_at_a_window_does_not_keep_it_open). An ended window's row names the TV
+    that opened it (test_an_ended_window_is_recorded_under_the_tv_that_opened_it)."""
     if not dev or not grant:
-        return False
+        return None
     h, now, ended = _hash(grant), _now(), None
     with _LOCK:
         v = _GRANTS.get(h)
         if v is None:
-            return False
+            return None
         if v["until"] <= now or now - v["seen"] >= IDLE_S:
             _GRANTS.pop(h, None)
             ended = ENDED_CAP if v["until"] <= now else ENDED_IDLE
         elif v["dev"] != str(dev.get("id")):
-            return False
+            return None
         elif touch:
             v["seen"] = now
     if ended:
-        _ledger("ended", dev, by=ended)
-        return False
-    return True
+        _ledger("ended", {"id": v["dev"], "kind": "tv"}, by=ended)
+        return None
+    return {"id": h[:16], "by": v["by"]}
+
+
+def check(dev: Optional[dict], grant: str, *, touch: bool = False) -> bool:
+    """True only for a live grant this PC issued to this device (window_for)."""
+    return window_for(dev, grant, touch=touch) is not None
 
 
 def close(dev: Optional[dict]) -> None:

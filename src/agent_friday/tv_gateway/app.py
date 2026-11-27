@@ -275,9 +275,10 @@ def create_app(tailnet: bool = False) -> Flask:
         from agent_friday.tv_gateway import turn
         principal = turn.principal_from(request.headers.get("X-Friday-Principal"))
         from agent_friday.services import tv_grownup_window as _win
-        # A grown-up turn on a live window keeps it from going idle (services/tv_grownup_window).
-        window_ok = principal == "grownup" and _win.check(g.device, request.headers.get("X-Friday-Window", ""),
-                                                          touch=True)
+        # A grown-up turn on a live window keeps it from going idle and names it in the turn's trace
+        # (services/tv_grownup_window.window_for).
+        window_ok = (_win.window_for(g.device, request.headers.get("X-Friday-Window", ""), touch=True)
+                     if principal == "grownup" else None)
         try:
             events = turn.run(g.device, request.get_json(silent=True) or {}, principal, window_ok)
             first = next(events, None)

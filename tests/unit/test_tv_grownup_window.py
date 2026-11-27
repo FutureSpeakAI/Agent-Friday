@@ -54,8 +54,8 @@ def test_the_pin_is_kept_only_as_a_verifier(_clean):
     assert PIN not in str(rec)
 
 
-@pytest.mark.parametrize("bad", ["", "12", "abcd", "1" * 13, None])
-def test_a_pin_must_be_4_to_12_digits(bad):
+@pytest.mark.parametrize("bad", ["", "12", "abcd", "1" * 9, None])
+def test_a_pin_must_be_4_to_8_digits(bad):
     with pytest.raises(ValueError):
         win.set_pin(bad)
 
@@ -209,3 +209,42 @@ def test_wrong_pins_sent_at_once_cannot_outrun_the_lock_out(monkeypatch):
         w.join()
     assert len(checked) <= win.FREE_TRIES, len(checked)
     assert codes.count(429) >= 40 - win.FREE_TRIES
+
+
+def test_a_new_pin_ends_every_open_window(_clean):
+    # The Settings page tells the owner this after a save (TvGrownupPinPanel), so it is held here.
+    win.set_pin(PIN)
+    tv = _device()
+    g = win.open_with_pin(tv, "s", PIN)
+    win.set_pin("9999", by="pc_settings")
+    assert not win.check(tv, g)
+
+
+def test_the_pins_length_is_the_tvs():
+    # The PC's PIN is the TV's grown-up PIN (safety/Pin.java: 4 to 8 digits). A PC PIN the TV cannot take
+    # would turn every real unlock on the TV into a household miss.
+    assert (win._PIN_MIN, win._PIN_MAX) == (4, 8)
+
+
+def test_a_pin_set_on_the_pc_names_the_owner_in_the_ledger(_clean):
+    win.set_pin(PIN, by="pc_settings")
+    assert _clean["rows"][-1][1]["principal"] == "owner:pc_settings"
+
+
+def test_an_ended_window_is_recorded_under_the_tv_that_opened_it(_clean):
+    win.set_pin(PIN)
+    tv, other = _device(), _device()
+    g = win.open_with_pin(tv, "s", PIN)
+    _clean["clock"]["t"] += win.IDLE_S + 1
+    assert not win.check(other, g)
+    rec = _clean["rows"][-1][1]
+    assert rec["event"] == "ended" and rec["principal"] == "device:%s" % tv["id"]
+
+
+def test_the_window_a_turn_used_is_named_for_its_trace(_clean):
+    import hashlib
+    win.set_pin(PIN)
+    tv, other = _device(), _device()
+    g = win.open_with_pin(tv, "s", PIN)
+    assert win.window_for(tv, g) == {"id": hashlib.sha256(g.encode()).hexdigest()[:16], "by": win.OPENED_BY_PIN}
+    assert win.window_for(other, g) is None and win.window_for(tv, "x") is None

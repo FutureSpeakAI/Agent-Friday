@@ -79,8 +79,8 @@ def test_a_grown_up_turn_keeps_the_window_from_going_idle(client, monkeypatch):
     h = auth(open_session(client, paired("tv", household.FAMILY_ID)))
     grant = client.post("/tv/v1/grownup/open", json={"pin": PIN}, headers=h).get_json()["window"]
     touched = []
-    real = win.check
-    monkeypatch.setattr(win, "check", lambda dev, g, touch=False: touched.append(touch) or real(dev, g, touch=touch))
+    real = win.window_for
+    monkeypatch.setattr(win, "window_for", lambda dev, g, touch=False: touched.append(touch) or real(dev, g, touch=touch))
     monkeypatch.setattr(turn, "run", lambda dev, body, p, window_ok=False: iter([turn._event({"type": "message_stop"})]))
     client.post("/tv/v1/messages", json={"messages": [{"role": "user", "content": "hi"}]},
                 headers={**h, "X-Friday-Principal": "grownup", "X-Friday-Window": grant})
@@ -97,7 +97,7 @@ def test_the_messages_route_passes_the_window_only_for_a_grown_up_with_a_live_gr
     seen = []
 
     def fake_run(dev, body, p, window_ok=False):
-        seen.append(window_ok)
+        seen.append(bool(window_ok))
         return iter([turn._event({"type": "message_stop"})])
     monkeypatch.setattr(turn, "run", fake_run)
     hdr = {**h, "X-Friday-Principal": principal}

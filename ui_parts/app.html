@@ -23555,19 +23555,19 @@ function TvGrownupPinPanel() {
   useEffect(() => {
     apiFetch('/api/tv-grownup-pin').then(r => r.json()).then(d => setHas(!!(d && d.has_pin))).catch(() => {});
   }, []);
-  const ok = /^[0-9]{4,12}$/.test(pin);
+  const ok = /^[0-9]{4,8}$/.test(pin);
   const send = () => apiFetch('/api/tv-grownup-pin', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ pin: pin })
   }).then(r => r.json().then(d => ({ ok: r.ok, d: d }))).then(({ ok, d }) => {
     setPin('');
-    if (ok) { setHas(true); setMsg("Saved. Any grown-up window open on the TV has ended; enter the new PIN there."); }
+    if (ok) { setHas(true); setMsg("Saved. Any grown-up window open on the TV has ended."); }
     else setMsg((d && d.error) || 'Not saved.');
   }).catch(() => setMsg('Not saved: this computer did not answer.'));
   return /*#__PURE__*/React.createElement(StSection, {
     title: "The TV's grown-up PIN",
-    desc: "The TV asks for this PIN before a grown-up can use your memories there. This computer keeps only a check value, never the PIN itself, and locks out repeated wrong tries."
+    desc: "The TV asks for this PIN before a grown-up can use your memories there. This computer keeps only a check value, never the PIN itself, and locks out repeated wrong tries. Use the same PIN as the grown-up PIN on the TV."
   }, /*#__PURE__*/React.createElement("div", {
     style: { fontSize: 12, color: 'var(--st-dim)', marginBottom: 6 }
   }, has === null ? '' : has ? 'A PIN is set. Saving a new one replaces it.' : "No PIN is set, so the TV can't open a grown-up window and gets none of your memories."),
@@ -23576,9 +23576,9 @@ function TvGrownupPinPanel() {
     type: "password",
     inputMode: "numeric",
     autoComplete: "new-password",
-    "aria-label": "New grown-up PIN for the TV, 4 to 12 digits",
-    placeholder: "4 to 12 digits",
-    maxLength: 12,
+    "aria-label": "New grown-up PIN for the TV, 4 to 8 digits",
+    placeholder: "4 to 8 digits",
+    maxLength: 8,
     value: pin,
     onChange: e => { setPin(e.target.value.replace(/[^0-9]/g, '')); setMsg(''); },
     style: { fontSize: 12, fontFamily: 'var(--st-font)', width: 140 }

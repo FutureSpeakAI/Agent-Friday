@@ -316,9 +316,10 @@ def _local_round(provider: str, model: Optional[str], provider_name: Optional[st
     yield from openai_round_events(deltas(), finished, str(model or ""))
 
 
-def run(dev: dict, body: dict, principal: str, window_ok: bool = False) -> Iterator[str]:
+def run(dev: dict, body: dict, principal: str, window_ok=None) -> Iterator[str]:
     """Validate, route and run one TV turn. Raises TurnRefused before the
-    first event; after that the stream is the turn."""
+    first event; after that the stream is the turn. `window_ok`: the PC's live grown-up window for this
+    turn (tv_grownup_window.window_for), or None."""
     # A phone or tablet the PC bound to the OWNER is the owner's Friday (knowledge graph, wiki, vault,
     # the owner's seat), not the household TV's. The TV, bound to the family member, never is.
     from agent_friday.tv_gateway import owner_turn
@@ -355,13 +356,14 @@ def run(dev: dict, body: dict, principal: str, window_ok: bool = False) -> Itera
                         system, messages, tools, max_tokens)
 
 
-def _owner_context(dev: dict, principal: str, messages: list, window_ok: bool = False) -> tuple:
+def _owner_context(dev: dict, principal: str, messages: list, window_ok=None) -> tuple:
     """(block, trace) under the TV memory setting (services/tv_memory_access, TV-P1). The block is "" unless
     the setting is All and this is a grown-up turn on the household TV; kids never. The trace goes on the
     turn's ledger row: whether the owner's context was used, the setting, why not, and every source."""
     from agent_friday.services import tv_memory_access as tma
     mode = tma.current()
-    ok, why = tma.allows(dev, principal, window_ok=window_ok)
+    ok, why = tma.allows(dev, principal, window_ok=bool(window_ok))
+    window = window_ok if isinstance(window_ok, dict) else None   # test_the_trace_names_the_pcs_window_that_allowed_the_turn
     if not ok:
         return "", {"used": False, "mode": mode, "why": why, "sources": []}
     from agent_friday.tv_gateway.owner_turn import last_user_text
@@ -373,12 +375,13 @@ def _owner_context(dev: dict, principal: str, messages: list, window_ok: bool = 
             from agent_friday.services import action_ledger
             action_ledger.append("tv_owner_context", {"principal": device_pairing.principal(dev),
                                                       "device_kind": dev.get("kind"), "surface": "tv_gateway",
-                                                      "watching": principal, "mode": mode, "sources": sources})
+                                                      "watching": principal, "mode": mode, "sources": sources,
+                                                      "window": window})
         except Exception as e:
             _log.warning("TV owner context withheld: its ledger row could not be written (%s)", type(e).__name__)
             return "", {"used": False, "mode": mode, "why": "trace unavailable", "sources": []}
     return block, {"used": bool(block), "mode": mode, "why": "all" if block else "nothing relevant found",
-                   "sources": sources}
+                   "sources": sources, "window": window}
 
 
 def _row(dev: dict, principal: str, provider: str, model, tools: list, trace: Optional[dict] = None) -> None:

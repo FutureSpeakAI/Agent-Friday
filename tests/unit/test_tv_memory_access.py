@@ -216,6 +216,14 @@ def test_the_trace_is_written_first_and_names_the_sources(_clean, setting, claud
     assert "knowledge_graph:brand/futurespeak-aesthetic.md" in rec["sources"]
 
 
+def test_the_trace_names_the_pcs_window_that_allowed_the_turn(_clean, setting, claude):
+    w = {"id": "0123456789abcdef", "by": "pin"}
+    _run(_device(), "grownup", window_ok=w)
+    kind, rec = _clean["pre"][0]
+    assert kind == "tv_owner_context" and rec["window"] == w
+    assert _clean["rows"][-1][1]["owner_context"]["window"] == w
+
+
 def test_no_trace_no_context(_clean, setting, claude, monkeypatch):
     from agent_friday.services import action_ledger
 
