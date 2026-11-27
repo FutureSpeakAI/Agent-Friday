@@ -42,6 +42,10 @@ def eligible(text: str, session_ctx: Optional[dict]) -> bool:
     # Only a person's chat turn: the chat routes mark theirs (routes/chat.py, "interactive_chat").
     if not ENABLED or ctx.get("is_background_task") or not ctx.get("interactive_chat"):
         return False
+    # A turn carrying text from outside (an app on the phone, routes/chat.py "untrusted_turn") never
+    # chooses pages to read before the model is asked: only the owner's own words do.
+    if ctx.get("untrusted_turn"):
+        return False
     t = str(text or "").strip()
     if not t or len(t) > MAX_QUESTION_CHARS:
         return False

@@ -378,3 +378,35 @@ def test_search_wiki_s_memory_card_half_runs_in_the_real_call_s_context(monkeypa
     assert sw and "OWNER CARD LINE" not in str(sw[0]["result"]), sw
     assert "a.md" in str(sw[0]["result"]), sw
     assert seen_origin == ["phone"], seen_origin
+
+
+def test_a_stream_that_breaks_mid_answer_still_ends_its_round(monkeypatch):
+    """The critic's case: a cloud stream that raises leaves no live round for a fallback's deltas."""
+    from agent_friday.services import model_router as mr
+    seen = []
+
+    class _Broken(_Stream):
+        def __iter__(self):
+            yield _Ev("content_block_start", "text")
+            yield _Ev("content_block_delta", text="The answer is")
+            raise ConnectionError("stream dropped")
+
+    class _BreakingMessages(_Messages):
+        def stream(self, **kw):
+            self.calls += 1
+            return _Broken(None, [])
+
+    client = _Client(lambda i: None)
+    client.messages = _BreakingMessages(lambda i: None)
+    tok = mr.ROUND_SINK.set(seen.append)
+    try:
+        with pytest.raises(Exception):
+            _drive(monkeypatch, None, lambda n, a, **k: "ok", client=client)
+    finally:
+        mr.ROUND_SINK.reset(tok)
+    assert [e["kind"] for e in seen] == ["start", "end"], seen
+
+
+def test_a_turn_with_outside_text_never_picks_pages_to_read():
+    from agent_friday.services import kg_fastpath as kf
+    assert not kf.eligible("What is the Northwind aesthetic?", dict(CHAT, untrusted_turn=True))
