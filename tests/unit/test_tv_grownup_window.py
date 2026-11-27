@@ -45,10 +45,13 @@ def _clean(tmp_path, monkeypatch):
 
 # ── the verifier ────────────────────────────────────────────────────────────
 
-def test_the_pin_is_kept_only_as_a_verifier():
-    win.set_pin(PIN)
+def test_the_pin_is_kept_only_as_a_verifier(_clean):
+    win.set_pin(PIN, by="pc_settings")
     raw = win._path().read_text(encoding="utf-8")
     assert PIN not in raw and win.has_pin()
+    kind, rec = _clean["rows"][-1]
+    assert kind == "tv_grownup_window" and rec["event"] == "pin_set" and rec["by"] == "pc_settings"
+    assert PIN not in str(rec)
 
 
 @pytest.mark.parametrize("bad", ["", "12", "abcd", "1" * 13, None])
@@ -93,7 +96,7 @@ def test_a_window_ends_when_the_tv_goes_idle(_clean):
     assert win.check(tv, g)
     _clean["clock"]["t"] += 2                              # no turn for IDLE_S
     assert not win.check(tv, g, touch=True)
-    assert _clean["rows"][-1][1]["event"] == "ended" and _clean["rows"][-1][1]["why"] == "idle"
+    assert _clean["rows"][-1][1]["event"] == "ended" and _clean["rows"][-1][1]["by"] == "idle"
 
 
 def test_looking_at_a_window_does_not_keep_it_open(_clean):

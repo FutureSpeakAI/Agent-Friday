@@ -44,7 +44,7 @@ def register(app, refuse):
             return refuse(403, "the grown-up PIN is set on the owner's phone, tablet or PC", code="owner_only")
         body = request.get_json(silent=True) or {}
         try:
-            win.set_pin(body.get("pin"))
+            win.set_pin(body.get("pin"), g.device, by="owner_device")
         except ValueError as e:
             return refuse(400, str(e), code="bad_pin")
         return jsonify({"ok": True, "has_pin": True})

@@ -29,6 +29,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
+import logging
 import os
 import secrets
 import threading
@@ -45,6 +46,7 @@ LOCK_MAX_S = 3600
 _SCRYPT = {"n": 2 ** 14, "r": 8, "p": 1}
 _PIN_MIN, _PIN_MAX = 4, 12
 
+_log = logging.getLogger(__name__)
 _LOCK = threading.Lock()
 _GRANTS: dict = {}               # sha256(grant) -> {"dev": id, "until": cap, "seen": last turn, "by": "pin"}
 _MISSES: dict = {}               # _HOUSEHOLD -> {"n": misses, "until": t}
@@ -88,8 +90,9 @@ def _ledger(event: str, dev: Optional[dict], **extra) -> None:
         from agent_friday.services import action_ledger
         action_ledger.append("tv_grownup_window", {"event": event, "device_kind": (dev or {}).get("kind"),
                                                    "principal": "device:%s" % (dev or {}).get("id"), **extra})
-    except Exception:
-        pass
+    except Exception as e:
+        # The window itself still works; the gap shows in the log (the ledger is the trace, not the gate).
+        _log.warning("tv_grownup_window: ledger row %s not written (%s)", event, type(e).__name__)
 
 
 def _load() -> Optional[dict]:
@@ -109,7 +112,7 @@ def has_pin() -> bool:
     return _load() is not None
 
 
-def set_pin(pin) -> None:
+def set_pin(pin, dev: Optional[dict] = None, *, by: str = "owner") -> None:
     """Store a verifier for `pin`. Only an owner action calls this (the Settings page's verified click, an
     owner-bound device). Every open window ends: a new PIN is a new start."""
     if not _valid_pin(pin):
@@ -124,7 +127,7 @@ def set_pin(pin) -> None:
     with _LOCK:
         _GRANTS.clear()
         _MISSES.clear()
-    _ledger("pin_set", None)
+    _ledger("pin_set", dev, by=by)
 
 
 def _matches(pin) -> bool:
@@ -205,7 +208,7 @@ def check(dev: Optional[dict], grant: str, *, touch: bool = False) -> bool:
         elif touch:
             v["seen"] = now
     if ended:
-        _ledger("ended", dev, why=ended)
+        _ledger("ended", dev, by=ended)
         return False
     return True
 

@@ -254,7 +254,7 @@ def tv_grownup_pin_set():
                         "error": "The TV's grown-up PIN is set by a press on Friday's own screen on this PC."}), 403
     body = request.get_json(silent=True) or {}
     try:
-        win.set_pin(body.get("pin"))
+        win.set_pin(body.get("pin"), by="pc_settings")
     except ValueError as e:
         return jsonify({"status": "refused", "code": "bad_pin", "error": str(e)}), 400
     return jsonify({"status": "ok", "has_pin": True})
