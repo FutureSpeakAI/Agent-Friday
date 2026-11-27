@@ -4685,6 +4685,7 @@ def _save_settings_locked(data, *, _internal_cloud_consent_write: bool = False,
     # Widening takes owner_tv_memory_change: the Settings control's verified click, the setting card's Yes,
     # or an owner-bound phone or tablet (services/tv_memory_access.write). A plain settings save, a script or
     # a model's tool has the key dropped and logged. Narrowing is always allowed; a bad value is dropped.
+    # Held by tests/unit/test_tv_memory_access.py::test_a_plain_settings_save_cannot_widen_but_can_narrow.
     if data and "tv_memory_access" in data:
         from agent_friday.services import tv_memory_access as _tma
         _new_tm = data.get("tv_memory_access")

@@ -337,13 +337,14 @@ def run(dev: dict, body: dict, principal: str) -> Iterator[str]:
     if owner_block:
         # A turn carrying the owner's memory proposes no TV action: recalled or wiki text must not be able
         # to steer the TV's own tools (which run on the TV, past this PC's gates) or carry it off the box.
+        # Held by test_tv_memory_access.py::test_a_turn_with_the_owners_context_offers_the_tv_no_actions.
         tools = []
         trace["tools_withheld"] = True
     system = system_for(body.get("system", ""), owner_block)
     max_tokens = max(256, min(int(body.get("max_tokens") or 4096), MAX_TOKENS_CAP))
     plain = _plain(messages)
     # The router judges the owner's context too, as it would had the owner said it (a private recall can
-    # keep the turn on a local seat under the routing rules).
+    # keep the turn on a local seat under the routing rules). Held by test_the_router_sees_the_owners_context.
     route = _route(principal, plain + ([{"role": "user", "content": owner_block}] if owner_block else []),
                    bool(tools))
     provider = route.get("provider", "cloud")
@@ -366,7 +367,8 @@ def _owner_context(dev: dict, principal: str, messages: list) -> tuple:
     from agent_friday.tv_gateway.owner_turn import last_user_text
     block, sources = tma.owner_context(last_user_text(messages), dev)
     if block:
-        # The trace is written before the context goes anywhere; if it cannot be written, nothing goes.
+        # The trace is written before the context goes anywhere; if it cannot be written, nothing goes
+        # (test_the_trace_is_written_first_and_names_the_sources, test_no_trace_no_context).
         try:
             from agent_friday.services import action_ledger
             action_ledger.append("tv_owner_context", {"principal": device_pairing.principal(dev),

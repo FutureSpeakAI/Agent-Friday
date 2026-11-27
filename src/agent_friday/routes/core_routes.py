@@ -1963,7 +1963,8 @@ def api_settings():
             _room_owner = True
 
         # What the household TV may remember widens the same way: the Settings > Privacy control's own
-        # click on this page (services/tv_memory_access, TV-P1). A body that merely says owner_action is refused.
+        # click on this page (services/tv_memory_access, TV-P1). A body that merely says owner_action is refused
+        # (test_tv_memory_controls.py::test_the_settings_route_needs_the_click_for_the_owner_action).
         _tvm_owner = False
         if data.get('owner_action') == 'tv_memory_access':
             from agent_friday.services import screen_click as _screen_click_tvm

@@ -238,3 +238,10 @@ def test_the_router_sees_the_owners_context(_clean, setting, claude, monkeypatch
     monkeypatch.setattr(turn, "_route", lambda principal, plain, has_tools: seen.append(plain) or {"provider": "cloud"})
     _run(_device(), "grownup")
     assert any("THE OWNER'S CONTEXT" in m["content"] for m in seen[0])
+
+
+def test_a_settings_read_that_raises_is_none(monkeypatch):
+    def boom():
+        raise OSError("settings unreadable")
+    monkeypatch.setattr("agent_friday.core._load_settings", boom)
+    assert tma.current() == "none"

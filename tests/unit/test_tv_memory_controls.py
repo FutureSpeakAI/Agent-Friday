@@ -169,3 +169,21 @@ def test_the_settings_control_is_in_both_ui_sources_and_sends_its_owner_action()
         for label in ("All my memories", "Only ones I mark shareable with the TV"):
             assert label in src, name
         assert "React.createElement(TvMemoryPanel" in src, name
+
+
+def test_the_clamp_ranks_as_the_setting_does():
+    from agent_friday.services import guarded_settings as gs
+    assert gs.TV_MEMORY_RANK == tma.RANK
+    assert gs.TV_MEMORY_KEY == tma.KEY
+
+
+def test_a_narrowing_whose_undo_row_fails_says_so(_clean, monkeypatch):
+    from agent_friday.services import setting_proposals as sp
+    _clean["s"]["tv_memory_access"] = "all"
+
+    def boom(*a, **k):
+        raise OSError("disk")
+    monkeypatch.setattr(sp, "record_change", boom)
+    said = tools.handle_tv_memory({"mode": "none"})
+    assert said.startswith("Done") and "Undo record could not be written" in said
+    assert _clean["writes"] == ["none"]

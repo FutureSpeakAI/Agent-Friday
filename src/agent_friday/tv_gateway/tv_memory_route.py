@@ -4,6 +4,9 @@ Reads are for any bound device (the TV may show which option is on). A change is
 tablet or watch only (owner_turn.is_owner_device: the binding the owner made at the PC, never a header or a
 body field); a TV or a family device gets 403. An owner device is the owner, so its change is an owner action:
 it may widen as well as narrow, and it is recorded with thirty days of Undo like any setting change.
+
+Tests: tests/unit/test_tv_memory_controls.py (test_an_owner_device_reads_and_changes_it,
+test_a_tv_or_a_family_device_reads_it_but_cannot_change_it, test_a_word_that_is_not_an_option_is_a_400_and_changes_nothing).
 """
 from __future__ import annotations
 
