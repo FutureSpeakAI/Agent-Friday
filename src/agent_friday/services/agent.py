@@ -3063,51 +3063,65 @@ def _tool_search_wiki(inp):
         results.extend(_cmt.search_card(query, limit=min(3, limit)))
     except Exception:
         pass
-    # A call under a time budget (a local seat's, services/tool_deadline.py)
-    # stops scanning when it runs out and returns the hits found so far.
+    # The walk below stops at its own budget on every seat (services/wiki_index_search,
+    # SCAN_BUDGET_S), or sooner under a call's budget (a local seat's,
+    # services/tool_deadline.py), and returns the hits found so far.
     from agent_friday.services import tool_deadline as _td
+    from agent_friday.services import wiki_index_search as _wis
+    _deadline = _td.deadline(_wis.SCAN_BUDGET_S)
+    qwords = _wis.words(query)
     partial = False
     # One root: the serving wiki the knowledge graph indexes and read_wiki
     # resolves against, so every hit's path opens with read_wiki as returned.
     from agent_friday.services.knowledge_graph import wiki_graph as _wg
-    for root, label in [(Path(_wg.WIKI_DIR), 'wiki')]:
-        if not root.exists():
+    root, label = Path(_wg.WIKI_DIR), 'wiki'
+    seen = set()
+
+    def _hit(f, rel, from_index=False):
+        try:
+            content = wiki_read_text(f)
+        except Exception:
+            return
+        excerpt = _wis.excerpt_for(content, query, qwords)
+        if excerpt is None:
+            if not (from_index or q_low in f.stem.lower()):
+                return
+            excerpt = content[:400].strip()
+        results.append({'root': label, 'path': rel, 'excerpt': excerpt})
+
+    # 1. The knowledge graph's index names the pages the query is about: read those first.
+    for rel in _wis.candidate_pages(query, limit=limit):
+        if len(results) >= limit or _td.expired() or _time.monotonic() >= _deadline:
+            break
+        f = _wg.resolve_page(rel)
+        if f is None or not Path(f).is_file():
             continue
+        try:
+            if _we_path_hidden(Path(f), root):   # never a page the walk would skip
+                continue
+        except Exception:
+            pass
+        seen.add(str(Path(f).resolve()))
+        _hit(Path(f), rel.replace('\\', '/'), from_index=True)
+    # 2. The walk, for what the index does not know.
+    if root.exists() and len(results) < limit:
         for f in root.rglob('*'):
             if len(results) >= limit:
                 break
-            if _td.expired():
+            if _td.expired() or _time.monotonic() >= _deadline:
                 partial = True
                 break
             if not f.is_file() or f.suffix not in ('.md', '.txt'):
                 continue
             if _we_path_hidden(f, root):   # .git, .obsidian, .draft.md: not pages
                 continue
-            try:
-                content = wiki_read_text(f)
-            except Exception:
+            if seen and str(f.resolve()) in seen:
                 continue
-            name_match = q_low in f.stem.lower()
-            idx = content.lower().find(q_low)
-            if not name_match and idx < 0:
-                continue
-            if idx < 0:
-                excerpt = content[:400]
-            else:
-                start = max(0, idx - 120)
-                end = min(len(content), idx + 280)
-                excerpt = content[start:end]
             try:
                 rel = str(f.relative_to(root)).replace('\\', '/')
             except ValueError:
                 rel = str(f)
-            results.append({
-                'root': label,
-                'path': rel,
-                'excerpt': excerpt.strip(),
-            })
-        if len(results) >= limit:
-            break
+            _hit(f, rel)
 
     note = ("The time budget ran out before the whole wiki was searched; these "
             "are the hits found so far. Narrow the query to search further."
