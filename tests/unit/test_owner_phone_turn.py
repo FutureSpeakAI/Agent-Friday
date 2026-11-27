@@ -69,15 +69,15 @@ def household_path(monkeypatch):
     """Records any turn that took the household/TV path."""
     seen = []
 
-    def fake_run(dev, body, principal):
+    def fake_run(dev, body, principal, window=None):
         seen.append(principal)
         return iter([turn._event({"type": "message_start", "message": {}}), turn._event({"type": "message_stop"})])
     real_run = turn.run
 
-    def dispatch(dev, body, principal):
+    def dispatch(dev, body, principal, window=None):          # the route passes the PC's grown-up window too
         if owner_turn.is_owner_device(dev):
-            return real_run(dev, body, principal)
-        return fake_run(dev, body, principal)
+            return real_run(dev, body, principal, window)
+        return fake_run(dev, body, principal, window)
     monkeypatch.setattr(turn, "run", dispatch)
     return seen
 

@@ -233,7 +233,7 @@ def test_a_display_name_is_accepted_for_its_id(client, desk):
 def test_a_tv_that_names_a_model_is_still_answered_by_the_household_and_never_by_the_owners_seat(client, desk, monkeypatch):
     monkeypatch.setattr(owner_turn, "is_owner_device", lambda dev: False)
     from agent_friday.tv_gateway import turn
-    monkeypatch.setattr(turn, "run", lambda dev, body, principal: iter([turn._event({"type": "message_stop"})]))
+    monkeypatch.setattr(turn, "run", lambda dev, body, principal, window=None: iter([turn._event({"type": "message_stop"})]))
     r = ask(client, paired("tv", "family"), model="claude-opus-5-5")
     assert r.status_code == 200 and desk.api_calls == [] and desk.turns == []
 
