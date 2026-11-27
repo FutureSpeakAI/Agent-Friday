@@ -316,7 +316,7 @@ def _local_round(provider: str, model: Optional[str], provider_name: Optional[st
     yield from openai_round_events(deltas(), finished, str(model or ""))
 
 
-def run(dev: dict, body: dict, principal: str) -> Iterator[str]:
+def run(dev: dict, body: dict, principal: str, window_ok: bool = False) -> Iterator[str]:
     """Validate, route and run one TV turn. Raises TurnRefused before the
     first event; after that the stream is the turn."""
     # A phone or tablet the PC bound to the OWNER is the owner's Friday (knowledge graph, wiki, vault,
@@ -333,7 +333,7 @@ def run(dev: dict, body: dict, principal: str) -> Iterator[str]:
     if not isinstance(messages, list) or not messages:
         raise TurnRefused(400, "no conversation")
     tools = tools_for(dev, principal, body.get("tools"))
-    owner_block, trace = _owner_context(dev, principal, messages)
+    owner_block, trace = _owner_context(dev, principal, messages, window_ok)
     if owner_block:
         # A turn carrying the owner's memory proposes no TV action: recalled or wiki text must not be able
         # to steer the TV's own tools (which run on the TV, past this PC's gates) or carry it off the box.
@@ -355,13 +355,13 @@ def run(dev: dict, body: dict, principal: str) -> Iterator[str]:
                         system, messages, tools, max_tokens)
 
 
-def _owner_context(dev: dict, principal: str, messages: list) -> tuple:
+def _owner_context(dev: dict, principal: str, messages: list, window_ok: bool = False) -> tuple:
     """(block, trace) under the TV memory setting (services/tv_memory_access, TV-P1). The block is "" unless
     the setting is All and this is a grown-up turn on the household TV; kids never. The trace goes on the
     turn's ledger row: whether the owner's context was used, the setting, why not, and every source."""
     from agent_friday.services import tv_memory_access as tma
     mode = tma.current()
-    ok, why = tma.allows(dev, principal)
+    ok, why = tma.allows(dev, principal, window_ok=window_ok)
     if not ok:
         return "", {"used": False, "mode": mode, "why": why, "sources": []}
     from agent_friday.tv_gateway.owner_turn import last_user_text

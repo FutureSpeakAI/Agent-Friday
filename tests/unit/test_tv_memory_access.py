@@ -100,11 +100,11 @@ def claude(monkeypatch):
     return sealed
 
 
-def _run(dev, principal, tools=None):
+def _run(dev, principal, tools=None, window_ok=True):
     body = {"system": "TV RULES", "messages": CONVO}
     if tools:
         body["tools"] = tools
-    return list(turn.run(dev, body, principal))
+    return list(turn.run(dev, body, principal, window_ok))
 
 
 # ── the setting ─────────────────────────────────────────────────────────────
@@ -245,3 +245,9 @@ def test_a_settings_read_that_raises_is_none(monkeypatch):
         raise OSError("settings unreadable")
     monkeypatch.setattr("agent_friday.core._load_settings", boom)
     assert tma.current() == "none"
+
+
+def test_a_grown_up_header_without_this_computers_window_gets_nothing(_clean, setting, claude):
+    _run(_device(), "grownup", window_ok=False)
+    assert _clean["calls"] == {"mem": 0, "kg": 0}
+    assert _clean["rows"][-1][1]["owner_context"]["why"] == "no grown-up window from this computer"

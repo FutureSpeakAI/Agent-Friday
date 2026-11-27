@@ -14,9 +14,11 @@ What the setting never changes (the ruling's invariants), each with the test tha
   * Kids get no personal memory, whatever the setting
     (test_kids_and_non_grown_up_turns_never_get_it[kids]).
   * A turn that is not a grown-up turn (``family``: anyone in the room without the TV's grown-up PIN
-    window) gets none (test_kids_and_non_grown_up_turns_never_get_it[family]). The PIN window is the only
-    owner signal the TV has: it cannot tell voices apart, so anyone in the room while the window is open is
-    heard as the grown-up (an accepted risk, DECISIONS-FOR-STEPHEN TV-P1).
+    window) gets none (test_kids_and_non_grown_up_turns_never_get_it[family]), and a grown-up turn also needs
+    a live window this PC issued after checking the PIN itself (services/tv_grownup_window): the TV's own header
+    is not enough (test_a_grown_up_header_without_this_computers_window_gets_nothing; tests/unit/
+    test_tv_grownup_window.py). The TV cannot tell voices apart, so anyone in the room while the window is open
+    is heard as the grown-up (an accepted risk, DECISIONS-FOR-STEPHEN TV-P1).
   * Only a TV bound to the household's family member (the pairing default) qualifies
     (test_a_tv_not_bound_to_the_household_family_gets_nothing,
     test_a_device_that_says_it_is_a_tv_but_is_bound_to_the_owner_is_not_this_path).
@@ -122,8 +124,9 @@ def write(mode: str, *, owner_action: bool = True) -> str:
 
 # ── the TV turn ─────────────────────────────────────────────────────────────
 
-def allows(dev: Optional[dict], principal: str, settings: Optional[dict] = None) -> tuple:
-    """(allowed, reason) for adding the owner's context to this TV turn."""
+def allows(dev: Optional[dict], principal: str, settings: Optional[dict] = None, *, window_ok: bool = False) -> tuple:
+    """(allowed, reason) for adding the owner's context to this TV turn. `window_ok`: the turn carries a live
+    grown-up window this PC issued (services/tv_grownup_window.check); the TV's own header is not enough."""
     if principal != "grownup":
         return False, "kids" if principal == "kids" else "not a grown-up turn"
     if not dev or str(dev.get("kind") or "").lower() != "tv":
@@ -134,6 +137,8 @@ def allows(dev: Optional[dict], principal: str, settings: Optional[dict] = None)
             return False, "not the household TV"
     except Exception:
         return False, "household unreadable"
+    if not window_ok:
+        return False, "no grown-up window from this computer"
     mode = current(settings)
     if mode == "shareable":
         return False, "shareable: no memory is marked shareable yet"
