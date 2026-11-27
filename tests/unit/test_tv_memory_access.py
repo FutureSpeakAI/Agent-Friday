@@ -232,6 +232,7 @@ def test_the_trace_names_the_pcs_window_that_allowed_the_turn(_clean, setting, c
 def test_only_a_window_this_pc_issued_unlocks_memory(_clean, setting, claude, not_a_window):
     _run(_device(), "grownup", window=not_a_window)
     assert "== THE OWNER'S CONTEXT" not in str(claude[0]["system"])
+    assert _clean["rows"][-1][1]["owner_context"]["why"] == "no grown-up window from this computer"
 
 
 def test_no_trace_no_context(_clean, setting, claude, monkeypatch):

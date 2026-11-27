@@ -311,7 +311,19 @@ def test_an_old_pin_open_started_during_a_save_gets_no_window(monkeypatch):
 
 def test_two_saves_at_once_leave_one_pin_and_both_finish(monkeypatch):
     import threading
-    errors = []
+    import time as _time
+    errors, inside, most = [], [0], [0]
+    real_replace = win.os.replace
+
+    def counted_replace(src, dst):
+        inside[0] += 1
+        most[0] = max(most[0], inside[0])
+        _time.sleep(0.05)
+        try:
+            real_replace(src, dst)
+        finally:
+            inside[0] -= 1
+    monkeypatch.setattr(win.os, "replace", counted_replace)
 
     def save(p):
         try:
@@ -323,7 +335,7 @@ def test_two_saves_at_once_leave_one_pin_and_both_finish(monkeypatch):
         t.start()
     for t in ts:
         t.join()
-    assert not errors and (win._matches("1111") != win._matches("2222"))
+    assert not errors and most[0] == 1 and (win._matches("1111") != win._matches("2222"))
 
 
 def test_an_ended_windows_row_carries_no_grant(_clean):
@@ -333,3 +345,65 @@ def test_an_ended_windows_row_carries_no_grant(_clean):
     _clean["clock"]["t"] += win.IDLE_S + 1
     assert not win.check(tv, g)
     assert _clean["rows"][-1][1]["event"] == "ended" and g not in repr(_clean["rows"])
+
+
+def test_the_lock_out_schedule(_clean):
+    # FREE_TRIES - 1 free misses; the FREE_TRIES-th try locks LOCK_BASE_S; each further miss after a wait doubles
+    # it, up to LOCK_MAX_S; a right PIN clears the household count.
+    win.set_pin(PIN)
+    tv = _device()
+    clock = _clean["clock"]
+
+    def miss():
+        with pytest.raises(win.WindowRefused) as e:
+            win.open_with_pin(tv, "s", "0000")
+        return e.value.status
+
+    for _ in range(win.FREE_TRIES):
+        assert miss() == 403
+    waits = []
+    for _ in range(10):
+        wait = win._MISSES[win._HOUSEHOLD]["until"] - clock["t"]
+        waits.append(wait)
+        clock["t"] += wait - 1
+        assert miss() == 429, "still locked one second before the wait ends"
+        clock["t"] += 2
+        assert miss() == 403
+    assert waits[:4] == [win.LOCK_BASE_S, 2 * win.LOCK_BASE_S, 4 * win.LOCK_BASE_S, 8 * win.LOCK_BASE_S]
+    assert max(waits) == win.LOCK_MAX_S and waits[-1] == win.LOCK_MAX_S
+    clock["t"] += win.LOCK_MAX_S + 1
+    assert win.check(tv, win.open_with_pin(tv, "s", PIN))
+    for _ in range(win.FREE_TRIES - 1):
+        assert miss() == 403, "a right PIN starts the count again"
+
+
+def test_one_window_per_tv(_clean):
+    win.set_pin(PIN)
+    tv = _device()
+    first = win.open_with_pin(tv, "s", PIN)
+    second = win.open_with_pin(tv, "s", PIN)
+    assert not win.check(tv, first) and win.check(tv, second)
+
+
+def test_a_try_without_a_device_session_is_refused():
+    win.set_pin(PIN)
+    with pytest.raises(win.WindowRefused) as e:
+        win.open_with_pin(_device(), "", PIN)
+    assert e.value.status == 401
+
+
+def test_the_pin_file_is_read_only_under_the_lock(monkeypatch):
+    # On Windows a save's os.replace fails against an open reader, so every read of the verifier holds the lock
+    # a save holds.
+    win.set_pin(PIN)
+    real_read, unlocked = win.Path.read_text, []
+
+    def watched(self, *a, **k):
+        if self == win._path() and not win._LOCK.locked():
+            unlocked.append(str(self))
+        return real_read(self, *a, **k)
+    monkeypatch.setattr(win.Path, "read_text", watched)
+    win.has_pin()
+    win._matches(PIN)
+    win.open_with_pin(_device(), "s", PIN)
+    assert not unlocked

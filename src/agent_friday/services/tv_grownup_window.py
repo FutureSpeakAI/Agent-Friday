@@ -15,8 +15,8 @@ the owner's memory (services/tv_memory_access): the memory gate also needs a win
     request already proves the TV with its key (test_tv_grownup_window_route.py::
     test_the_window_outlives_a_session_renewal_but_not_a_change_of_tv).
   * Misses lock the whole household out, not one device (FREE_TRIES, then doubling waits up to LOCK_MAX_S;
-    test_the_lock_out_counts_every_tv_in_the_household). The count lives in this process, so a PC restart
-    starts it again; the TV cannot restart the PC.
+    test_the_lock_out_counts_every_tv_in_the_household, test_the_lock_out_schedule). The count lives in this
+    process, so a PC restart starts it again; the TV cannot restart the PC.
   * Only the household TV (kind tv, bound to the family member) may open one. Kids get no memory whatever
     the window says (tv_memory_access.allows).
   * Every open, refusal and close leaves a ledger row (``tv_grownup_window``), never the PIN or the grant
@@ -44,7 +44,7 @@ OPENED_BY_PIN = "pin"
 ENDED_IDLE, ENDED_CAP = "idle", "cap"     # a ledger "ended" row's by
 _HOUSEHOLD = "household"         # one miss count for every TV (test_the_lock_out_counts_every_tv_in_the_household)
 FREE_TRIES = 5
-LOCK_BASE_S = 30                 # the first lock-out; each further miss doubles it
+LOCK_BASE_S = 30                 # the first lock-out; each further miss doubles it (test_the_lock_out_schedule)
 LOCK_MAX_S = 3600
 _SCRYPT = {"n": 2 ** 14, "r": 8, "p": 1}
 _PIN_MIN, _PIN_MAX = 4, 8        # the TV's own grown-up PIN (safety/Pin.java; test_the_pins_length_is_the_tvs)
@@ -111,8 +111,12 @@ def _ledger(event: str, dev: Optional[dict], **extra) -> None:
 
 
 def _load() -> Optional[dict]:
+    """The signed verifier, or None. Read under the lock a save holds, so on Windows a save's os.replace never
+    meets an open reader (test_the_pin_file_is_read_only_under_the_lock)."""
     try:
-        doc = json.loads(_path().read_text(encoding="utf-8"))
+        with _LOCK:
+            raw = _path().read_text(encoding="utf-8")
+        doc = json.loads(raw)
         body, sig = doc["body"], doc["sig"]
         if isinstance(body, dict) and hmac.compare_digest(_sign(body), str(sig)):
             return body
@@ -208,7 +212,7 @@ def open_with_pin(dev: dict, session_key: str, pin) -> str:
             raise WindowRefused(409, "the grown-up PIN was just changed; enter the new one", "pin_changed")
         _MISSES.pop(_HOUSEHOLD, None)
         for h in [h for h, v in _GRANTS.items() if v["dev"] == dev_id]:
-            del _GRANTS[h]                                # one window per TV
+            del _GRANTS[h]                                # one window per TV (test_one_window_per_tv)
         _GRANTS[_hash(grant)] = {"dev": dev_id, "until": now + TTL_S, "seen": now, "by": OPENED_BY_PIN}
     _ledger("opened", dev, by=OPENED_BY_PIN, seconds=TTL_S, idle_s=IDLE_S)
     return grant
