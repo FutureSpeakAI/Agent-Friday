@@ -92,3 +92,80 @@ def test_a_slow_tool_is_a_warning(monkeypatch, caplog):
     _drive(monkeypatch, _two_reads, execute)
     warn = [r.getMessage() for r in caplog.records if r.name == "friday.turn_timing" and r.levelno == logging.WARNING]
     assert any("search_wiki" in w for w in warn), warn
+
+
+# ── fix 4: the read-only lookups of one round run at the same time ────────────
+
+def _slow_reads(monkeypatch, seconds, calls):
+    from agent_friday.services import agent as ag
+
+    def make(name):
+        def h(inp):
+            calls.append((name, time.monotonic()))
+            time.sleep(seconds)
+            return "%s ok" % name
+        return h
+    for n in ("read_wiki", "search_wiki"):
+        monkeypatch.setitem(ag.CLAUDE_TOOL_HANDLERS, n, make(n))
+
+
+def _execute_like_the_real_one(name, args, handler=None, pii_lookup=None, **kw):
+    """The loop's call, as _execute_tool makes it: arguments normalised, then the handler."""
+    from agent_friday.services import agent as ag
+    inp = ag._prefetch_prepare(name, args, pii_lookup)
+    return (handler or ag.CLAUDE_TOOL_HANDLERS[name])(inp)
+
+
+def test_two_reads_of_one_round_run_together(monkeypatch):
+    calls = []
+    _slow_reads(monkeypatch, 0.3, calls)
+    t0 = time.monotonic()
+    text, trace, _ = _drive(monkeypatch, _two_reads, _execute_like_the_real_one)
+    took = time.monotonic() - t0
+    assert {c[0] for c in calls} == {"read_wiki", "search_wiki"} and len(calls) == 2, calls
+    assert abs(calls[0][1] - calls[1][1]) < 0.2, "the second read waited for the first"
+    assert took < 0.55, "two 0.3 s reads took %.2f s: they ran one after the other" % took
+    assert [t["result"] for t in trace] == ["read_wiki ok", "search_wiki ok"], trace
+
+
+def test_a_tool_that_acts_is_never_started_early(monkeypatch):
+    from agent_friday.services import agent as ag
+    calls = []
+    _slow_reads(monkeypatch, 0.0, calls)
+    monkeypatch.setitem(ag.CLAUDE_TOOL_HANDLERS, "write_file", lambda inp: calls.append(("write_file", 0)) or "w")
+    order = []
+
+    def execute(name, args, handler=None, **kw):
+        order.append(("execute", name, len(calls)))
+        return _execute_like_the_real_one(name, args, handler=handler, **kw)
+
+    def script(i):
+        if i == 1:
+            return _Resp([_Block("tool_use", name="read_wiki", inp={"path": "a.md"}, bid="t1"),
+                          _Block("tool_use", name="search_wiki", inp={"query": "q"}, bid="t2"),
+                          _Block("tool_use", name="write_file", inp={"path": "x", "content": "y"}, bid="t3")],
+                         "tool_use")
+        return _Resp([_Block("text", text="done.")], "end_turn")
+
+    _drive(monkeypatch, script, execute)
+    # write_file ran only when the loop reached it, after both reads
+    wf = [c for c in calls if c[0] == "write_file"]
+    assert len(wf) == 1
+    assert order[2][1] == "write_file" and order[2][2] == 2, order
+
+
+def test_a_changed_input_runs_the_handler_afresh():
+    from agent_friday.services import parallel_reads as pr
+
+    class TU:
+        def __init__(self, i, name, inp):
+            self.id, self.name, self.input = i, name, inp
+    seen = []
+    handlers = {"read_wiki": lambda inp: seen.append(inp) or ("page " + inp["path"]),
+                "search_wiki": lambda inp: "hits"}
+    tus = [TU("a", "read_wiki", {"path": "one.md"}), TU("b", "search_wiki", {"query": "q"})]
+    pre = pr.start(tus, handlers, lambda n, i: i)
+    assert len(pre) == 2
+    assert pre.handler_for(tus[0])({"path": "one.md"}) == "page one.md"
+    assert pre.handler_for(tus[0])({"path": "two.md"}) == "page two.md"   # a hook changed it: run again
+    assert pr.start(tus[:1], handlers, lambda n, i: i).handler_for(tus[0]) is None   # one read: not started

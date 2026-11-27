@@ -15232,6 +15232,17 @@ def _dict_outcome(name, result):
     return None
 
 
+def _prefetch_prepare(name, tool_input, pii_lookup=None):
+    """The input `_execute_tool` will hand this tool's handler (schema-checked, placeholders
+    restored), for a read started early (services/parallel_reads); None when the call would not
+    reach its handler as it stands."""
+    _checked, _arg_error = _tool_args.check(
+        name, tool_input if tool_input is not None else {}, _schema_for_tool(name))
+    if _arg_error:
+        return None
+    return _restore_placeholders(_checked or {}, pii_lookup)
+
+
 @_web_task_scope
 @_bind_browser_dispatch
 @_live_laya.idempotent_tool     # the same Gemini Live call twice in a few seconds runs once
@@ -18885,6 +18896,11 @@ def _call_claude_agent_run(messages, system=None, model=None, max_tokens=16384, 
             # Execute tools and feed results back
             tool_results = []
             _tools_grew = False
+            # Two or more read-only lookups of this PC's wiki/graph start together (services/
+            # parallel_reads); each call below still passes every gate in order before its result is used.
+            from agent_friday.services import parallel_reads as _par_reads
+            _early = _par_reads.start(tool_uses, CLAUDE_TOOL_HANDLERS,
+                                      lambda _n, _i: _prefetch_prepare(_n, _i, pii_lookup))
             for tu in tool_uses:
                 # No gate note from anything before this call (an earlier call, a
                 # helper's tool run on this thread) reaches this call's tool_call
@@ -19021,7 +19037,12 @@ def _call_claude_agent_run(messages, system=None, model=None, max_tokens=16384, 
                         _LAST_NEEDS_OWNER.set(None)
                         # the loop's own call: its gate note waits for its tool_call event (G10)
                         with _loop_tool_call():
-                            result = _execute_tool(tu.name, tu.input, pii_lookup=pii_lookup, session_ctx=_zt_ctx)
+                            _early_h = _early.handler_for(tu)
+                            if _early_h is not None:
+                                result = _execute_tool(tu.name, tu.input, pii_lookup=pii_lookup,
+                                                       session_ctx=_zt_ctx, handler=_early_h)
+                            else:
+                                result = _execute_tool(tu.name, tu.input, pii_lookup=pii_lookup, session_ctx=_zt_ctx)
                 finally:
                     _CURRENT_MODEL.reset(_mtok)
                 # Marked FINISHED on the success path only, deliberately not in a
