@@ -186,13 +186,13 @@ def test_wrong_pins_sent_at_once_cannot_outrun_the_lock_out(monkeypatch):
     win.set_pin(PIN)
     tv = _device()
     checked = []
-    real = win._matches
+    real = win._derive
 
-    def slow(pin):
+    def slow(pin, *a):
         checked.append(pin)
         _time.sleep(0.05)
-        return real(pin)
-    monkeypatch.setattr(win, "_matches", slow)
+        return real(pin, *a)
+    monkeypatch.setattr(win, "_derive", slow)
     codes, go = [], threading.Event()
 
     def guess():
@@ -250,20 +250,17 @@ def test_the_window_a_turn_used_is_named_for_its_trace(_clean):
     assert win.window_for(other, g) is None and win.window_for(tv, "x") is None
 
 
-def test_a_pin_changed_while_an_open_is_checking_wins(monkeypatch):
-    # An open checked against the old PIN must not leave a window after the new PIN is saved.
+def test_a_pin_is_checked_under_the_lock_from_start_to_finish(monkeypatch):
+    # A save holds the same lock, so it can never land between an open's check and its grant.
     win.set_pin(PIN)
+    held = []
+    real = win._derive
+    monkeypatch.setattr(win, "_derive", lambda pin, *a: held.append(win._LOCK.locked()) or real(pin, *a))
     tv = _device()
-    real = win._matches
-
-    def check_then_owner_changes_pin(pin):
-        ok = real(pin)
-        win.set_pin("9999", by="pc_settings")
-        return ok
-    monkeypatch.setattr(win, "_matches", check_then_owner_changes_pin)
-    with pytest.raises(win.WindowRefused) as e:
-        win.open_with_pin(tv, "s", PIN)
-    assert e.value.status == 409 and not win._GRANTS
+    win.open_with_pin(tv, "s", PIN)
+    with pytest.raises(win.WindowRefused):
+        win.open_with_pin(tv, "s", "0000")
+    assert held == [True, True]
 
 
 def test_no_ledger_row_carries_the_pin(_clean):
@@ -441,3 +438,32 @@ def test_an_old_pin_open_just_before_a_save_takes_the_lock_gets_no_window(monkey
     win.set_pin("9999", by="pc_settings")
     assert fired[0]
     assert not win.check(tv, got.get("grant", "")) and not win._GRANTS, got
+
+
+def test_a_new_pin_open_right_after_a_save_keeps_its_window(monkeypatch):
+    # The save ends old windows inside its one locked step, not after it: a window opened with the new PIN the
+    # moment the save leaves the lock stays open.
+    import threading
+    win.set_pin(PIN)
+    tv = _device()
+    real, saver, fired, got = win._LOCK, [None], [False], {}
+
+    class HookedLock:
+        def __enter__(self):
+            return real.__enter__()
+
+        def __exit__(self, *a):
+            out = real.__exit__(*a)
+            if threading.current_thread() is saver[0] and not fired[0]:
+                fired[0] = True
+                t = threading.Thread(target=lambda: got.update(grant=win.open_with_pin(tv, "s", "9999")))
+                t.start()
+                t.join(10)
+            return out
+
+        def locked(self):
+            return real.locked()
+    monkeypatch.setattr(win, "_LOCK", HookedLock())
+    saver[0] = threading.current_thread()
+    win.set_pin("9999", by="pc_settings")
+    assert fired[0] and win.check(tv, got["grant"])

@@ -52,7 +52,6 @@ _PIN_MIN, _PIN_MAX = 4, 8        # the TV's own grown-up PIN (safety/Pin.java; t
 _log = logging.getLogger(__name__)
 _LOCK = threading.Lock()
 _GRANTS: dict = {}               # sha256(grant) -> {"dev": id, "until": cap, "seen": last turn, "by": "pin"}
-_PIN_GEN = [0]                   # moves on with every set_pin: an open checked against an older PIN is refused
 _MISSES: dict = {}               # _HOUSEHOLD -> {"n": misses, "until": t}
 
 
@@ -113,9 +112,14 @@ def _ledger(event: str, dev: Optional[dict], **extra) -> None:
 def _load() -> Optional[dict]:
     """The signed verifier, or None. Read under the lock a save holds, so on Windows a save's os.replace never
     meets an open reader (test_the_pin_file_is_read_only_under_the_lock)."""
+    with _LOCK:
+        return _load_locked()
+
+
+def _load_locked() -> Optional[dict]:
+    """_load for a caller that holds _LOCK."""
     try:
-        with _LOCK:
-            raw = _path().read_text(encoding="utf-8")
+        raw = _path().read_text(encoding="utf-8")
         doc = json.loads(raw)
         body, sig = doc["body"], doc["sig"]
         if isinstance(body, dict) and hmac.compare_digest(_sign(body), str(sig)):
@@ -140,22 +144,25 @@ def set_pin(pin, dev: Optional[dict] = None, *, by: str = "owner") -> None:
     body = {"v": 1, "salt": salt.hex(), **_SCRYPT, "hash": _derive(pin, salt, **_SCRYPT).hex()}
     p = _path()
     p.parent.mkdir(parents=True, exist_ok=True)
-    # One step under the lock: the new verifier, the generation and the end of every window move together, so
-    # no open can start between them (test_an_old_pin_open_started_during_a_save_gets_no_window,
-    # test_an_old_pin_open_just_before_a_save_takes_the_lock_gets_no_window) and two saves
+    # One step under the lock: the new verifier and the end of every window move together, and an open checks
+    # its PIN under the same lock from start to finish, so no open can run between them (test_an_old_pin_open_started_during_a_save_gets_no_window,
+    # test_an_old_pin_open_just_before_a_save_takes_the_lock_gets_no_window,
+    # test_a_new_pin_open_right_after_a_save_keeps_its_window) and two saves
     # never share the temporary file (test_two_saves_at_once_leave_one_pin_and_both_finish).
     with _LOCK:
         tmp = p.with_suffix(".tmp")
         tmp.write_text(json.dumps({"body": body, "sig": _sign(body)}), encoding="utf-8")
         os.replace(tmp, p)
-        _PIN_GEN[0] += 1
         _GRANTS.clear()
         _MISSES.clear()
     _ledger("pin_set", dev, by=by)
 
 
 def _matches(pin) -> bool:
-    body = _load()
+    return _matches_body(pin, _load())
+
+
+def _matches_body(pin, body: Optional[dict]) -> bool:
     if body is None or not _valid_pin(pin):
         return False
     try:
@@ -191,30 +198,29 @@ def open_with_pin(dev: dict, session_key: str, pin) -> str:
     if not has_pin():
         raise WindowRefused(409, "set the grown-up PIN on the PC or your phone first", "no_pin")
     dev_id, now = str(dev["id"]), _now()
-    # The try is counted before the PIN is checked, under the lock, so tries sent in parallel cannot outrun the
-    # lock-out (test_wrong_pins_sent_at_once_cannot_outrun_the_lock_out). A right PIN clears the household count,
-    # so each real unlock gives the next FREE_TRIES again (test_a_wrong_pin_is_refused_and_repeated_misses_lock_it).
+    # The whole try runs under the lock a save holds (test_a_pin_is_checked_under_the_lock_from_start_to_finish):
+    # tries sent in parallel are checked one at a time, so they cannot outrun the lock-out
+    # (test_wrong_pins_sent_at_once_cannot_outrun_the_lock_out), and a save never lands between an open's check
+    # and its grant (the two save-race tests). A right PIN clears the household count, so each real unlock gives
+    # the next FREE_TRIES again (test_the_lock_out_schedule).
     with _LOCK:
         m = _MISSES.setdefault(_HOUSEHOLD, {"n": 0, "until": 0.0})
         if m["until"] > now:
             raise WindowRefused(429, "too many tries; wait %d s" % int(m["until"] - now + 1), "locked")
         m["n"] += 1
         tries = m["n"]
-        gen = _PIN_GEN[0]
         if tries >= FREE_TRIES:
             m["until"] = now + min(LOCK_MAX_S, LOCK_BASE_S * 2 ** (tries - FREE_TRIES))
-    if not _matches(pin):
+        right = _matches_body(pin, _load_locked())
+        grant = secrets.token_urlsafe(32) if right else None
+        if right:
+            _MISSES.pop(_HOUSEHOLD, None)
+            for h in [h for h, v in _GRANTS.items() if v["dev"] == dev_id]:
+                del _GRANTS[h]                            # one window per TV (test_one_window_per_tv)
+            _GRANTS[_hash(grant)] = {"dev": dev_id, "until": now + TTL_S, "seen": now, "by": OPENED_BY_PIN}
+    if not right:
         _ledger("refused", dev, misses=tries)
         raise WindowRefused(403, "that PIN is not right", "wrong_pin")
-    grant = secrets.token_urlsafe(32)
-    with _LOCK:
-        if gen != _PIN_GEN[0]:
-            # The PIN changed while this one was being checked (test_a_pin_changed_while_an_open_is_checking_wins).
-            raise WindowRefused(409, "the grown-up PIN was just changed; enter the new one", "pin_changed")
-        _MISSES.pop(_HOUSEHOLD, None)
-        for h in [h for h, v in _GRANTS.items() if v["dev"] == dev_id]:
-            del _GRANTS[h]                                # one window per TV (test_one_window_per_tv)
-        _GRANTS[_hash(grant)] = {"dev": dev_id, "until": now + TTL_S, "seen": now, "by": OPENED_BY_PIN}
     _ledger("opened", dev, by=OPENED_BY_PIN, seconds=TTL_S, idle_s=IDLE_S)
     return grant
 

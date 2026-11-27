@@ -182,7 +182,9 @@ def create_app(tailnet: bool = False) -> Flask:
             # day gone by). Open a new one (challenge, then open); only a refusal THERE means unpaired.
             return _refuse(401, "device session required", code="session_required", action="open_session")
         g.device = dev
-        g.session_key = _bearer()        # a grown-up window is opened only on a live session (services/tv_grownup_window)
+        # A grown-up window is opened only on a live session (test_tv_grownup_window.py::
+        # test_a_try_without_a_device_session_is_refused).
+        g.session_key = _bearer()
         if not _AUTH_BUCKET.allow(str(dev.get("id"))):
             return _slow_down(_AUTH_BUCKET, str(dev.get("id")))
         return None
@@ -275,8 +277,9 @@ def create_app(tailnet: bool = False) -> Flask:
         from agent_friday.tv_gateway import turn
         principal = turn.principal_from(request.headers.get("X-Friday-Principal"))
         from agent_friday.services import tv_grownup_window as _win
-        # A grown-up turn on a live window keeps it from going idle and names it in the turn's trace
-        # (services/tv_grownup_window.window_for).
+        # A grown-up turn on a live window keeps it from going idle and passes it on for the turn's trace
+        # (test_tv_grownup_window_route.py::test_a_grown_up_turn_keeps_the_window_from_going_idle,
+        # ::test_the_messages_route_passes_the_window_only_for_a_grown_up_with_a_live_grant).
         window = (_win.window_for(g.device, request.headers.get("X-Friday-Window", ""), touch=True)
                   if principal == "grownup" else None)
         try:
