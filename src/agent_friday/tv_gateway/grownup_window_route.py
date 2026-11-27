@@ -22,7 +22,7 @@ def register(app, refuse):
 
     @app.get("/tv/v1/grownup")
     def grownup_status():
-        return jsonify({"ok": True, **win.status(g.device, g.session_key, _grant())})
+        return jsonify({"ok": True, **win.status(g.device, _grant())})
 
     @app.post("/tv/v1/grownup/open")
     def grownup_open():
@@ -31,7 +31,7 @@ def register(app, refuse):
             grant = win.open_with_pin(g.device, g.session_key, body.get("pin"))
         except win.WindowRefused as e:
             return refuse(e.status, str(e), code=e.code)
-        return jsonify({"ok": True, "window": grant, "ttl_s": win.TTL_S})
+        return jsonify({"ok": True, "window": grant, "ttl_s": win.TTL_S, "idle_s": win.IDLE_S})
 
     @app.post("/tv/v1/grownup/close")
     def grownup_close():

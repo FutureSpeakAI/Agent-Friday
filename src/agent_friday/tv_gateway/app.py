@@ -182,7 +182,7 @@ def create_app(tailnet: bool = False) -> Flask:
             # day gone by). Open a new one (challenge, then open); only a refusal THERE means unpaired.
             return _refuse(401, "device session required", code="session_required", action="open_session")
         g.device = dev
-        g.session_key = _bearer()        # the session a grown-up window is bound to (services/tv_grownup_window)
+        g.session_key = _bearer()        # a grown-up window is opened only on a live session (services/tv_grownup_window)
         if not _AUTH_BUCKET.allow(str(dev.get("id"))):
             return _slow_down(_AUTH_BUCKET, str(dev.get("id")))
         return None
@@ -275,8 +275,9 @@ def create_app(tailnet: bool = False) -> Flask:
         from agent_friday.tv_gateway import turn
         principal = turn.principal_from(request.headers.get("X-Friday-Principal"))
         from agent_friday.services import tv_grownup_window as _win
-        window_ok = principal == "grownup" and _win.check(g.device, g.session_key,
-                                                          request.headers.get("X-Friday-Window", ""))
+        # A grown-up turn on a live window keeps it from going idle (services/tv_grownup_window).
+        window_ok = principal == "grownup" and _win.check(g.device, request.headers.get("X-Friday-Window", ""),
+                                                          touch=True)
         try:
             events = turn.run(g.device, request.get_json(silent=True) or {}, principal, window_ok)
             first = next(events, None)

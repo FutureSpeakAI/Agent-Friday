@@ -9,8 +9,15 @@ memory gate also needs a window grant this PC issued:
     owner-bound phone or tablet, never from the TV.
   * The TV sends the PIN once, over the gateway's pinned TLS 1.3 session, right after the owner unlocks it
     there (POST /tv/v1/grownup/open). On a match the PC returns an opaque grant: 32 random bytes, held only in
-    this process (as a hash), bound to the device and to the session it was opened on, ending after TTL_S on the
-    PC's clock or at POST /tv/v1/grownup/close. Misses lock the device out (FREE_TRIES, then doubling waits).
+    this process (as a hash), bound to the TV that opened it. It ends on the PC's clock when the TV goes idle
+    (no grown-up turn for IDLE_S), at TTL_S however busy the TV is, or at POST /tv/v1/grownup/close
+    (test_a_window_ends_when_the_tv_goes_idle, test_a_window_ends_at_its_cap_however_busy_the_tv_is). It is not
+    bound to one device session: the TV renews its session hourly and each screen keeps its own link, and every
+    request already proves the TV with its key (test_tv_grownup_window_route.py::
+    test_the_window_outlives_a_session_renewal_but_not_a_change_of_tv).
+  * Misses lock the whole household out, not one device (FREE_TRIES, then doubling waits up to LOCK_MAX_S;
+    test_the_lock_out_counts_every_tv_in_the_household). The count lives in this process, so a PC restart
+    starts it again; the TV cannot restart the PC.
   * Only the household TV (kind tv, bound to the family member) may open one. Kids get no memory whatever
     the window says (tv_memory_access.allows).
   * Every open, refusal and close leaves a ledger row (``tv_grownup_window``), never the PIN.
@@ -29,7 +36,9 @@ import time
 from pathlib import Path
 from typing import Optional
 
-TTL_S = 4 * 3600                 # shorter than the TV's own 8 h cap (GrownUpSession.CAP_MS)
+TTL_S = 3600                     # the cap, however busy the TV is (test_the_window_is_short)
+IDLE_S = 600                     # no grown-up turn for this long ends it (test_a_window_ends_when_the_tv_goes_idle)
+_HOUSEHOLD = "household"         # one miss count for every TV (test_the_lock_out_counts_every_tv_in_the_household)
 FREE_TRIES = 5
 LOCK_BASE_S = 30                 # the first lock-out; each further miss doubles it
 LOCK_MAX_S = 3600
@@ -37,8 +46,8 @@ _SCRYPT = {"n": 2 ** 14, "r": 8, "p": 1}
 _PIN_MIN, _PIN_MAX = 4, 12
 
 _LOCK = threading.Lock()
-_GRANTS: dict = {}               # sha256(grant) -> {"dev": id, "session": key, "until": t, "by": "pin"}
-_MISSES: dict = {}               # dev id -> {"n": misses, "until": t}
+_GRANTS: dict = {}               # sha256(grant) -> {"dev": id, "until": cap, "seen": last turn, "by": "pin"}
+_MISSES: dict = {}               # _HOUSEHOLD -> {"n": misses, "until": t}
 
 
 class WindowRefused(Exception):
@@ -156,12 +165,12 @@ def open_with_pin(dev: dict, session_key: str, pin) -> str:
         raise WindowRefused(409, "set the grown-up PIN on the PC or your phone first", "no_pin")
     dev_id, now = str(dev["id"]), _now()
     with _LOCK:
-        m = _MISSES.get(dev_id) or {"n": 0, "until": 0.0}
+        m = _MISSES.get(_HOUSEHOLD) or {"n": 0, "until": 0.0}
         if m["until"] > now:
             raise WindowRefused(429, "too many tries; wait %d s" % int(m["until"] - now + 1), "locked")
     if not _matches(pin):
         with _LOCK:
-            m = _MISSES.setdefault(dev_id, {"n": 0, "until": 0.0})
+            m = _MISSES.setdefault(_HOUSEHOLD, {"n": 0, "until": 0.0})
             m["n"] += 1
             if m["n"] >= FREE_TRIES:
                 m["until"] = now + min(LOCK_MAX_S, LOCK_BASE_S * 2 ** (m["n"] - FREE_TRIES))
@@ -169,26 +178,36 @@ def open_with_pin(dev: dict, session_key: str, pin) -> str:
         raise WindowRefused(403, "that PIN is not right", "wrong_pin")
     grant = secrets.token_urlsafe(32)
     with _LOCK:
-        _MISSES.pop(dev_id, None)
+        _MISSES.pop(_HOUSEHOLD, None)
         for h in [h for h, v in _GRANTS.items() if v["dev"] == dev_id]:
             del _GRANTS[h]                                # one window per TV
-        _GRANTS[_hash(grant)] = {"dev": dev_id, "session": _hash(session_key), "until": now + TTL_S, "by": "pin"}
-    _ledger("opened", dev, by="pin", seconds=TTL_S)
+        _GRANTS[_hash(grant)] = {"dev": dev_id, "until": now + TTL_S, "seen": now, "by": "pin"}
+    _ledger("opened", dev, by="pin", seconds=TTL_S, idle_s=IDLE_S)
     return grant
 
 
-def check(dev: Optional[dict], session_key: str, grant: str) -> bool:
-    """True only for a live grant this PC issued to this device on this session."""
-    if not dev or not grant or not session_key:
+def check(dev: Optional[dict], grant: str, *, touch: bool = False) -> bool:
+    """True only for a live grant this PC issued to this device. `touch`: a grown-up turn is using it, so the
+    idle clock starts again (the messages route); a status read never keeps it open
+    (test_looking_at_a_window_does_not_keep_it_open)."""
+    if not dev or not grant:
         return False
+    h, now, ended = _hash(grant), _now(), None
     with _LOCK:
-        v = _GRANTS.get(_hash(grant))
+        v = _GRANTS.get(h)
         if v is None:
             return False
-        if v["until"] <= _now():
-            _GRANTS.pop(_hash(grant), None)
+        if v["until"] <= now or now - v["seen"] >= IDLE_S:
+            _GRANTS.pop(h, None)
+            ended = "cap" if v["until"] <= now else "idle"
+        elif v["dev"] != str(dev.get("id")):
             return False
-        return v["dev"] == str(dev.get("id")) and hmac.compare_digest(v["session"], _hash(session_key))
+        elif touch:
+            v["seen"] = now
+    if ended:
+        _ledger("ended", dev, why=ended)
+        return False
+    return True
 
 
 def close(dev: Optional[dict]) -> None:
@@ -200,8 +219,8 @@ def close(dev: Optional[dict]) -> None:
     _ledger("closed", dev, windows=len(gone))
 
 
-def status(dev: Optional[dict], session_key: str, grant: str) -> dict:
-    return {"has_pin": has_pin(), "open": check(dev, session_key, grant), "ttl_s": TTL_S}
+def status(dev: Optional[dict], grant: str) -> dict:
+    return {"has_pin": has_pin(), "open": check(dev, grant), "ttl_s": TTL_S, "idle_s": IDLE_S}
 
 
 def _reset_for_tests() -> None:

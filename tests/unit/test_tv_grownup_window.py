@@ -66,26 +66,55 @@ def test_a_tampered_verifier_counts_as_no_pin():
 
 # ── opening and checking ────────────────────────────────────────────────────
 
-def test_the_right_pin_opens_a_window_bound_to_this_tv_and_session(_clean):
+def test_the_right_pin_opens_a_window_bound_to_this_tv(_clean):
     win.set_pin(PIN)
     tv, other = _device(), _device()
     g = win.open_with_pin(tv, "sess-a", PIN)
-    assert win.check(tv, "sess-a", g)
-    assert not win.check(tv, "sess-b", g), "another session of the same TV"
-    assert not win.check(other, "sess-a", g), "another TV"
-    assert not win.check(tv, "sess-a", g + "x")
-    assert not win.check(tv, "sess-a", "")
+    assert win.check(tv, g)
+    assert not win.check(other, g), "another TV"
+    assert not win.check(tv, g + "x")
+    assert not win.check(tv, "")
+    assert not win.check(None, g)
     assert _clean["rows"][-1][0] == "tv_grownup_window" and _clean["rows"][-1][1]["event"] == "opened"
 
 
-def test_a_window_ends_on_the_pcs_clock(_clean):
+def test_the_window_is_short():
+    # Dispatch 2026-11-27 09:12: "a short expiry that ends when the TV goes idle".
+    assert win.TTL_S <= 3600 and win.IDLE_S <= 900 and win.IDLE_S < win.TTL_S
+
+
+def test_a_window_ends_when_the_tv_goes_idle(_clean):
     win.set_pin(PIN)
     tv = _device()
     g = win.open_with_pin(tv, "s", PIN)
-    _clean["clock"]["t"] += win.TTL_S - 1
-    assert win.check(tv, "s", g)
-    _clean["clock"]["t"] += 2
-    assert not win.check(tv, "s", g)
+    _clean["clock"]["t"] += win.IDLE_S - 1
+    assert win.check(tv, g, touch=True)                   # a turn: the idle clock starts again
+    _clean["clock"]["t"] += win.IDLE_S - 1
+    assert win.check(tv, g)
+    _clean["clock"]["t"] += 2                              # no turn for IDLE_S
+    assert not win.check(tv, g, touch=True)
+    assert _clean["rows"][-1][1]["event"] == "ended" and _clean["rows"][-1][1]["why"] == "idle"
+
+
+def test_looking_at_a_window_does_not_keep_it_open(_clean):
+    win.set_pin(PIN)
+    tv = _device()
+    g = win.open_with_pin(tv, "s", PIN)
+    for _ in range(3):
+        _clean["clock"]["t"] += win.IDLE_S // 2
+        win.status(tv, g)
+    assert not win.check(tv, g)
+
+
+def test_a_window_ends_at_its_cap_however_busy_the_tv_is(_clean):
+    win.set_pin(PIN)
+    tv = _device()
+    g = win.open_with_pin(tv, "s", PIN)
+    while _clean["clock"]["t"] + win.IDLE_S // 2 < 1_000_000.0 + win.TTL_S:
+        _clean["clock"]["t"] += win.IDLE_S // 2
+        assert win.check(tv, g, touch=True)
+    _clean["clock"]["t"] = 1_000_000.0 + win.TTL_S + 1
+    assert not win.check(tv, g, touch=True)
 
 
 def test_close_ends_every_window_of_that_tv(_clean):
@@ -93,7 +122,7 @@ def test_close_ends_every_window_of_that_tv(_clean):
     tv = _device()
     g = win.open_with_pin(tv, "s", PIN)
     win.close(tv)
-    assert not win.check(tv, "s", g)
+    assert not win.check(tv, g)
     assert _clean["rows"][-1][1]["event"] == "closed"
 
 
@@ -108,7 +137,18 @@ def test_a_wrong_pin_is_refused_and_repeated_misses_lock_it(_clean):
         win.open_with_pin(tv, "s", PIN)                      # right PIN, but locked out now
     assert e.value.status == 429
     _clean["clock"]["t"] += win.LOCK_BASE_S + 1
-    assert win.check(tv, "s", win.open_with_pin(tv, "s", PIN))
+    assert win.check(tv, win.open_with_pin(tv, "s", PIN))
+
+
+def test_the_lock_out_counts_every_tv_in_the_household(_clean):
+    win.set_pin(PIN)
+    a, b = _device(), _device()
+    for i in range(win.FREE_TRIES):
+        with pytest.raises(win.WindowRefused):
+            win.open_with_pin(a if i % 2 else b, "s", "0000")
+    with pytest.raises(win.WindowRefused) as e:
+        win.open_with_pin(a, "s", PIN)
+    assert e.value.status == 429
 
 
 @pytest.mark.parametrize("kind,member", [("phone", household.OWNER_ID), ("tv", None), ("tv", household.OWNER_ID)])

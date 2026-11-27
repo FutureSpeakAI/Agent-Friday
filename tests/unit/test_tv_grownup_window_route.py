@@ -61,13 +61,30 @@ def test_the_tv_opens_checks_and_closes_a_window(client):
     assert client.get("/tv/v1/grownup", headers={**h, "X-Friday-Window": grant}).get_json()["open"] is False
 
 
-def test_a_window_from_another_session_does_not_count(client):
+def test_the_window_outlives_a_session_renewal_but_not_a_change_of_tv(client):
+    # The TV renews its device session every hour and each screen keeps its own link, so the window is bound
+    # to the TV (which every request proves with its key), not to one session.
     win.set_pin(PIN)
     dev = paired("tv", household.FAMILY_ID)
     h1 = auth(open_session(client, dev))
     grant = client.post("/tv/v1/grownup/open", json={"pin": PIN}, headers=h1).get_json()["window"]
     h2 = auth(open_session(client, dev))
-    assert client.get("/tv/v1/grownup", headers={**h2, "X-Friday-Window": grant}).get_json()["open"] is False
+    assert client.get("/tv/v1/grownup", headers={**h2, "X-Friday-Window": grant}).get_json()["open"] is True
+    other = auth(open_session(client, paired("tv", household.FAMILY_ID)))
+    assert client.get("/tv/v1/grownup", headers={**other, "X-Friday-Window": grant}).get_json()["open"] is False
+
+
+def test_a_grown_up_turn_keeps_the_window_from_going_idle(client, monkeypatch):
+    win.set_pin(PIN)
+    h = auth(open_session(client, paired("tv", household.FAMILY_ID)))
+    grant = client.post("/tv/v1/grownup/open", json={"pin": PIN}, headers=h).get_json()["window"]
+    touched = []
+    real = win.check
+    monkeypatch.setattr(win, "check", lambda dev, g, touch=False: touched.append(touch) or real(dev, g, touch=touch))
+    monkeypatch.setattr(turn, "run", lambda dev, body, p, window_ok=False: iter([turn._event({"type": "message_stop"})]))
+    client.post("/tv/v1/messages", json={"messages": [{"role": "user", "content": "hi"}]},
+                headers={**h, "X-Friday-Principal": "grownup", "X-Friday-Window": grant})
+    assert touched == [True]
 
 
 @pytest.mark.parametrize("principal,with_grant,want", [("grownup", True, True), ("grownup", False, False),
