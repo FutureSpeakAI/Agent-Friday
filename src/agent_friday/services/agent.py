@@ -118,6 +118,7 @@ from agent_friday.services import taint as _taint_mod
 from agent_friday.services import reasoning_trace as _rtrace
 from agent_friday.services import untrusted_input as _untrusted
 from agent_friday.services import quarantine_gate as _qgate
+from agent_friday.services import turn_timing as _turn_timing
 from agent_friday.services.news_engine import (
     _fetch_news_items,
 )  # noqa: E501
@@ -18735,6 +18736,9 @@ def _call_claude_agent_run(messages, system=None, model=None, max_tokens=16384, 
             except Exception:
                 pass
             # B4: accumulate token counts for the activity-ledger record.
+            # One timing line per round (services/turn_timing): the model's time now, each tool's below.
+            _model_ms = int((_time.time() - _t0) * 1000)
+            _round_tools = []
             _iter_tok_in = _iter_tok_out = 0
             try:
                 _u = getattr(resp, "usage", None)
@@ -18793,6 +18797,7 @@ def _call_claude_agent_run(messages, system=None, model=None, max_tokens=16384, 
                     tool_uses.append(b)
 
             if resp.stop_reason != 'tool_use' or not tool_uses:
+                _turn_timing.log_round(iter_count, kwargs.get("model"), _model_ms, final=True)
                 _orb_safe(process_update, orb_id, status='completed', progress=1.0, label='Done')
                 # The turn finished. A checkpoint that outlives it is an
                 # invitation to replay work that is already done.
@@ -18959,6 +18964,7 @@ def _call_claude_agent_run(messages, system=None, model=None, max_tokens=16384, 
                         _tool_ms = int((_time.time() - _t_tool) * 1000)
                         _orb_tool_trace(orb_id, tu.name, tu.input, _zt_result, _tool_ms)
                         _ledger_tool_call(tu.name, _zt_result, _tool_ms, orb_id, session_ctx)
+                        _round_tools.append((tu.name, _tool_ms))
                         from agent_friday.privacy.vault_access import refusal_text as _zt_text
                         tool_results.append({
                             "type": "tool_result",
@@ -18984,6 +18990,7 @@ def _call_claude_agent_run(messages, system=None, model=None, max_tokens=16384, 
                     _tool_ms = int((_time.time() - _t_tool) * 1000)
                     _orb_tool_trace(orb_id, tu.name, tu.input, _pq_held, _tool_ms)
                     _ledger_tool_call(tu.name, _pq_held, _tool_ms, orb_id, session_ctx)
+                    _round_tools.append((tu.name, _tool_ms))
                     tool_results.append({"type": "tool_result", "tool_use_id": tu.id,
                                          "content": _pq_held})
                     continue
@@ -19031,6 +19038,7 @@ def _call_claude_agent_run(messages, system=None, model=None, max_tokens=16384, 
                 _tool_ms = int((_time.time() - _t_tool) * 1000)
                 _orb_tool_trace(orb_id, tu.name, tu.input, result, _tool_ms)
                 _ledger_tool_call(tu.name, result, _tool_ms, orb_id, session_ctx)
+                _round_tools.append((tu.name, _tool_ms))
 
                 # A tool result carrying a base64 image becomes an actual vision
                 # block so the model can SEE it. Keyed on the PAYLOAD, not the
@@ -19055,6 +19063,7 @@ def _call_claude_agent_run(messages, system=None, model=None, max_tokens=16384, 
                     # result (services/untrusted_input). The trace and ledger above keep it raw.
                     "content": _untrusted.wrap(_qgate.read_through(tu.name, tu.input, result, session_ctx)),
                 })
+            _turn_timing.log_round(iter_count, kwargs.get("model"), _model_ms, _round_tools)
             convo.append({"role": "user", "content": tool_results})
             if _tool_changes:
                 _TC.ensure_surfaced(convo, _surfaced_names())
