@@ -1712,19 +1712,29 @@ def _openai_leg_is_local(bound):
         return False
 
 
-def _tool_adapter_field(model, over, turn_shape, session_ctx):
-    """The per-request adapter strength for a mode-T seat (services/tool_adapter), or None.
-    A failure here sends no field, and a per-request seat then runs at its launch strength 0,
-    the plain base (test_tool_adapter_mode_t)."""
+def _turn_shape_of(over, turn_shape, session_ctx):
+    """Laya's tier-1 verdict for this call: a per-call override, the argument, or the turn's."""
+    shape = over.get("turn_shape")
+    if shape is None:
+        shape = turn_shape if turn_shape is not None else (session_ctx or {}).get("turn_shape")
+    return shape
+
+
+def _tool_adapter_field(model, messages, shape, session_ctx):
+    """The per-request adapter strength for a mode-T seat (services/tool_adapter), or None for
+    any other seat. A seat whose record cannot be read was refused at spawn
+    (residency_arbiter._adapter_per_request), so None here never means an applied adapter."""
+    from agent_friday.services import model_store as _ms_ta
+    from agent_friday.services import tool_adapter as _ta
     try:
-        from agent_friday.services import model_store as _ms_ta
-        from agent_friday.services import tool_adapter as _ta
-        shape = over.get("turn_shape")
-        if shape is None:
-            shape = turn_shape if turn_shape is not None else (session_ctx or {}).get("turn_shape")
-        return _ta.request_field(_ms_ta.get(model), _load_settings() or {}, shape, session_ctx)
+        record = _ms_ta.get(model)
     except Exception:
         return None
+    try:
+        settings = _load_settings() or {}
+    except Exception:
+        settings = {}
+    return _ta.request_field(record, settings, shape, messages, session_ctx)
 
 
 @_sched_admitted("model_router.openai", local=_openai_leg_is_local)
@@ -2128,10 +2138,7 @@ def _call_openai(messages, system=None, model=None, max_tokens=None,
             if local_bypass and not _no_think and "reasoning_effort" not in payload:
                 try:
                     from agent_friday.services import reasoning_policy as _rp
-                    _shape = _over.get("turn_shape")
-                    if _shape is None:
-                        _shape = (turn_shape if turn_shape is not None
-                                  else (session_ctx or {}).get("turn_shape"))
+                    _shape = _turn_shape_of(_over, turn_shape, session_ctx)
                     _eff = _rp.reasoning_effort_for_turn(_shape, _load_settings() or {})
                     if _eff == "none":
                         payload.setdefault("chat_template_kwargs", {})[
@@ -2150,7 +2157,9 @@ def _call_openai(messages, system=None, model=None, max_tokens=None,
             if payload.get("stream"):
                 payload.setdefault("stream_options", {})["include_usage"] = True
             if local_bypass:
-                _lora = _tool_adapter_field(model, _over, turn_shape, session_ctx)
+                _lora = _tool_adapter_field(model, _convo,
+                                            _turn_shape_of(_over, turn_shape, session_ctx),
+                                            session_ctx)
                 if _lora is not None:
                     payload["lora"] = _lora
             _trace_outgoing("_call_openai", pname, model, payload,

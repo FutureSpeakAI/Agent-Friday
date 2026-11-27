@@ -466,9 +466,8 @@ def register(model_id: str, path, *, source: str = SOURCE_LOCAL,
     if serve_num_ctx:
         entry["serve_num_ctx"] = int(serve_num_ctx)
     if lora and lora_apply:
-        # "per_request": the adapter loads at strength 0 and each request names
-        # its strength (mode T, services/tool_adapter).
-        entry["lora_apply"] = str(lora_apply)
+        from agent_friday.services import tool_adapter
+        entry["lora_apply"] = tool_adapter.parse_apply(lora_apply).value
     if held:
         # Installed and verified, but no seat may use it yet; see available().
         entry["held"] = str(held)
