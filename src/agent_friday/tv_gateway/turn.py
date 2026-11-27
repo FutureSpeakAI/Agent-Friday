@@ -15,7 +15,12 @@ What a TV turn is NOT is the owner's turn (routes/chat.chat()):
   * No owner context. The system prompt is the TV's, plus this PC's honest-
     limits block and a fixed note; no memory recall, vault, wiki, people or
     core memory. Which memories a household TV may ever see is the owner's
-    decision (DECISIONS-FOR-STEPHEN), not this module's.
+    decision (DECISIONS-FOR-STEPHEN TV-P1, decided 2026-11-26): the one
+    exception is services/tv_memory_access. With the setting at All, a
+    grown-up turn on the household TV carries the owner's recalled
+    conversations and knowledge-graph / wiki pointers in its system prompt
+    (sealed like the rest); kids and non-grown-up turns never do, and the
+    ledger row names every source.
   * Nothing is written to the owner's conversation, recall index or summaries.
   * Kids: no tools at all, and the brain is Claude (the family prompt is
     tested with Claude only). Where Claude cannot be reached, the turn is
@@ -50,6 +55,15 @@ GATEWAY_NOTE = (
     "computer's own tools, mail, files and private memories are not available "
     "here, so never claim to have used them.\n")
 
+#: The note for a grown-up turn the TV memory setting lets carry the owner's context
+#: (services/tv_memory_access): the owner's memory is there; the computer's tools, mail and files still are not.
+GATEWAY_NOTE_WITH_OWNER = (
+    "\n\n== ANSWERING FROM THE HOUSEHOLD'S FRIDAY COMPUTER ==\n"
+    "This turn is answered by Friday on the household's computer for the TV in "
+    "the room. Only the actions listed for the TV exist in this turn; the "
+    "computer's own tools, mail and files are not available here, so never claim "
+    "to have used them. The owner's context below is what this turn may draw on.\n")
+
 
 class TurnRefused(Exception):
     """The turn cannot run; `status` is the HTTP code the TV acts on (503 means
@@ -69,8 +83,10 @@ def principal_from(header: Optional[str]) -> str:
     return p if p in PRINCIPALS else "kids"
 
 
-def system_for(tv_system: str) -> str:
+def system_for(tv_system: str, owner_block: str = "") -> str:
     from agent_friday.services.model_router import honest_limits_block
+    if owner_block:
+        return str(tv_system or "") + honest_limits_block() + GATEWAY_NOTE_WITH_OWNER + owner_block
     return str(tv_system or "") + honest_limits_block() + GATEWAY_NOTE
 
 
@@ -317,18 +333,56 @@ def run(dev: dict, body: dict, principal: str) -> Iterator[str]:
     if not isinstance(messages, list) or not messages:
         raise TurnRefused(400, "no conversation")
     tools = tools_for(dev, principal, body.get("tools"))
-    system = system_for(body.get("system", ""))
+    owner_block, trace = _owner_context(dev, principal, messages)
+    if owner_block:
+        # A turn carrying the owner's memory proposes no TV action: recalled or wiki text must not be able
+        # to steer the TV's own tools (which run on the TV, past this PC's gates) or carry it off the box.
+        # Held by test_tv_memory_access.py::test_a_turn_with_the_owners_context_offers_the_tv_no_actions.
+        tools = []
+        trace["tools_withheld"] = True
+    system = system_for(body.get("system", ""), owner_block)
     max_tokens = max(256, min(int(body.get("max_tokens") or 4096), MAX_TOKENS_CAP))
-    route = _route(principal, _plain(messages), bool(tools))
+    plain = _plain(messages)
+    # The router judges the owner's context too, as it would had the owner said it (a private recall can
+    # keep the turn on a local seat under the routing rules). Held by test_the_router_sees_the_owners_context.
+    route = _route(principal, plain + ([{"role": "user", "content": owner_block}] if owner_block else []),
+                   bool(tools))
     provider = route.get("provider", "cloud")
-    _row(dev, principal, provider, route.get("model"), tools)
+    _row(dev, principal, provider, route.get("model"), tools, trace)
     if provider == "cloud":
         return _cloud_round(system, messages, tools, max_tokens)
     return _local_round(provider, route.get("model"), route.get("provider_name"),
                         system, messages, tools, max_tokens)
 
 
-def _row(dev: dict, principal: str, provider: str, model, tools: list) -> None:
+def _owner_context(dev: dict, principal: str, messages: list) -> tuple:
+    """(block, trace) under the TV memory setting (services/tv_memory_access, TV-P1). The block is "" unless
+    the setting is All and this is a grown-up turn on the household TV; kids never. The trace goes on the
+    turn's ledger row: whether the owner's context was used, the setting, why not, and every source."""
+    from agent_friday.services import tv_memory_access as tma
+    mode = tma.current()
+    ok, why = tma.allows(dev, principal)
+    if not ok:
+        return "", {"used": False, "mode": mode, "why": why, "sources": []}
+    from agent_friday.tv_gateway.owner_turn import last_user_text
+    block, sources = tma.owner_context(last_user_text(messages), dev)
+    if block:
+        # The trace is written before the context goes anywhere; if it cannot be written, nothing goes
+        # (test_the_trace_is_written_first_and_names_the_sources, test_no_trace_no_context).
+        try:
+            from agent_friday.services import action_ledger
+            action_ledger.append("tv_owner_context", {"principal": device_pairing.principal(dev),
+                                                      "device_kind": dev.get("kind"), "surface": "tv_gateway",
+                                                      "watching": principal, "mode": mode, "sources": sources})
+        except Exception as e:
+            _log.warning("TV owner context withheld: its ledger row could not be written (%s)", type(e).__name__)
+            return "", {"used": False, "mode": mode, "why": "trace unavailable", "sources": []}
+    return block, {"used": bool(block), "mode": mode, "why": "all" if block else "nothing relevant found",
+                   "sources": sources}
+
+
+def _row(dev: dict, principal: str, provider: str, model, tools: list, trace: Optional[dict] = None) -> None:
     from agent_friday.tv_gateway import tailnet
     device_pairing._receipt("device_turn", dev, watching=principal, provider=provider,
-                            model=str(model or ""), tools_offered=len(tools), via=tailnet.via())
+                            model=str(model or ""), tools_offered=len(tools), via=tailnet.via(),
+                            owner_context=trace or {"used": False, "sources": []})

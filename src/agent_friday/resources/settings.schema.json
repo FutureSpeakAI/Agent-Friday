@@ -1605,6 +1605,9 @@
   "turn_queue_tool_release_s": {
    "type": "number"
   },
+  "tv_memory_access": {
+   "type": "string"
+  },
   "unattended_send_undo_s": {
    "maximum": 600,
    "minimum": 10,

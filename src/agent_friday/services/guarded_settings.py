@@ -55,11 +55,32 @@ def clamp(incoming: dict, current: Optional[dict]) -> dict:
     # file already has it loose. True (name required) is the default and the narrow side.
     if ROOM_KEY in out and out[ROOM_KEY] is not True and cur.get(ROOM_KEY) is not False:
         out[ROOM_KEY] = True
+    # What the household TV may remember (TV-P1, 2026-11-26): widening is an owner action only, so a
+    # whole-file write may keep it or turn it down, never up. A value that is not one of the words is the
+    # narrowest (none). The ranking is tv_memory_access.RANK, repeated here because this module is standard
+    # library only (the boot guard's recovery path imports it); test_tv_memory_controls.py::
+    # test_a_whole_file_write_cannot_turn_it_up holds the rule and test_the_clamp_ranks_as_the_setting_does
+    # holds the two rankings together.
+    # A file that drops the key would read as the default (all), so a key the current file carries is kept
+    # at the narrower of the two; with no current value in the file, a whole-file write may not set it above
+    # none.
+    if TV_MEMORY_KEY in out or TV_MEMORY_KEY in cur:
+        _r = TV_MEMORY_RANK
+        _cur = cur.get(TV_MEMORY_KEY, "none")
+        _cur = _cur if _cur in _r else "none"
+        if TV_MEMORY_KEY in out:
+            _new = out[TV_MEMORY_KEY] if out[TV_MEMORY_KEY] in _r else "none"
+            out[TV_MEMORY_KEY] = _new if _r[_new] <= _r[_cur] else _cur
+        else:
+            out[TV_MEMORY_KEY] = _cur
     return out
 
 
 #: Loosened only by the owner's click (core._save_settings_locked, routes/core_routes room_approvals).
 ROOM_KEY = "voice_room_approvals_require_name"
+#: Widened only by an owner action (core._save_settings_locked, services/tv_memory_access).
+TV_MEMORY_KEY = "tv_memory_access"
+TV_MEMORY_RANK = {"none": 0, "shareable": 1, "all": 2}
 
 
 def read(path: Any) -> Optional[dict]:

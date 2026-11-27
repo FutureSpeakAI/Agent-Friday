@@ -28,7 +28,9 @@ from typing import Any, Callable
 #: a new key adds the key here: the writer then hides it and the export refuses an older entry that kept it raw.
 FREE_TEXT_KEYS = frozenset({"summary", "items", "what_ran", "critique", "artifacts", "note", "removed", "path", "paths",
                             "target", "detail", "item", "why", "file", "files", "folder", "folders", "error", "errors",
-                            "recipients", "seen", "declared"})
+                            "recipients", "seen", "declared",
+                            # tv_owner_context (tv_gateway/turn.py): the owner's wiki page paths a TV turn drew on
+                            "sources"})
 #: Kinds a governance decision is READ from by matching their text (governance/trust_anchor): kept as written, so losing
 #: the sidecar can never change what is trusted. Held by test_losing_the_sidecar_never_brings_released_trust_back.
 KEPT_AS_WRITTEN_KINDS = frozenset({"trust_carry_over", "trust_carry_over_released"})

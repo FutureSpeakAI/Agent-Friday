@@ -31,7 +31,7 @@ HANDLER = "setting_change"
 #: change for a Yes (`hold`), and the one the dock change runs as.
 SETTINGS_TOOLS = frozenset({
     "switch_model", "set_workspace_layout", "show_my_day", "big_mode", "hologram_window",
-    "call_mode", "live_laya", "podcast_format", "podcast_length", "set_setting",
+    "call_mode", "live_laya", "podcast_format", "podcast_length", "set_setting", "tv_memory",
 })
 APPROVAL_KIND = "governed_action"
 UNDO_DAYS = 30
@@ -65,6 +65,7 @@ TOOL_OF = {
     "settings.podcasts.length": "podcast_length",
     "settings.laya.live_reflex": "live_laya",
     "settings.display.dock": "dock_visibility",
+    "settings.tv.memory_access": "tv_memory",
 }
 KEYS_OF = {
     "switch_model": ("capability_routing", "orchestrator_model"),
@@ -77,6 +78,7 @@ KEYS_OF = {
     "podcast_length": ("podcasts",),
     "live_laya": ("voice_live_reflex",),
     "dock_visibility": ("dock_custom",),
+    "tv_memory": ("tv_memory_access",),
 }
 LABELS = {
     "switch_model": "the chat model",
@@ -89,6 +91,7 @@ LABELS = {
     "podcast_length": "how long a show runs",
     "live_laya": "Laya acting on her own during cloud calls",
     "dock_visibility": "which workspaces the dock shows",
+    "tv_memory": "what the TV may remember",
 }
 
 
@@ -369,7 +372,8 @@ register_hooks()
 PATHS = ("settings.models.chat_model", "settings.display.workspace_layout.<workspace>", "settings.display.start_screen",
          "settings.accessibility.big_mode", "settings.hologram.window.<dial>", "settings.calls.stand_back",
          "settings.podcasts.format.<show>", "settings.podcasts.length.<show>",
-         "settings.podcasts.hosts.<a|b>", "settings.laya.live_reflex", "settings.display.dock.<workspace> (show / hide; op=list lists them)")
+         "settings.podcasts.hosts.<a|b>", "settings.laya.live_reflex", "settings.display.dock.<workspace> (show / hide; op=list lists them)",
+         "settings.tv.memory_access (all, shareable or none)")
 _LAYOUT_VALUES = ("normal", "fullscreen_chat")
 
 
@@ -406,6 +410,8 @@ def _route(path: str, value: str):
         return "call_mode", {"action": "set_mode", "mode": v}
     if p == "settings.laya.live_reflex":
         return "live_laya", {"action": "reflex", "mode": v.lower()}
+    if p == "settings.tv.memory_access":
+        return "tv_memory", {"mode": v}
     if p.startswith("settings.podcasts.hosts"):
         host = p.split(".", 3)[3] if p.count(".") >= 3 else ""
         host = {"main": "a", "her": "a", "co_host": "b", "cohost": "b"}.get(host, host)
@@ -613,6 +619,7 @@ ROW_HOMES = {
     "settings.calls.stand_back": ("voice", "Calls", ("calls", "call mode", "stand back for calls", "standing back for calls")),
     "settings.laya.personal_learning": ("laya", "Laya learns from my corrections", ("laya learning", "personal learning", "learn from my corrections", "what laya learned")),
     "settings.accessibility.big_mode": ("voice", "Big mode", ("big mode", "large targets", "big buttons")),
+    "settings.tv.memory_access": ("privacy", "What the TV may remember", ("tv memory", "tv memories", "what the tv may remember", "tv memory access")),
     "settings.hologram.window.depth_strength": ("voice", "Depth effect", ("depth effect", "depth strength", "hologram depth")),
     "settings.hologram.window.parallax_strength": ("voice", "Parallax strength", ("parallax", "parallax strength")),
     "settings.hologram.window.zoom_in_max": ("voice", "Lean in, at most", ("lean in", "zoom in")),
