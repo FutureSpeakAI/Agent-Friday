@@ -194,7 +194,7 @@ from flask import Blueprint as _Blueprint
 # (so a new route file is zero-touch), but a PyInstaller onefile has no loose
 # .py files to enumerate — the modules live in the packed archive — so filesystem
 # and TOC enumeration both come back empty and the entire API 404's. This list
-# is the frozen fallback. tests/unit/test_blueprint_discovery.py fails if it
+# is the frozen fallback. tests/api/test_blueprint_discovery.py fails if it
 # drifts from the actual routes/ directory, so it can't silently go stale.
 ROUTE_MODULES = [
     'actions', 'agent_workspaces', 'activity', 'ai_history_import', 'first_synthesis', 'arbiter', 'artifacts', 'avatar', 'codebases', 'publish', 'ambient',
