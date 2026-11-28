@@ -136,6 +136,50 @@ def test_rebuild_refills_the_index_from_the_ledger(monkeypatch):
     assert {m["model"]: m["turns"] for m in gr.models()} == {"sample-a": 7}
 
 
+def _failing_after(monkeypatch, n):
+    from agent_friday.services import action_ledger
+    real = action_ledger._reverse_lines
+
+    def flaky(path, *a, **kw):
+        for i, line in enumerate(real(path, *a, **kw)):
+            if i == n:
+                raise PermissionError("a file is locked part way through")
+            yield line
+    monkeypatch.setattr(action_ledger, "_reverse_lines", flaky)
+    return lambda: monkeypatch.setattr(action_ledger, "_reverse_lines", real)
+
+
+@pytest.mark.parametrize("indexed_first", [True, False])
+def test_a_read_that_fails_part_way_moves_nothing(monkeypatch, indexed_first):
+    """A read cut short (a locked file, an unreadable segment) is never taken for the whole ledger: the sync stores
+    nothing and the cursor stays, so the next good sync indexes every row."""
+    monkeypatch.setattr(gr, "SYNC_PAGE", 4)
+    if indexed_first:
+        _record_models(3, "sample-old")
+        while gr.sync_from_activity():
+            pass
+    _record_models(6, "sample-new")
+    restore = _failing_after(monkeypatch, 2)
+    assert gr.sync_from_activity() == 0
+    restore()
+    while gr.sync_from_activity():
+        pass
+    want = {"sample-new": 6, **({"sample-old": 3} if indexed_first else {})}
+    assert {m["model"]: m["turns"] for m in gr.models()} == want
+
+
+def test_a_replaced_ledger_is_indexed_again():
+    """The cursor is ahead of the ledger's newest row (a ledger restored or replaced): what was indexed from this PC's
+    old ledger goes, and the ledger as it is now is indexed, so a reused seq never keeps a stale receipt."""
+    _record_models(2, "sample-a")
+    gr.sync_from_activity()
+    with gr._db() as con:
+        con.execute("UPDATE cursor SET value = 1000000 WHERE name = 'top'")
+    gr.put([gr.from_activity(_model(999_999, model="sample-stale"))])
+    gr.sync_from_activity()
+    assert {m["model"]: m["turns"] for m in gr.models()} == {"sample-a": 2}
+
+
 def test_a_local_seat_is_on_this_pc_whatever_dialect_it_spoke():
     r = gr.from_activity({**_model(11, provider="openai"), "seat": "local"})
     assert (r.where, r.line) == (gr.ON_THIS_PC, "sample-local:7b answered on this PC")

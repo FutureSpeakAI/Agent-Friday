@@ -240,7 +240,9 @@ def models() -> list[dict]:
 
 def _activity(*, above: Optional[int] = None, below: Optional[int] = None, limit: Optional[int] = None) -> list[dict]:
     """Activity rows (the row with its ledger `seq`), newest first, with above < seq < below. Reading stops at the
-    first row at or under `above`, so a sync of new rows reads only what is newer than the index."""
+    first row at or under `above`, so a sync of new rows reads only what is newer than the index. The read is strict
+    (any unreadable file or line raises LedgerError, never a short list) and includes the archive; it is not held by
+    an open break, which the Ledger page shows."""
     from agent_friday.services import action_ledger
     passed: list = []
 
@@ -254,7 +256,8 @@ def _activity(*, above: Optional[int] = None, below: Optional[int] = None, limit
         return below is None or seq < below
 
     out = []
-    for e in action_ledger.entries(["activity"], newest_first=True, limit=limit, where=want, stop=lambda: bool(passed)):
+    for e in action_ledger.entries(["activity"], newest_first=True, limit=limit, where=want, stop=lambda: bool(passed),
+                                   strict=True, gate=False, archive=True):
         if isinstance(e.get("rec"), dict):
             out.append({**e["rec"], "seq": e.get("seq")})
     return out
@@ -266,10 +269,29 @@ def _cursor(con) -> dict:
 
 def sync_from_activity() -> int:
     """Index the activity rows newer than the index, then one older page until the ledger's start; returns how many
-    receipts were new. The cursor moves in the same transaction as the receipts it covers."""
+    receipts were new. The cursor moves in the same transaction as the receipts it covers, and only after every read
+    of this sync finished: a read that fails part way changes nothing (test_a_read_that_fails_part_way_moves_nothing).
+    A ledger whose newest row is older than the cursor was replaced: this PC's rows are indexed again from it
+    (test_a_replaced_ledger_is_indexed_again)."""
+    from agent_friday.services import action_ledger
+    try:
+        return _sync_once()
+    except (action_ledger.LedgerError, OSError) as e:
+        _log.warning("governance receipts: the activity ledger could not be read whole: %s", type(e).__name__)
+        return 0
+
+
+def _sync_once() -> int:
     with _db() as con:
         cur = _cursor(con)
     top, bottom, done = cur.get("top"), cur.get("bottom"), bool(cur.get("done"))
+    if top is not None and top >= 0:
+        newest = _activity(limit=1)
+        if not newest or newest[0]["seq"] < top:
+            with _db() as con:
+                con.execute("DELETE FROM receipts WHERE receipt_id LIKE ?", ("%s:activity:%%" % ORIGIN_PC,))
+                con.execute("DELETE FROM cursor")
+            top = None
     if top is None:
         rows = _activity(limit=SYNC_PAGE)
         seqs = [r["seq"] for r in rows]
