@@ -316,9 +316,10 @@ def _local_round(provider: str, model: Optional[str], provider_name: Optional[st
     yield from openai_round_events(deltas(), finished, str(model or ""))
 
 
-def run(dev: dict, body: dict, principal: str) -> Iterator[str]:
+def run(dev: dict, body: dict, principal: str, window=None) -> Iterator[str]:
     """Validate, route and run one TV turn. Raises TurnRefused before the
-    first event; after that the stream is the turn."""
+    first event; after that the stream is the turn. `window`: the PC's live grown-up window for this
+    turn (tv_grownup_window.window_for), or None."""
     # A phone or tablet the PC bound to the OWNER is the owner's Friday (knowledge graph, wiki, vault,
     # the owner's seat), not the household TV's. The TV, bound to the family member, never is.
     from agent_friday.tv_gateway import owner_turn
@@ -333,7 +334,7 @@ def run(dev: dict, body: dict, principal: str) -> Iterator[str]:
     if not isinstance(messages, list) or not messages:
         raise TurnRefused(400, "no conversation")
     tools = tools_for(dev, principal, body.get("tools"))
-    owner_block, trace = _owner_context(dev, principal, messages)
+    owner_block, trace = _owner_context(dev, principal, messages, window)
     if owner_block:
         # A turn carrying the owner's memory proposes no TV action: recalled or wiki text must not be able
         # to steer the TV's own tools (which run on the TV, past this PC's gates) or carry it off the box.
@@ -355,13 +356,17 @@ def run(dev: dict, body: dict, principal: str) -> Iterator[str]:
                         system, messages, tools, max_tokens)
 
 
-def _owner_context(dev: dict, principal: str, messages: list) -> tuple:
+def _owner_context(dev: dict, principal: str, messages: list, window=None) -> tuple:
     """(block, trace) under the TV memory setting (services/tv_memory_access, TV-P1). The block is "" unless
     the setting is All and this is a grown-up turn on the household TV; kids never. The trace goes on the
     turn's ledger row: whether the owner's context was used, the setting, why not, and every source."""
     from agent_friday.services import tv_memory_access as tma
     mode = tma.current()
-    ok, why = tma.allows(dev, principal)
+    # The trace names the window (test_the_trace_names_the_pcs_window_that_allowed_the_turn; the route passes
+    # it: test_tv_grownup_window_route.py::test_the_messages_route_passes_the_window_only_for_a_grown_up_with_a_live_grant).
+    from agent_friday.services.tv_grownup_window import Window
+    window = window if isinstance(window, Window) else None     # test_only_a_window_this_pc_issued_unlocks_memory
+    ok, why = tma.allows(dev, principal, window_ok=window is not None)
     if not ok:
         return "", {"used": False, "mode": mode, "why": why, "sources": []}
     from agent_friday.tv_gateway.owner_turn import last_user_text
@@ -373,12 +378,13 @@ def _owner_context(dev: dict, principal: str, messages: list) -> tuple:
             from agent_friday.services import action_ledger
             action_ledger.append("tv_owner_context", {"principal": device_pairing.principal(dev),
                                                       "device_kind": dev.get("kind"), "surface": "tv_gateway",
-                                                      "watching": principal, "mode": mode, "sources": sources})
+                                                      "watching": principal, "mode": mode, "sources": sources,
+                                                      "window": window.trace() if window else None})
         except Exception as e:
             _log.warning("TV owner context withheld: its ledger row could not be written (%s)", type(e).__name__)
             return "", {"used": False, "mode": mode, "why": "trace unavailable", "sources": []}
     return block, {"used": bool(block), "mode": mode, "why": "all" if block else "nothing relevant found",
-                   "sources": sources}
+                   "sources": sources, "window": window.trace() if window else None}
 
 
 def _row(dev: dict, principal: str, provider: str, model, tools: list, trace: Optional[dict] = None) -> None:

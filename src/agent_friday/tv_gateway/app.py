@@ -182,6 +182,9 @@ def create_app(tailnet: bool = False) -> Flask:
             # day gone by). Open a new one (challenge, then open); only a refusal THERE means unpaired.
             return _refuse(401, "device session required", code="session_required", action="open_session")
         g.device = dev
+        # A grown-up window is opened only on a live session (test_tv_grownup_window.py::
+        # test_a_try_without_a_device_session_is_refused).
+        g.session_key = _bearer()
         if not _AUTH_BUCKET.allow(str(dev.get("id"))):
             return _slow_down(_AUTH_BUCKET, str(dev.get("id")))
         return None
@@ -273,8 +276,14 @@ def create_app(tailnet: bool = False) -> Flask:
         from flask import stream_with_context
         from agent_friday.tv_gateway import turn
         principal = turn.principal_from(request.headers.get("X-Friday-Principal"))
+        from agent_friday.services import tv_grownup_window as _win
+        # A grown-up turn on a live window keeps it from going idle and passes it on for the turn's trace
+        # (test_tv_grownup_window_route.py::test_a_grown_up_turn_keeps_the_window_from_going_idle,
+        # ::test_the_messages_route_passes_the_window_only_for_a_grown_up_with_a_live_grant).
+        window = (_win.window_for(g.device, request.headers.get("X-Friday-Window", ""), touch=True)
+                  if principal == "grownup" else None)
         try:
-            events = turn.run(g.device, request.get_json(silent=True) or {}, principal)
+            events = turn.run(g.device, request.get_json(silent=True) or {}, principal, window)
             first = next(events, None)
         except turn.TurnRefused as e:
             return _refuse(e.status, str(e), **({"code": e.code} if e.code else {}), **e.extra)
@@ -325,6 +334,8 @@ def create_app(tailnet: bool = False) -> Flask:
     _conversation_state.register(app, _refuse)   # POST /tv/v1/model/switch, GET /tv/v1/conversations/<id>/state
     from agent_friday.tv_gateway import tv_memory_route as _tv_memory_route
     _tv_memory_route.register(app, _refuse)      # GET/POST /tv/v1/tv-memory (TV-P1; a change is owner devices only)
+    from agent_friday.tv_gateway import grownup_window_route as _grownup_window_route
+    _grownup_window_route.register(app, _refuse)  # /tv/v1/grownup: open (PIN), close, status; /pin owner devices only
 
     @app.get("/tv/v1/stt")
     def stt_ready():
