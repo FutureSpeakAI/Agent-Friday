@@ -79,13 +79,14 @@ def test_no_free_text_from_any_activity_field_ever_reaches_the_line():
     """Every activity kind, every one of its fields set to the same private sentence: the line never holds it, and
     the only free-standing names it may hold are the model and the tool (which are names, not content)."""
     for kind, fields in activity_ledger._ALLOWED_FIELDS.items():
-        row = {f: SECRET for f in fields}
-        row.update({"kind": kind, "ts": 1.0, "seq": 1})
-        row.pop("model", None), row.pop("tool", None)
-        r = gr.from_activity(row)
-        assert r is not None, kind
-        assert SECRET not in r.line and "garden" not in r.line, kind
-        assert r.family in gr.FAMILIES, kind
+        for extra in ({}, {"ok": True}, {"ok": False}, {"provider": "llama_cpp"}, {"provider": "sample_cloud"}):
+            row = {f: SECRET for f in fields}
+            row.update({"kind": kind, "ts": 1.0, "seq": 1, **extra})
+            row.pop("model", None), row.pop("tool", None)
+            r = gr.from_activity(row)
+            assert r is not None, kind
+            assert SECRET not in r.line and "garden" not in r.line, (kind, extra)
+            assert r.family in gr.FAMILIES, kind
 
 
 def test_the_store_keeps_each_receipt_once():
