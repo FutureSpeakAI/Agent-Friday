@@ -93,9 +93,10 @@ class Receipt:
 _COLUMNS = tuple(f.name for f in fields(Receipt))
 
 
-#: An id that is or holds an address: a scheme (with or without //), an @, an IPv4 address, localhost.
+#: An id that is or holds an address: a scheme (with or without //), an @, an IPv4 or bracketed IPv6 address,
+#: localhost, or a host with a port (4-5 digits, so a model tag such as `:7b` or `:70b` is not one).
 _ADDRESS = re.compile(r"(?i)^[a-z][a-z0-9+.-]+:(?://|/)|^(?:https?|file|data|javascript|mailto|ftp|tel|blob|intent)\s*:"
-                      r"|@|\b\d{1,3}(?:\.\d{1,3}){3}\b|\blocalhost\b")
+                      r"|@|\b\d{1,3}(?:\.\d{1,3}){3}\b|\blocalhost\b|\[[0-9a-f:.]*:[0-9a-f:.]*\]|:\d{4,5}(?:/|$)")
 #: A file the model was loaded from: a drive, rooted or home path, a backslash, or a model-file extension.
 _PATHISH = re.compile(r"(?i)^[a-z]:[/\\]|^[/~]|\\|\.(?:gguf|ggml|bin|safetensors|pt|pth|onnx|ckpt)$")
 _RECORDED_MAX = 200          # the activity ledger's own cap on a text field
@@ -288,13 +289,15 @@ def models() -> list[dict]:
     return [{"model": m, "where": WHERE_WORDS.get(w, WHERE_WORDS[None]), "turns": n} for m, w, n in got]
 
 
-def _activity(*, above: Optional[int] = None, below: Optional[int] = None, limit: Optional[int] = None) -> list[dict]:
+def _activity(*, archive: bool, above: Optional[int] = None, below: Optional[int] = None,
+              limit: Optional[int] = None) -> tuple[list[dict], bool]:
     """Activity rows (the row with its ledger `seq`), newest first, with above < seq < below. Reading stops at the
     first row at or under `above`, so a sync of new rows reads only what is newer than the index. The read is strict
-    (a file that cannot be read raises LedgerError, never a short list) and, below the cursor, includes the archive
-    (new rows are never archived); it is not held by
+    (a file that cannot be read raises LedgerError, never a short list) and reads the archive when `archive` is set:
+    every read that can reach old rows does (test_every_read_that_can_reach_old_rows_reads_the_archive); it is not held by
     an open break, which the Ledger page shows, and a line that is not JSON is skipped, as every ledger reader does.
-    Every entry read is returned, a non-record one as its bare seq, so a page's length is the entries it covered."""
+    Every entry read is returned, a non-record one as its bare seq, so a page's length is the entries it covered;
+    the flag says whether the read reached a row at or under `above`."""
     from agent_friday.services import action_ledger
     passed: list = []
 
@@ -309,10 +312,10 @@ def _activity(*, above: Optional[int] = None, below: Optional[int] = None, limit
 
     out = []
     for e in action_ledger.entries(["activity"], newest_first=True, limit=limit, where=want, stop=lambda: bool(passed),
-                                   strict=True, gate=False, archive=below is not None):
+                                   strict=True, gate=False, archive=archive):
         rec = e.get("rec")
         out.append({**rec, "seq": e["seq"]} if isinstance(rec, dict) else {"seq": e["seq"]})
-    return out
+    return out, bool(passed)
 
 
 def _cursor(con) -> dict:
@@ -339,19 +342,23 @@ def _sync_once() -> int:
     top, bottom, done = cur.get("top"), cur.get("bottom"), bool(cur.get("done"))
     replaced = False
     if top is not None and top >= 0:
-        newest = _activity(limit=1)
-        replaced = not newest or newest[0]["seq"] < top
+        newest, _ = _activity(archive=False, limit=1)     # the live file's newest row; none when all is archived
+        replaced = bool(newest) and newest[0]["seq"] < top
         if replaced:
             top = None
     if top is None:
-        rows = _activity(limit=SYNC_PAGE)
+        rows, _ = _activity(archive=True, limit=SYNC_PAGE)
         seqs = [r["seq"] for r in rows]
         top, bottom, done = (max(seqs), min(seqs), len(rows) < SYNC_PAGE) if seqs else (-1, 0, True)
         older: list = []
     else:
-        rows = _activity(above=top)
+        # New rows are read from the live file; when it does not reach back to the cursor (the view was closed longer
+        # than the archive period), the archive is read too, so rows archived meanwhile are not skipped.
+        rows, reached = _activity(archive=False, above=top)
+        if not reached:
+            rows, _ = _activity(archive=True, above=top)
         top = max([top] + [r["seq"] for r in rows])
-        older = [] if done else _activity(below=bottom, limit=SYNC_PAGE)
+        older = [] if done else _activity(archive=True, below=bottom, limit=SYNC_PAGE)[0]
         if not done:
             bottom = min([bottom] + [r["seq"] for r in older])
             done = len(older) < SYNC_PAGE

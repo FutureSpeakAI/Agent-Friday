@@ -168,6 +168,56 @@ def test_a_read_that_fails_part_way_moves_nothing(monkeypatch, indexed_first):
     assert {m["model"]: m["turns"] for m in gr.models()} == want
 
 
+class _SplitLedger:
+    """The action ledger's read seam over rows split between the archive and the live file: a read sees the archive
+    only when it asks for it, the way action_ledger.entries does. Records each read's archive flag."""
+
+    def __init__(self, archived, live):
+        self.archived, self.live, self.asked = list(archived), list(live), []
+
+    def entries(self, kinds, *, newest_first, limit, where, stop, strict, gate, archive):
+        assert (kinds, newest_first, strict, gate) == (["activity"], True, True, False)
+        self.asked.append(archive)
+        seqs = sorted(self.live + (self.archived if archive else []), reverse=True)
+        out = []
+        for seq in seqs:
+            if stop() or (limit is not None and len(out) >= limit):
+                break
+            e = {"seq": seq, "rec": {"kind": "model_invocation", "ts": float(seq), "model": "sample-%d" % seq,
+                                     "provider": "llama_cpp", "seat": "local"}}
+            if where(e):
+                out.append(e)
+        return out
+
+
+def _indexed():
+    return sorted(int(r.receipt_id.rsplit(":", 1)[1]) for r in gr.recent(limit=gr.READ_MAX))
+
+
+def test_every_read_that_can_reach_old_rows_reads_the_archive(monkeypatch):
+    """A first sync, a rebuild and every page below the cursor read the archive, so archived rows are indexed however
+    few live rows there are; new rows come from the live file alone, unless the live file no longer reaches back to
+    the cursor (rows archived while the view was closed), and then the archive is read too."""
+    from agent_friday.services import action_ledger
+    ledger = _SplitLedger(archived=range(1, 8), live=range(8, 11))
+    monkeypatch.setattr(action_ledger, "entries", ledger.entries)
+    monkeypatch.setattr(gr, "SYNC_PAGE", 4)
+    while gr.sync_from_activity():
+        pass
+    assert _indexed() == list(range(1, 11))
+    assert gr.rebuild() == 10
+
+    ledger.asked.clear()
+    ledger.live.append(11)
+    gr.sync_from_activity()
+    assert _indexed() == list(range(1, 12)) and ledger.asked == [False, False]   # steady state: live file only
+
+    ledger.archived += ledger.live + [12, 13]                    # closed past the archive period: all of it archived
+    ledger.live = [14, 15]
+    gr.sync_from_activity()
+    assert _indexed() == list(range(1, 16))
+
+
 def test_a_replaced_ledger_is_indexed_again():
     """The cursor is ahead of the ledger's newest row (a ledger restored or replaced): what was indexed from this PC's
     old ledger goes, and the ledger as it is now is indexed, so a reused seq never keeps a stale receipt."""
@@ -190,7 +240,8 @@ def test_a_local_seat_is_on_this_pc_whatever_dialect_it_spoke():
     ("/home/someone/x.gguf", "x.gguf"), ("~/models/x", "x"), ("models/someone/x.gguf", "x.gguf"),
     ("someone@example.test", gr.NAME_NOT_SHOWN), ("https://192.0.2.5:8080/v1/someone", gr.NAME_NOT_SHOWN),
     ("http://localhost:11434/api", gr.NAME_NOT_SHOWN), ("file:///C:/Users/someone/m.gguf", gr.NAME_NOT_SHOWN),
-    ("192.0.2.5:8080", gr.NAME_NOT_SHOWN)])
+    ("192.0.2.5:8080", gr.NAME_NOT_SHOWN), ("someone-laptop:8080", gr.NAME_NOT_SHOWN),
+    ("someone.lan:11434/sample", gr.NAME_NOT_SHOWN), ("[::1]:8080/v1", gr.NAME_NOT_SHOWN)])
 def test_a_path_or_address_is_never_taken_for_a_name(name, shown):
     """A model loaded from a file is named by the file, never by the folders (which can name a person); an address
     is never shown. Neither is erased: the receipt still names a model, marked with a fingerprint of its id."""
@@ -205,7 +256,8 @@ def test_a_path_or_address_is_never_taken_for_a_name(name, shown):
 def test_a_hub_id_is_shown_whole_in_a_form_the_view_keeps():
     assert gr.from_activity(_model(13, model="hf.co/org/model:Q4")).model.startswith("hf.co / org / model (Q4) #")
     assert gr.from_activity(_model(14, model="sample-file:7b")).model.startswith("sample-file (7b) #")
-    assert gr.from_activity(_model(14, model="sample-local:7b")).model == "sample-local:7b"
+    for tagged in ("sample-local:7b", "sample:70b", "sample:latest", "sample-coder:32b-q4_K_M"):
+        assert gr.from_activity(_model(14, model=tagged)).model == tagged       # a model tag is not a port
     long = "hf.co/sample-org/" + "x" * 120 + ":Q4"
     shown = gr.from_activity(_model(15, model=long)).model
     assert len(shown) == gr.SHOWN_MAX and shown.startswith("…") and "(Q4) #" in shown
