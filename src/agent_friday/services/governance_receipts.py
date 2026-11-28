@@ -101,6 +101,19 @@ def _name(v) -> Optional[str]:
     return v if isinstance(v, str) and _NAME.fullmatch(v) and not _PATHISH.search(v) else None
 
 
+def _shown(name: Optional[str]) -> Optional[str]:
+    """The name as the view shows it: leading segments the A2UI profile would read as an address (a hub host such
+    as `hf.co/`) are dropped, so a local model is never filtered out of the view as a link; None when nothing of it
+    is left. Judged by the profile's own `has_url`, the rule the broker drops rows by
+    (test_every_name_a_receipt_keeps_survives_the_view)."""
+    from agent_friday.services import a2ui_profile
+    while name and a2ui_profile.has_url(name):
+        if "/" not in name:
+            return None
+        name = name.split("/", 1)[1]
+    return name or None
+
+
 def _id(v) -> Optional[str]:
     return v if isinstance(v, str) and _ID.fullmatch(v) else None
 
@@ -136,9 +149,10 @@ def from_activity(row) -> Optional[Receipt]:
         return None
     kind = row["kind"]
     family, line = _LINES[kind]
-    model = _name(row.get("model"))
-    tool = _name(row.get("tool"))
-    where = _where(row, model) if kind == "model_invocation" else None
+    recorded = _name(row.get("model"))
+    model = _shown(recorded)
+    tool = _shown(_name(row.get("tool")))
+    where = _where(row, recorded) if kind == "model_invocation" else None
     outcome = None
     line = line.format(model=model or "A model", tool=tool or "a tool")
     if kind == "model_invocation":
@@ -241,8 +255,9 @@ def models() -> list[dict]:
 def _activity(*, above: Optional[int] = None, below: Optional[int] = None, limit: Optional[int] = None) -> list[dict]:
     """Activity rows (the row with its ledger `seq`), newest first, with above < seq < below. Reading stops at the
     first row at or under `above`, so a sync of new rows reads only what is newer than the index. The read is strict
-    (any unreadable file or line raises LedgerError, never a short list) and includes the archive; it is not held by
-    an open break, which the Ledger page shows."""
+    (a file that cannot be read raises LedgerError, never a short list) and includes the archive; it is not held by
+    an open break, which the Ledger page shows, and a line that is not JSON is skipped, as every ledger reader does.
+    Every entry read is returned, a non-record one as its bare seq, so a page's length is the entries it covered."""
     from agent_friday.services import action_ledger
     passed: list = []
 
@@ -258,8 +273,8 @@ def _activity(*, above: Optional[int] = None, below: Optional[int] = None, limit
     out = []
     for e in action_ledger.entries(["activity"], newest_first=True, limit=limit, where=want, stop=lambda: bool(passed),
                                    strict=True, gate=False, archive=True):
-        if isinstance(e.get("rec"), dict):
-            out.append({**e["rec"], "seq": e.get("seq")})
+        rec = e.get("rec")
+        out.append({**rec, "seq": e["seq"]} if isinstance(rec, dict) else {"seq": e["seq"]})
     return out
 
 
@@ -285,12 +300,11 @@ def _sync_once() -> int:
     with _db() as con:
         cur = _cursor(con)
     top, bottom, done = cur.get("top"), cur.get("bottom"), bool(cur.get("done"))
+    replaced = False
     if top is not None and top >= 0:
         newest = _activity(limit=1)
-        if not newest or newest[0]["seq"] < top:
-            with _db() as con:
-                con.execute("DELETE FROM receipts WHERE receipt_id LIKE ?", ("%s:activity:%%" % ORIGIN_PC,))
-                con.execute("DELETE FROM cursor")
+        replaced = not newest or newest[0]["seq"] < top
+        if replaced:
             top = None
     if top is None:
         rows = _activity(limit=SYNC_PAGE)
@@ -306,6 +320,8 @@ def _sync_once() -> int:
             done = len(older) < SYNC_PAGE
     receipts = [r for r in map(from_activity, rows + older) if r is not None]
     with _db() as con:
+        if replaced:
+            con.execute("DELETE FROM receipts WHERE receipt_id LIKE ?", ("%s:activity:%%" % ORIGIN_PC,))
         before = con.total_changes
         con.executemany("INSERT OR IGNORE INTO receipts (%s) VALUES (%s)" % (_SQL_COLUMNS, ",".join("?" * len(_COLUMNS))),
                         [astuple(r) for r in receipts])

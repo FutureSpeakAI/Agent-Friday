@@ -191,7 +191,8 @@ def test_a_path_or_address_is_never_taken_for_a_name(name):
     for row in (_model(12, model=name), {"kind": "tool_call", "ts": 1.0, "seq": 12, "tool": name, "ok": True}):
         r = gr.from_activity(row)
         assert name not in r.line and r.model is None
-    assert gr.from_activity(_model(13, model="hf.co/org/model:Q4")).model == "hf.co/org/model:Q4"
+    assert gr.from_activity(_model(13, model="org/model:Q4")).model == "org/model:Q4"
+    assert gr.from_activity(_model(14, model="hf.co/org/model:Q4")).model == "org/model:Q4"   # the hub host is not shown
 
 
 def test_reads_filter_by_family_and_words_and_are_bounded():

@@ -87,6 +87,25 @@ def test_a_receipt_row_holding_a_url_is_dropped_and_counted(monkeypatch):
     assert len(got["data"]["governance"]["recent"]) == 3
 
 
+NAMES = ["hf.co/sample-org/Sample-12B-QAT:Q4_K_M", "registry.example.test/library/sample:8b", "sample-org/sample-7b",
+         "sample-local:7b", "sample-4.1", "sample.model-v2", "www.sample.test/x", "hf.co"]
+
+
+def test_every_name_a_receipt_keeps_survives_the_view():
+    """The broker drops any row the profile reads as an address (V8). A model id from a hub (hf.co/...) is a local
+    model, not a link: whatever name a receipt keeps reaches the view, and every model with a name is in both tables."""
+    rows = [gr.from_activity({"kind": "model_invocation", "ts": 1_800_000_000.0 + i, "seq": i, "model": n,
+                              "provider": "llama_cpp", "seat": "local"}) for i, n in enumerate(NAMES)]
+    gr.put(rows)
+    got = broker.resolve(aws.builtin("governance"), sensitivity="owner")
+    assert got["dropped"] == 0
+    named = {r.model for r in rows if r.model}
+    assert "Sample-12B-QAT:Q4_K_M" in {m.split("/")[-1] for m in named}
+    assert {m["model"] for m in got["data"]["governance"]["models"]} == named
+    assert len(got["data"]["governance"]["recent"]) == len(NAMES)
+    assert all(r.where == gr.ON_THIS_PC for r in rows)
+
+
 def test_the_rendered_tree_draws_the_receipts():
     _put_samples()
     got = broker.resolve(aws.builtin("governance"), sensitivity="owner")
