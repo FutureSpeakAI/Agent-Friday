@@ -41,7 +41,7 @@ import time
 from collections import OrderedDict
 from typing import Iterator, NamedTuple, Optional
 
-from agent_friday.tv_gateway import voice_reply
+from agent_friday.tv_gateway import links, voice_reply
 
 _log = logging.getLogger(__name__)
 
@@ -741,6 +741,7 @@ def _stream(response, dev: Optional[dict] = None, requested: str = "", cid: Opti
     truth["voice_default"] = voice_default
     truth["speech"] = voice_reply.speech_text(text)             # for TTS: no markdown, ever
     truth["voice_bound"] = bound_voice(cid) if voice else None   # a voice chosen for this chat; None until voices.py (CORE-MODELS) fills the hook
+    truth["links"] = links.wire(text)                           # the screen copy's checked links (tests/unit/test_tv_links.py)
     if voice:
         truth["formatted"] = text                               # the screen's copy; the stream text is what is spoken
         text = truth["speech"] or text                          # an answer that is only a table or code is still sent

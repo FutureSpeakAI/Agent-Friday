@@ -24,7 +24,7 @@ from typing import Optional, Tuple
 
 from flask import Flask, Response, current_app, g, jsonify, request
 
-from agent_friday.tv_gateway import ws_device
+from agent_friday.tv_gateway import links, ws_device
 
 from agent_friday.tv_gateway.pc_common import ID_PATTERN, allowed, hide_host_paths, refuse as _refuse
 
@@ -188,6 +188,14 @@ def _int(name: str, default: int, hi: int) -> int:
         return default
 
 
+def _with_links(message: dict) -> dict:
+    """An assistant message with the checked links of its text (tv_gateway/links.py; tests/unit/test_tv_links.py)."""
+    if message.get("role") not in ("assistant", "friday"):          # the desktop stores her replies as "friday"
+        return message
+    text = message.get("text") if isinstance(message.get("text"), str) else message.get("content")
+    return {**message, "links": links.wire(text if isinstance(text, str) else "")}
+
+
 def register(app: Flask) -> None:
     # ── 1. the chat list ────────────────────────────────────────────────────
     @app.get("/tv/v1/chats")
@@ -247,7 +255,7 @@ def register(app: Flask) -> None:
                                    "chat_messages", "messages")
         if other is not None:
             return other
-        msgs = [m for m in data["messages"] if isinstance(m, dict)]
+        msgs = [_with_links(m) for m in data["messages"] if isinstance(m, dict)]
         if not after:
             return _page_out({"status": "ok", "messages": msgs[-limit:]})
         ids = [m.get("id") for m in msgs]
