@@ -502,24 +502,19 @@ def _scan_documents(con: sqlite3.Connection) -> int:
     if not root.exists():
         return 0
     n = 0
+    made = office_engine.made_by_friday()
     for p in sorted(root.iterdir()):
         if not p.is_file() or p.suffix.lower() not in (".pptx", ".docx", ".xlsx", ".pdf"):
             continue
         st = p.stat()
         renders = sorted(str(r) for r in render_dir.glob(p.stem + "*.png")) if render_dir.exists() else []
-        made_by = {}
-        rec = root / ".made-by-friday.json"
-        try:
-            made_by = (json.loads(rec.read_text(encoding="utf-8")) or {}).get(p.name) or {}
-        except Exception:
-            made_by = {}
         signed, h, where = _provenance(p)
         c = _card(
             id=_id_for("document", p.name), kind=KIND_BY_SUFFIX.get(p.suffix.lower(), "doc"), title=_title_from_name(p.name),
             path=str(p), source_kind="document", source_ref=p.name, origin="office",
             created=st.st_ctime, modified=st.st_mtime, when_ts=st.st_mtime, status="published" if where else "kept",
-            maker="Office engine · this PC", sources=[str(made_by.get("from") or made_by.get("prompt") or "")[:120]] if made_by else [],
-            signed=signed or bool(made_by), hash=h, privacy="published" if where else "private",
+            maker="Office engine · this PC" if office_engine.is_made_by_friday(p, made) else "You", sources=[],
+            signed=signed, hash=h, privacy="published" if where else "private",
             published_at=where,
             extra={"renders": renders, "pages": len(renders) or None},
         )

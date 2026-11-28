@@ -48,3 +48,22 @@ def test_the_gateway_passes_made_by_and_the_offset_to_the_desktop(client, desk):
     get(client, paired(), "/tv/v1/media?made_by=friday&offset=50&limit=50&sort=newest")
     path, params = desk.calls[0]
     assert path == "/api/media" and params == {"made_by": "friday", "offset": "50", "limit": 50, "sort": "newest"}
+
+
+def test_a_document_counts_as_fridays_only_when_the_office_engine_recorded_making_it(tmp_path, monkeypatch):
+    from agent_friday.services import office_engine
+    monkeypatch.setattr(core, "FRIDAY_DIR", tmp_path / ".friday")
+    docs = tmp_path / "documents"
+    docs.mkdir()
+    monkeypatch.setattr(office_engine, "DOCUMENTS_DIR", docs)
+    (docs / "fridays.docx").write_bytes(b"x")
+    (docs / "owners own.docx").write_bytes(b"y")
+    office_engine._record_made([docs / "fridays.docx"])
+    con = mi._connect()
+    try:
+        mi._scan_documents(con)
+        con.commit()
+    finally:
+        con.close()
+    assert [c["title"] for c in mi.query(made_by="friday")["cards"]] == ["Fridays"]
+    assert mi.query(limit=0)["total"] == 2

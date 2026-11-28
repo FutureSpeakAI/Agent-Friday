@@ -374,6 +374,13 @@ def made_by_friday() -> set:
         return set()
 
 
+def is_made_by_friday(path, made: set | None = None) -> bool:
+    """True when Friday's own record says she made the file at ``path``; a file missing from it is the owner's
+    (tests/unit/test_media_made_by_friday.py).
+    ``made`` is a set already read with made_by_friday(), to read the record once for many files."""
+    return _key(path) in (made_by_friday() if made is None else made)
+
+
 def _record_made(paths) -> None:
     if not paths:
         return
