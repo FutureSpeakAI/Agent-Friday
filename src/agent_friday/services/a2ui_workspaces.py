@@ -77,9 +77,35 @@ def _futurespeak() -> list:
     })
 
 
-BUILTINS = {"knowledge": _knowledge, "futurespeak": _futurespeak}
+def _governance() -> list:
+    """Governance: what Friday did, which model served it and where it ran, from the receipt store
+    (services/governance_receipts). The owner's own record, drawn on this PC only (DESKTOP_ONLY)."""
+    return _surface([
+        {"id": "root", "component": "column", "children": ["title", "about", "recent", "models"]},
+        {"id": "title", "component": "text_block", "style": "heading", "text": "Governance"},
+        {"id": "about", "component": "text_block", "style": "body",
+         "text": "What Friday did, which model served it, and where it ran. Newest first."},
+        {"id": "recent", "component": "status_block", "title": "Recent activity", "children": ["recent_table"]},
+        {"id": "recent_table", "component": "record_table", "rows": {"@path": "/governance/recent"},
+         "columns": ["when", "what", "model", "where"],
+         "@accessibility": {"label": "What Friday did lately, newest first, with the model and where it ran"}},
+        {"id": "models", "component": "status_block", "title": "Models that served you", "children": ["models_table"]},
+        {"id": "models_table", "component": "record_table", "rows": {"@path": "/governance/models"},
+         "columns": ["model", "where", "turns"],
+         "@accessibility": {"label": "Each model that answered you, where it ran, and how many times"}},
+    ], {
+        "recent": {"path": "/governance/recent", "query": "governance.recent", "params": {"limit": 40}},
+        "models": {"path": "/governance/models", "query": "governance.models", "params": {}},
+    })
+
+
+BUILTINS = {"knowledge": _knowledge, "futurespeak": _futurespeak, "governance": _governance}
 #: The registry's names (static/workspace_registry.js) of the designed documents.
-LABELS = {"knowledge": "Knowledge", "futurespeak": "Sites"}
+LABELS = {"knowledge": "Knowledge", "futurespeak": "Sites", "governance": "Governance"}
+#: Views drawn on this PC only: no device block serves them, and the desktop route answers this PC alone.
+#: tests/unit/test_governance_view.py: test_the_governance_view_is_never_served_to_a_device;
+#: tests/api/test_governance_view_route.py: test_the_governance_view_opens_on_this_pc_only.
+DESKTOP_ONLY = frozenset({"governance"})
 #: Rows a generated document shows per section; the shell's own browser (its nav_link) pages through the rest.
 ROWS_SHOWN = 20
 #: Generated table columns: (row key from the broker's ws.rows, the device-block role that fills it).

@@ -236,6 +236,11 @@
    {"id": "knowledge.podcast", "group": "create", "label": "podcast from page", "audit_status": "M"},
    {"id": "knowledge.select_pages", "group": "select", "label": "select pages", "audit_status": "N"}
   ],
+  "governance": [
+   {"id": "governance.why_that", "group": "read", "label": "why that turn: what was sent and what was held back", "audit_status": "new"},
+   {"id": "governance.running", "group": "read", "label": "what is running right now", "audit_status": "new"},
+   {"id": "governance.open_receipt", "group": "navigate", "label": "open a receipt's trace", "audit_status": "new"}
+  ],
   "trust": [
    {"id": "trust.view", "group": "read", "label": "view trust graph", "audit_status": "M"},
    {"id": "trust.expand_person", "group": "navigate", "label": "expand person", "audit_status": "N"},
