@@ -52,6 +52,7 @@ def test_an_unverified_marker_is_never_a_link():
     "https://user@example.org/",
     "https://192.168.1.10/admin",               # an IP literal
     "https://[::1]/",
+    "https://1.2.3/",                           # digits and dots: read as an address by browsers
     "https://localhost/",
     "https://printer.local/",
     "https://router.lan/",
@@ -70,6 +71,7 @@ def test_a_web_address_that_could_mislead_or_reach_inside_the_house_is_never_a_l
 def test_a_look_alike_host_is_shown_in_ascii():
     (link,) = links.found("[web:https://аpple.com/]")       # the first letter is Cyrillic
     assert link.host == "xn--pple-43d.com" and link.label == link.host
+    assert link.uri == "https://xn--pple-43d.com/"                         # what opens is the host that was shown
 
 
 def test_a_repeated_marker_is_one_link_and_the_list_is_capped():
