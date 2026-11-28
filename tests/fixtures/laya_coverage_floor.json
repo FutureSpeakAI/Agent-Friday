@@ -17,10 +17,11 @@
   "meetings": {"laya": 3, "pct": 25.0},
   "knowledge": {"laya": 2, "pct": 25.0},
   "trust": {"laya": 0, "pct": 0.0},
+  "governance": {"laya": 1, "pct": 33.3},
   "marketplace": {"laya": 0, "pct": 0.0},
   "workflows": {"laya": 1, "pct": 14.3},
   "system": {"laya": 6, "pct": 60.0},
   "settings": {"laya": 3, "pct": 50.0}
  },
- "overall": {"laya": 47, "pct": 30.7}
+ "overall": {"laya": 48, "pct": 30.8}
 }

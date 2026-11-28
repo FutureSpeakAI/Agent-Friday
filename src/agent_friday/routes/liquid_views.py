@@ -10,7 +10,9 @@ browser only draws; it never validates or fetches data itself.
 The desktop shows a view exactly where the phone would (tv_gateway/ws_content.view_block): the workspace's device
 block is exposed, the workspace is not held, and the block declares every section the view reads. Turning the
 phone exposure off turns this view off too, because the declared sensitivity it reads with comes from that block.
-tests/api/test_liquid_views_route.py holds the rules.
+A desktop-only view (a2ui_workspaces.DESKTOP_ONLY, Governance) has no device block: both routes serve it to this PC
+alone and refuse any other caller before anything is read.
+tests/api/test_liquid_views_route.py and tests/api/test_governance_view_route.py hold the rules.
 """
 from __future__ import annotations
 
@@ -27,6 +29,8 @@ _log = logging.getLogger(__name__)
 liquid_views_bp = Blueprint("liquid_views", __name__)
 
 _PAGE = Path(__file__).resolve().parents[3] / "static" / "liquid_view.html"
+#: The block a desktop-only view reads with: the owner's own record, at the owner's sensitivity.
+_DESKTOP_BLOCK = {"sensitivity": "owner"}
 
 
 def _served_block(ws: str):
@@ -35,12 +39,22 @@ def _served_block(ws: str):
     from agent_friday.tv_gateway import ws_content
     if not a2ui_store._VIEW_ID.fullmatch(ws or ""):
         return None
+    if ws in a2ui_workspaces.DESKTOP_ONLY:
+        return _DESKTOP_BLOCK
     return ws_content.view_block(ws)
+
+
+def _elsewhere(ws: str) -> bool:
+    """A desktop-only view asked for by anything but this PC."""
+    from agent_friday import core
+    return ws in a2ui_workspaces.DESKTOP_ONLY and not core._is_local_request()
 
 
 @liquid_views_bp.route("/api/liquid/views/<ws>/rendered", methods=["GET"])
 @login_required
 def liquid_view_rendered(ws):
+    if _elsewhere(ws):
+        return jsonify({"ok": False, "error": "This view opens on this PC only."}), 403
     try:
         block = _served_block(ws)
     except Exception as e:

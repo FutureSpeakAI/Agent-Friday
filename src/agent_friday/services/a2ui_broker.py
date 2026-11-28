@@ -52,8 +52,12 @@ class _Run:
         its drops."""
         if adapter.__name__ not in self._read:
             self._read[adapter.__name__] = list(adapter.pages(self.sensitivity))
+        return self.clean(self._read[adapter.__name__])
+
+    def clean(self, rows) -> list:
+        """Rows with every row that holds a URL anywhere dropped and counted."""
         out = []
-        for row in self._read[adapter.__name__]:
+        for row in rows:
             if any(isinstance(v, str) and prof.has_url(v) for v in row.values()):
                 self.dropped += 1
                 continue
@@ -88,11 +92,33 @@ def _projects(params: dict, run: _Run) -> list:
             for r in run.rows(ws_futurespeak)][:PROJECTS_MAX]
 
 
+def _governance_store():
+    from agent_friday.services import governance_receipts
+    governance_receipts.refresh()
+    return governance_receipts
+
+
+def _receipts_recent(params: dict, run: _Run) -> list:
+    """The owner's newest receipts in plain words: when, what happened, the model, and where it ran (blank when the
+    receipt is not a model's)."""
+    gr = _governance_store()
+    rows = [{"when": datetime.fromtimestamp(r.at, timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"), "what": r.line,
+             "model": r.model or "", "where": gr.WHERE_WORDS[r.where] if r.family == "model" else ""}
+            for r in gr.recent(limit=params.get("limit", 20))]
+    return run.clean(rows)
+
+
+def _receipts_models(params: dict, run: _Run) -> list:
+    return run.clean(_governance_store().models()[:SECTIONS_MAX])
+
+
 #: query -> (allowed params with their checks, resolver). Reviewed additions only (contract D-C).
 VOCABULARY: dict = {
     "knowledge.sections": ({}, _sections),
     "knowledge.recent": ({"limit": _int_param(1, 20)}, _recent),
     "futurespeak.projects": ({}, _projects),
+    "governance.recent": ({"limit": _int_param(1, 50)}, _receipts_recent),
+    "governance.models": ({}, _receipts_models),
 }
 
 #: query -> the device-block section its rows come from. A view is served only where every section its bindings read
@@ -101,6 +127,8 @@ READS: dict = {
     "knowledge.sections": "pages",
     "knowledge.recent": "pages",
     "futurespeak.projects": "projects",
+    "governance.recent": "receipts",
+    "governance.models": "receipts",
 }
 
 

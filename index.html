@@ -3943,6 +3943,9 @@ window.addEventListener('DOMContentLoaded',function(){
     <!-- Library: your documents, read on this PC, answered with footnotes (defines window.LibraryWS). -->
     <script src="/static/library_reader.js"></script>
     <script src="/static/library_ws.js"></script>
+    <!-- Governance: what Friday did, which model served it and where it ran (defines window.GovernanceWS). -->
+    <script src="/static/friday_a2ui.js"></script>
+    <script src="/static/governance_ws.js"></script>
     <!-- Meetings: the notes pad, polished notes with their transcript lines, the meetings archive (defines window.MeetingsExtras). -->
     <script src="/static/meetings_ws.js"></script>
     <script src="/static/calendar_views.js"></script>
@@ -75102,6 +75105,13 @@ function App() {
         padding: 20
       }
     }, "The Library did not load."),
+    governance: window.GovernanceWS ? /*#__PURE__*/React.createElement(window.GovernanceWS, null) : /*#__PURE__*/React.createElement("div", {
+      style: {
+        color: '#888',
+        fontSize: 12,
+        padding: 20
+      }
+    }, "Governance did not load."),
     trust: with3D('trust', 'people', /*#__PURE__*/React.createElement(TrustWS, null)),
     system: /*#__PURE__*/React.createElement(SystemWS, null),
     code: /*#__PURE__*/React.createElement(CodeWS, {chat:codeChat}),

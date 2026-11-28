@@ -1,0 +1,89 @@
+{
+ "schema": 1,
+ "id": "governance",
+ "label": "Governance",
+ "group": "system",
+ "held": null,
+ "spoken_words": {
+  "router_extra": []
+ },
+ "nav": {
+  "key": null,
+  "keys": [],
+  "sections": []
+ },
+ "objects": [],
+ "verbs": [
+  {
+   "id": "governance.why_that",
+   "action": "governance.why_that",
+   "group": "read",
+   "ui": {
+    "control": "Why that turn: what was sent to the model and what was held back"
+   },
+   "tool": "why_that_plan",
+   "also_tools": [],
+   "gate": {
+    "class": "internal",
+    "ring": 0,
+    "card": "none"
+   },
+   "laya_tier": "model_only",
+   "phrasings": [
+    "what did you send the model for that",
+    "what did you hold back on that turn"
+   ],
+   "deictic": [],
+   "undo": null,
+   "voice": {
+    "live": false,
+    "shared": false
+   },
+   "quiet_result": null,
+   "eval": []
+  },
+  {
+   "id": "governance.running",
+   "action": "governance.running",
+   "group": "read",
+   "ui": {
+    "control": "What is running right now, by model, from the Governance workspace"
+   },
+   "tool": "queue_status",
+   "also_tools": [],
+   "gate": {
+    "class": "internal",
+    "ring": 0,
+    "card": "none"
+   },
+   "laya_tier": "router_rule",
+   "phrasings": [
+    "what is running right now"
+   ],
+   "deictic": [],
+   "undo": null,
+   "voice": {
+    "live": true,
+    "shared": false
+   },
+   "quiet_result": null,
+   "eval": [
+    "tests/test_laya_workspace_contracts.py::test_router_phrasings_route_to_their_tool"
+   ]
+  }
+ ],
+ "jobs": [],
+ "not_for_laya": [
+  {
+   "action": "governance.open_receipt",
+   "kind": "gap",
+   "reason": "Receipt rows have no row-level open target yet; a receipt opening its trace comes next.",
+   "wave": "WS-3"
+  }
+ ],
+ "resolver_sources": [],
+ "workspace_tools": {
+  "key": null,
+  "pools": []
+ }
+}

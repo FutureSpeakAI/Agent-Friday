@@ -255,7 +255,7 @@ def test_every_stage_workspace_screen_stage_knows_has_an_object_and_the_other_wa
 def test_the_workspaces_with_no_stage_of_their_own():
     """Code carries only the chat list (convo:); it has no stage of its own, which the audit counts."""
     staged = {w for w, _ in OBJECTS}
-    assert set(REGISTRY) - staged == {"crew", "knowledge", "marketplace", "settings"}
+    assert set(REGISTRY) - staged == {"crew", "governance", "knowledge", "marketplace", "settings"}
     assert [o["kind"] for o in lm.objects("code")] == ["convo"]
 
 
