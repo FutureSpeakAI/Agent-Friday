@@ -502,24 +502,19 @@ def _scan_documents(con: sqlite3.Connection) -> int:
     if not root.exists():
         return 0
     n = 0
+    made = office_engine.made_by_friday()
     for p in sorted(root.iterdir()):
         if not p.is_file() or p.suffix.lower() not in (".pptx", ".docx", ".xlsx", ".pdf"):
             continue
         st = p.stat()
         renders = sorted(str(r) for r in render_dir.glob(p.stem + "*.png")) if render_dir.exists() else []
-        made_by = {}
-        rec = root / ".made-by-friday.json"
-        try:
-            made_by = (json.loads(rec.read_text(encoding="utf-8")) or {}).get(p.name) or {}
-        except Exception:
-            made_by = {}
         signed, h, where = _provenance(p)
         c = _card(
             id=_id_for("document", p.name), kind=KIND_BY_SUFFIX.get(p.suffix.lower(), "doc"), title=_title_from_name(p.name),
             path=str(p), source_kind="document", source_ref=p.name, origin="office",
             created=st.st_ctime, modified=st.st_mtime, when_ts=st.st_mtime, status="published" if where else "kept",
-            maker="Office engine · this PC", sources=[str(made_by.get("from") or made_by.get("prompt") or "")[:120]] if made_by else [],
-            signed=signed or bool(made_by), hash=h, privacy="published" if where else "private",
+            maker="Office engine · this PC" if office_engine.is_made_by_friday(p, made) else "You", sources=[],
+            signed=signed, hash=h, privacy="published" if where else "private",
             published_at=where,
             extra={"renders": renders, "pages": len(renders) or None},
         )
@@ -1125,7 +1120,7 @@ def query(view: str = "all", q: str = "", kind: Optional[str] = None, project: O
           privacy: Optional[str] = None, unsigned: bool = False, status: Optional[str] = None,
           sort: str = "next", limit: int = 200, offset: int = 0,
           since: Optional[float] = None, until: Optional[float] = None,
-          favorite: bool = False, tag: Optional[str] = None) -> Dict[str, Any]:
+          favorite: bool = False, tag: Optional[str] = None, made_by: Optional[str] = None) -> Dict[str, Any]:
     with _LOCK:
         con = _connect()
         try:
@@ -1202,6 +1197,8 @@ def query(view: str = "all", q: str = "", kind: Optional[str] = None, project: O
         out = [c for c in out if c["status"] == status]
     if favorite:
         out = [c for c in out if c.get("favorite")]
+    if made_by == "friday":
+        out = [c for c in out if made_by_friday(c["maker"])]
     if tag:
         tl = tag.strip().lower()
         out = [c for c in out if tl in [t.lower() for t in (c.get("tags") or [])]]
@@ -1244,6 +1241,14 @@ class _Ov:
 
     def __getitem__(self, k: str) -> Any:
         return self._d.get(k)
+
+
+def made_by_friday(maker: str) -> bool:
+    """True when a card's maker names Friday or one of her engines ("Friday · this PC", a model name, "Office engine · this PC",
+    "Composer · this PC"), never the owner ("You", "You · this PC") and never unknown (blank). The phone's Library shelf
+    "Made by Friday" asks with made_by=friday. tests/unit/test_media_made_by_friday.py holds it."""
+    who = (maker or "").split("·", 1)[0].strip()
+    return bool(who) and who.casefold() != "you"
 
 
 def _kind_group(kind: str) -> str:

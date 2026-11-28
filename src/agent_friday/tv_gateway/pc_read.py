@@ -37,7 +37,7 @@ MAX_FILE_CHUNK = 8 * 1024 * 1024
 _RANGE = re.compile(r"^bytes=(\d{0,19})-(\d{0,19})$")
 AUDIT_EVERY_S = 3600.0
 _MEDIA_ARGS = ("view", "q", "kind", "type", "project", "status", "tag", "source", "from", "to", "limit",
-               "offset", "sort", "collection")
+               "offset", "sort", "collection", "made_by")
 _AUDITED: dict = {}
 _LOCK = threading.Lock()
 

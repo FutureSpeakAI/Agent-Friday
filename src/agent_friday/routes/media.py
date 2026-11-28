@@ -90,6 +90,7 @@ def media_list():
         unsigned=a.get('unsigned') in ('1', 'true'), status=a.get('status') or None,
         sort=a.get('sort', 'next') or 'next', limit=limit, offset=int(a.get('offset', 0) or 0),
         since=since, until=until, favorite=a.get('favorite') in ('1', 'true'), tag=a.get('tag') or None,
+        made_by=a.get('made_by') or None,
     )
     res["collections"] = mi.collections()
     res["turns"] = mi.turn_capabilities()
