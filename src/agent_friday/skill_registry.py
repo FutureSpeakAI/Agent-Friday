@@ -646,24 +646,39 @@ _KEY_TTL_S = 300.0
 _KEY_FAIL_TTL_S = 30.0
 
 
+def _key_readers() -> tuple:
+    """The functions the key is read through now. A cached key or failure counts only while they are
+    the same ones: one from a reader swapped since (a test's synthetic key) must not sign a skill and
+    then run out before the check reads another (tests/unit/test_skill_provenance_key_cache.py)."""
+    from agent_friday.governance import action_gate as _ag
+    from agent_friday.governance import proof_of_integrity as _poi
+    return (_ag._governance_key, _poi.get_governance_key)
+
+
+def _same_readers(readers: tuple) -> bool:
+    cached = _KEY_CACHE.get("readers")
+    return cached is not None and len(cached) == len(readers) and all(a is b for a, b in zip(cached, readers))
+
+
 def _provenance_key() -> bytes:
     """The governance HMAC key (governance/proof_of_integrity), cached for a
     few minutes because load_skills runs on every turn. Raises when it cannot
     be read; callers fail closed (nothing counts as Friday's)."""
     import time as _time
     now = _time.monotonic()
-    if _KEY_CACHE["key"] and now - _KEY_CACHE["at"] < _KEY_TTL_S:
+    readers = _key_readers()
+    same = _same_readers(readers)
+    if same and _KEY_CACHE["key"] and now - _KEY_CACHE["at"] < _KEY_TTL_S:
         return _KEY_CACHE["key"]
     failed = _KEY_CACHE.get("failed_at")
-    if failed is not None and now - failed < _KEY_FAIL_TTL_S:
+    if same and failed is not None and now - failed < _KEY_FAIL_TTL_S:
         raise RuntimeError("governance key unavailable (recent failure)")
-    from agent_friday.governance.action_gate import _governance_key
     try:
-        key = _governance_key()
+        key = readers[0]()
     except Exception:
-        _KEY_CACHE.update(key=None, failed_at=now)
+        _KEY_CACHE.update(key=None, failed_at=now, readers=readers)
         raise
-    _KEY_CACHE.update(key=key, at=now, failed_at=None)
+    _KEY_CACHE.update(key=key, at=now, failed_at=None, readers=readers)
     return key
 
 
