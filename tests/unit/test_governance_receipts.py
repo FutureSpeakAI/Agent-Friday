@@ -187,22 +187,41 @@ def test_a_local_seat_is_on_this_pc_whatever_dialect_it_spoke():
 
 @pytest.mark.parametrize("name,shown", [
     ("C:/Users/someone/models/x.gguf", "x.gguf"), ("C:\\Users\\someone\\x.gguf", "x.gguf"),
-    ("/home/someone/x.gguf", "x.gguf"), ("~/models/x", "x"), ("someone@example.test", gr.NAME_NOT_SHOWN)])
+    ("/home/someone/x.gguf", "x.gguf"), ("~/models/x", "x"), ("models/someone/x.gguf", "x.gguf"),
+    ("someone@example.test", gr.NAME_NOT_SHOWN), ("https://192.0.2.5:8080/v1/someone", gr.NAME_NOT_SHOWN),
+    ("http://localhost:11434/api", gr.NAME_NOT_SHOWN), ("file:///C:/Users/someone/m.gguf", gr.NAME_NOT_SHOWN),
+    ("192.0.2.5:8080", gr.NAME_NOT_SHOWN)])
 def test_a_path_or_address_is_never_taken_for_a_name(name, shown):
     """A model loaded from a file is named by the file, never by the folders (which can name a person); an address
-    is never shown. Neither is erased: the receipt still says a named model did it."""
+    is never shown. Neither is erased: the receipt still names a model, marked with a fingerprint of its id."""
     for row in (_model(12, model=name), {"kind": "tool_call", "ts": 1.0, "seq": 12, "tool": name, "ok": True}):
         r = gr.from_activity(row)
-        assert "someone" not in r.line and shown in r.line
-    assert gr.from_activity(_model(12, model=name)).model == shown
+        for word in ("someone", "Users", "localhost", "192.0", "://", "8080"):
+            assert word not in r.line, (name, r.line)
+        assert shown + " #" in r.line
+    assert gr.from_activity(_model(12, model=name)).model.startswith(shown + " #")
 
 
 def test_a_hub_id_is_shown_whole_in_a_form_the_view_keeps():
-    assert gr.from_activity(_model(13, model="hf.co/org/model:Q4")).model == "hf.co / org / model (Q4)"
-    assert gr.from_activity(_model(14, model="sample-file:7b")).model == "sample-file (7b)"
+    assert gr.from_activity(_model(13, model="hf.co/org/model:Q4")).model.startswith("hf.co / org / model (Q4) #")
+    assert gr.from_activity(_model(14, model="sample-file:7b")).model.startswith("sample-file (7b) #")
+    assert gr.from_activity(_model(14, model="sample-local:7b")).model == "sample-local:7b"
     long = "hf.co/sample-org/" + "x" * 120 + ":Q4"
     shown = gr.from_activity(_model(15, model=long)).model
-    assert len(shown) == gr.SHOWN_MAX and shown.endswith("\u2026")
+    assert len(shown) == gr.SHOWN_MAX and shown.startswith("…") and "(Q4) #" in shown
+
+
+def test_different_ids_never_show_the_same():
+    """Over long hub ids that differ only in the tag or the middle, paths that share a file name, addresses, and
+    every cut: different recorded ids show differently, within SHOWN_MAX, and never as a link."""
+    from agent_friday.services import a2ui_profile
+    stem = "hf.co/sample-org/Sample-Coder-32B-Instruct-abliterated-uncensored-i1-GGUF"
+    ids = [stem + ":Q4_K_M", stem + ":Q8_0", stem.replace("32B", "14B") + ":Q4_K_M", "hf.co/org/A2.5-7B/Instruct:Q4",
+           "hf.co/org/A2.5-7B/Other:Q4", "C:/a/x.gguf", "C:/b/x.gguf", "a@b.test", "c@d.test", "https://e.test/m",
+           "https://f.test/m", "x" * 199, "x" * 198, "sample-local:7b", "sample-file:7b", "sample-data:7b"]
+    shown = [gr._display(i) for i in ids]
+    assert len(set(shown)) == len(ids), shown
+    assert all(len(s) <= gr.SHOWN_MAX and not a2ui_profile.has_url(s) for s in shown), shown
 
 
 def test_reads_filter_by_family_and_words_and_are_bounded():

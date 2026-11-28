@@ -27,6 +27,7 @@ Every receipt read here is the owner's (`audience` "owner"); the governance view
 from __future__ import annotations
 
 import contextlib
+import hashlib
 import logging
 import re
 import sqlite3
@@ -92,10 +93,14 @@ class Receipt:
 _COLUMNS = tuple(f.name for f in fields(Receipt))
 
 
-#: A drive path, a rooted or home path, or a backslash: a file the model was loaded from, shown by its file name.
-_PATHISH = re.compile(r"^[A-Za-z]:[/\\]|^[/~]|\\")
+#: An id that is or holds an address: a scheme (with or without //), an @, an IPv4 address, localhost.
+_ADDRESS = re.compile(r"(?i)^[a-z][a-z0-9+.-]+:(?://|/)|^(?:https?|file|data|javascript|mailto|ftp|tel|blob|intent)\s*:"
+                      r"|@|\b\d{1,3}(?:\.\d{1,3}){3}\b|\blocalhost\b")
+#: A file the model was loaded from: a drive, rooted or home path, a backslash, or a model-file extension.
+_PATHISH = re.compile(r"(?i)^[a-z]:[/\\]|^[/~]|\\|\.(?:gguf|ggml|bin|safetensors|pt|pth|onnx|ckpt)$")
 _RECORDED_MAX = 200          # the activity ledger's own cap on a text field
 SHOWN_MAX = 80
+_FP_LEN = 6
 #: A recorded name that cannot be shown without showing an address.
 NAME_NOT_SHOWN = "name not shown"
 #: What the models table says for model work whose name was not recorded.
@@ -110,28 +115,38 @@ def _recorded(v) -> Optional[str]:
 
 
 def _display(name: Optional[str]) -> Optional[str]:
-    """A recorded id as the view shows it, never erased: a path by its file name (never the folders, which can name
-    a person); an id the view keeps as it is, unchanged; otherwise (one the A2UI profile would read as a link, such
-    as a hub id, or one too long) every `:tag` as ` (tag)` and every `/` spaced, at most SHOWN_MAX characters; an id
-    that is or holds an address is NAME_NOT_SHOWN. The result never trips the
-    profile's own has_url, the rule the broker drops rows by (test_every_name_a_receipt_keeps_survives_the_view,
-    test_a_path_or_address_is_never_taken_for_a_name)."""
+    """A recorded id as the view shows it. It is never erased, never shows an address or a folder, and two different
+    ids never show the same:
+    * an id that is neither an address nor a file path, and that the A2UI profile keeps as it is (short, not read
+      as a link), is shown unchanged;
+    * every other id is a readable part plus `#` and a fingerprint of the whole recorded id: an address reads
+      NAME_NOT_SHOWN, a file path its file name only, and a link-like or long id (a hub id such as `hf.co/...`) its
+      parts with spaced slashes and `(tag)`s, cut from the front to fit SHOWN_MAX, so the model's own name and tag
+      stay.
+    The result never trips the profile's has_url, the rule the broker drops rows by.
+    tests/unit/test_governance_view.py: test_every_name_a_receipt_keeps_survives_the_view;
+    tests/unit/test_governance_receipts.py: test_a_path_or_address_is_never_taken_for_a_name,
+    test_different_ids_never_show_the_same."""
     from agent_friday.services import a2ui_profile
     if name is None:
         return None
-    if _PATHISH.search(name):
-        name = re.split(r"[/\\]", name)[-1] or NAME_NOT_SHOWN
-    if "@" in name:
-        return NAME_NOT_SHOWN
-    if len(name) <= SHOWN_MAX and not a2ui_profile.has_url(name):
+    address, path = bool(_ADDRESS.search(name)), bool(_PATHISH.search(name))
+    if not address and not path and len(name) <= SHOWN_MAX and not a2ui_profile.has_url(name):
         return name
-    head, *tags = name.split(":")
-    shown = " / ".join(p for p in head.split("/") if p) + "".join(" (%s)" % t for t in tags if t)
-    if len(shown) > SHOWN_MAX:
-        shown = shown[:SHOWN_MAX - 1].rstrip() + "…"
-    if not shown.strip() or a2ui_profile.has_url(shown):
-        return NAME_NOT_SHOWN
-    return shown
+    tag = " #" + hashlib.sha256(name.encode("utf-8")).hexdigest()[:_FP_LEN]
+    if address:
+        readable = NAME_NOT_SHOWN
+    elif path:
+        readable = re.split(r"[/\\]", name)[-1]
+    else:
+        head, *tags = name.split(":")
+        readable = " / ".join(p for p in head.split("/") if p) + "".join(" (%s)" % t for t in tags if t)
+    room = SHOWN_MAX - len(tag)
+    if len(readable) > room:
+        readable = "…" + readable[-(room - 1):].lstrip()
+    if not readable.strip() or a2ui_profile.has_url(readable):
+        readable = NAME_NOT_SHOWN
+    return readable + tag
 
 
 def _id(v) -> Optional[str]:
@@ -276,7 +291,8 @@ def models() -> list[dict]:
 def _activity(*, above: Optional[int] = None, below: Optional[int] = None, limit: Optional[int] = None) -> list[dict]:
     """Activity rows (the row with its ledger `seq`), newest first, with above < seq < below. Reading stops at the
     first row at or under `above`, so a sync of new rows reads only what is newer than the index. The read is strict
-    (a file that cannot be read raises LedgerError, never a short list) and includes the archive; it is not held by
+    (a file that cannot be read raises LedgerError, never a short list) and, below the cursor, includes the archive
+    (new rows are never archived); it is not held by
     an open break, which the Ledger page shows, and a line that is not JSON is skipped, as every ledger reader does.
     Every entry read is returned, a non-record one as its bare seq, so a page's length is the entries it covered."""
     from agent_friday.services import action_ledger
@@ -293,7 +309,7 @@ def _activity(*, above: Optional[int] = None, below: Optional[int] = None, limit
 
     out = []
     for e in action_ledger.entries(["activity"], newest_first=True, limit=limit, where=want, stop=lambda: bool(passed),
-                                   strict=True, gate=False, archive=True):
+                                   strict=True, gate=False, archive=below is not None):
         rec = e.get("rec")
         out.append({**rec, "seq": e["seq"]} if isinstance(rec, dict) else {"seq": e["seq"]})
     return out

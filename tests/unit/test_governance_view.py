@@ -108,9 +108,13 @@ def test_every_name_a_receipt_keeps_survives_the_view():
     models = got["data"]["governance"]["models"]
     assert sum(m["turns"] for m in models) == len(NAMES)
     shown = [r.model for r in rows]
-    assert "hf.co / sample-org / Sample-12B-QAT (Q4_K_M)" in shown
+    assert any(m.startswith("hf.co / sample-org / Sample-12B-QAT (Q4_K_M) #") for m in shown if m)
     assert shown[NAMES.index("hf.co/org/Sample2.5-7B/Instruct:Q4")] != shown[NAMES.index("hf.co/org/Sample2.5-7B/Other:Q4")]
-    assert {m["model"] for m in models} >= {gr.NAME_NOT_RECORDED, gr.NAME_NOT_SHOWN, "sample.gguf"}
+    listed = {m["model"] for m in models}
+    assert gr.NAME_NOT_RECORDED in listed
+    assert any(m.startswith(gr.NAME_NOT_SHOWN + " #") for m in listed)
+    assert any(m.startswith("sample.gguf #") for m in listed)
+    assert len(listed - {gr.NAME_NOT_RECORDED}) == len({n for n in NAMES if n})   # every recorded id is its own row
     assert all(r.where == gr.ON_THIS_PC for r in rows)
 
 
