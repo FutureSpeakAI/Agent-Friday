@@ -155,6 +155,9 @@ def test_spawn_passes_lora_and_prefers_the_stores_mmproj(monkeypatch, tmp_path):
     captured = _capture_spawn(monkeypatch, tmp_path)
     lora = tmp_path / "fridayweaver-lora.gguf"
     lora.write_bytes(b"GGUF")
+    from agent_friday.services import model_store
+    monkeypatch.setattr(model_store, "get",
+                        lambda mid: {"lora": str(lora)} if mid == "fw" else None)
     be = ra.LlamaServerBackend(binary=tmp_path / "llama-server.exe")
     with pytest.raises(ra.TransitionError):
         be._spawn_once(tmp_path / "llama-server.exe", "fw", 131072,

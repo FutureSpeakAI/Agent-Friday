@@ -3436,6 +3436,11 @@ DEFAULT_SETTINGS = {
     # `medium`, as before.
     "local_reasoning_effort_policy": {"reflex_thinking_off": False,
                                       "deep_xhigh": True},
+    # Mode T (services/tool_adapter): "tool_turns" applies a per-request
+    # tool-skill adapter on the brain seat for Laya's confident short tool
+    # turns only, never on vault turns. Ships "off" until an adapter has
+    # beaten the plain base model; Stephen switches it.
+    "tool_adapter": {"mode": "off"},
     # ── Creative policy (services/creative_policy.py) ──
     # What Friday refuses to generate, written down where the user can read
     # and set it. Before this existed there was nothing legible for a seat to

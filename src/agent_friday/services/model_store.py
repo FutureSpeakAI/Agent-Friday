@@ -404,7 +404,8 @@ def register(model_id: str, path, *, source: str = SOURCE_LOCAL,
              serve_args: list | None = None,
              serve_num_ctx: int | None = None,
              held: str | None = None,
-             vision: str | None = None) -> dict:
+             vision: str | None = None,
+             lora_apply: str | None = None) -> dict:
     """Record a model Friday holds, with its facts read from the file.
 
     `engine` is the server binary that can load this file, when stock
@@ -477,6 +478,9 @@ def register(model_id: str, path, *, source: str = SOURCE_LOCAL,
         entry["serve_num_ctx"] = int(serve_num_ctx)
     if vision:
         entry["vision"] = str(vision)
+    if lora and lora_apply:
+        from agent_friday.services import tool_adapter
+        entry["lora_apply"] = tool_adapter.parse_apply(lora_apply).value
     if held:
         # Installed and verified, but no seat may use it yet; see available().
         entry["held"] = str(held)

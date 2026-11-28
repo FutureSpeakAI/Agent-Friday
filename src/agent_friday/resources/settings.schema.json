@@ -1397,6 +1397,14 @@
   "text_scale": {
    "type": "number"
   },
+  "tool_adapter": {
+   "properties": {
+    "mode": {
+     "type": "string"
+    }
+   },
+   "type": "object"
+  },
   "tool_hooks": {
    "properties": {
     "audit_log": {
