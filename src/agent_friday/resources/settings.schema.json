@@ -1029,6 +1029,9 @@
   "news_trusted_outlets": {
    "type": "array"
   },
+  "notification_interrupt_rules": {
+   "type": "object"
+  },
   "notification_mutes": {
    "type": "array"
   },

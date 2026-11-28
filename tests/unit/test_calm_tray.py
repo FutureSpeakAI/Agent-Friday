@@ -42,7 +42,7 @@ def test_a_scheduled_job_finishing_is_a_tray_card():
                   dedupe_key="sched-ok:sch_heartbeat")
     assert not out.get("logged") and out.get("place") == "updates"
     assert _titles() == ["✓ Hourly heartbeat ran"]
-    assert ne.unread_count() == 0          # an FYI result, not a "needs you"
+    assert ne.unread_count() == 1          # the owner's rule: a finished scheduled job may interrupt
 
 
 def test_a_job_waiting_for_the_local_seat_is_not_a_tray_card():

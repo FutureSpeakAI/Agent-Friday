@@ -292,7 +292,8 @@ def push(
     # and only when its decision head is in act mode). Off the record it reads
     # nothing; the head checks that itself.
     t = _pol.tier_for(kind, source, priority, tier,
-                      text=None if private else "%s. %s" % (title or "", body or ""))
+                      text=None if private else "%s. %s" % (title or "", body or ""),
+                      emitter=emitter)
     place = _reg.place_of(kind, source, emitter, t)
     # An Activity-place notice (a routine run, a heartbeat, a background start)
     # is visible in Activity, not as a tray card.

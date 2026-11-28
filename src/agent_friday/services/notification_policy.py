@@ -33,6 +33,7 @@ from __future__ import annotations
 import re
 import threading
 import time
+from dataclasses import dataclass
 
 NEEDS_YOU, FYI, LOG_ONLY = "needs_you", "fyi", "log_only"
 TIERS = (NEEDS_YOU, FYI, LOG_ONLY)
@@ -46,6 +47,61 @@ NEEDS_YOU_KINDS = {"security", "task_unrecorded", "tasks_interrupted",
 LOG_ONLY_PAIRS = {("info", "network"), ("schedule_retired", "scheduler"),
                   ("build", "lane"), ("build", "deploy")}
 LOG_ONLY_SOURCES = {"lane", "deploy", "build", "guard"}
+
+INTERRUPT_SETTING = "notification_interrupt_rules"
+
+
+@dataclass(frozen=True)
+class InterruptRule:
+    """One thing the owner has said may interrupt him. It names the emitters (services/notice_registry)
+    whose notice is that thing HAPPENING WELL, never the words a notice uses."""
+    id: str
+    words: str
+    emitters: tuple
+    default_on: bool
+
+
+#: The owner's rule (2026-11-21): the successful completion or delivery of a scheduled task or routine
+#: may interrupt; status and routing notices and news do not; a failure keeps its own tier above.
+#: The briefing and the weekly editions are his to decide, so they start off.
+INTERRUPT_RULES = (
+    InterruptRule("scheduled_runs", "A scheduled job that finished successfully.", ("E07",), True),
+    InterruptRule("front_page", "A Front Page edition that was delivered.", ("E11",), True),
+    InterruptRule("daily_creation", "The Daily Creation that was made.", ("E17",), True),
+    InterruptRule("daily_briefing", "The daily briefing that was delivered.", ("E14",), False),
+    InterruptRule("weekly_editions", "The weekly digest and the weekly editorial that were delivered.",
+                  ("E12", "E13"), False),
+)
+
+
+def _chosen_rules() -> dict:
+    """rule id -> on or off, as the owner set them; anything not a plain yes or no is ignored."""
+    try:
+        from agent_friday.core import _load_settings
+        stored = (_load_settings() or {}).get(INTERRUPT_SETTING)
+    except Exception:
+        stored = None
+    if not isinstance(stored, dict):
+        return {}
+    known = {rule.id for rule in INTERRUPT_RULES}
+    return {rule_id: on for rule_id, on in stored.items() if rule_id in known and isinstance(on, bool)}
+
+
+def rules_in_words() -> list:
+    """The rule, as the owner reads and edits it: [{id, words, on}]."""
+    chosen = _chosen_rules()
+    return [{"id": rule.id, "words": rule.words, "on": chosen.get(rule.id, rule.default_on)}
+            for rule in INTERRUPT_RULES]
+
+
+def interrupts_by_rule(emitter: str) -> bool:
+    """True when this emitter's notice is the successful completion or delivery of something the owner
+    said may interrupt him, and that rule is on."""
+    if not emitter:
+        return False
+    chosen = _chosen_rules()
+    return any(emitter in rule.emitters and chosen.get(rule.id, rule.default_on) for rule in INTERRUPT_RULES)
+
 
 #: Seconds after the owner's last turn during which new cards are held.
 QUIET_S = 90.0
@@ -73,11 +129,12 @@ def _named_kinds() -> set:
 
 
 def tier_for(kind: str, source: str, priority: str, tier: str | None = None,
-             text: str | None = None) -> str:
+             text: str | None = None, emitter: str | None = None) -> str:
     """The tier of a notification. An emitter may name one; an approval is
     always NEEDS_YOU whatever it names. `text` (title and body) lets the local
     encoder head raise an FYI of an unnamed kind to NEEDS_YOU; it is the only
-    thing it can do (services/triage_heads)."""
+    thing it can do (services/triage_heads). `emitter` lets the owner's interrupt rule raise the
+    successful completion of a scheduled routine; it is decided before the head is asked."""
     kind, source = str(kind or ""), str(source or "")
     if is_approval(kind):
         return NEEDS_YOU
@@ -90,6 +147,8 @@ def tier_for(kind: str, source: str, priority: str, tier: str | None = None,
     if kind in NEEDS_YOU_KINDS or priority == "critical":
         return NEEDS_YOU
     if priority == "high" and kind in ("warning", "error"):
+        return NEEDS_YOU
+    if tier is None and interrupts_by_rule(str(emitter or "")):
         return NEEDS_YOU
     if tier is None and text:
         try:
@@ -139,8 +198,10 @@ MEMORY_TITLE = "Save something into Friday's memory"
 MEMORY_GROUP = "memory_proposals"
 
 #: Emitter key prefixes that name the job a card is about.
+#: A success has its own key: it can be a needs-you card now (the owner's interrupt rule), and
+#: dismissing it must never hide that job's next failure.
 _JOB_PREFIXES = (("sched-fail:", "sched:"), ("sched-wait:", "sched:"),
-                 ("sched-ok:", "sched:"), ("run:", "run:"), ("approval:", "approval:"))
+                 ("sched-ok:", "sched-ok:"), ("run:", "run:"), ("approval:", "approval:"))
 
 
 def rank(tier: str, priority: str = "") -> int:

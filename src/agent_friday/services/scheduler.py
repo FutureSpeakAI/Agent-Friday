@@ -785,6 +785,14 @@ NEWS_ROUTINES = {
     "sch_weekly_editorial",
 }
 
+
+#: Routines that also push their own delivery notice (the Front Page, the Daily Creation, the briefing,
+#: the weekly editions). Their "ran" card stays a quiet one, so one event never interrupts twice.
+OWN_DELIVERY_NOTICE = frozenset({
+    "sch_daily_creation", "sch_news_morning", "sch_front_page_evening",
+    "sch_afternoon_briefing", "sch_weekly_digest", "sch_weekly_editorial",
+})
+
 #: Builtins whose result is for a time of day (the editions): in the Local AI
 #: queue they still run one at a time and yield to interactive turns, but they
 #: do not wait for the computer to be idle. Every other builtin that reaches a
@@ -1791,9 +1799,11 @@ def _notify_run(rec, status, summary):
         _ne.resolve(f"sched-held:{sid}")
         if not finish_notice_on(rec):
             return
+        _ne.resolve(f"sched-ok:{sid}")   # a dismissed success is news again; a quiet one stays dismissed
         _ne.push(title=f"\u2713 {name} ran",
                  body=(summary or "")[:300] or "Completed.", priority="low",
                  source="scheduler", kind="scheduled_task", emitter="E07",
+                 tier="fyi" if sid in OWN_DELIVERY_NOTICE else None,
                  dedupe_key=f"sched-ok:{sid}", meta={"schedule_id": sid})
     except Exception as e:
         print(f"  [scheduler] notify failed: {e}")
