@@ -150,6 +150,8 @@ def test_both_tool_result_sites_in_the_agent_loops_call_the_gate_and_nothing_els
     src = (pathlib.Path(__file__).resolve().parents[2] / "src/agent_friday/services/agent.py").read_text(encoding="utf-8")
     calls = [n for n in ast.walk(ast.parse(src)) if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)
              and n.func.attr == "read_through" and getattr(n.func.value, "id", "") == "_qgate"]
-    assert len(calls) == 2
+    # the two loops' tool-result sites, and the KG fast path's page read before round 1 (services/kg_fastpath)
+    assert len(calls) == 3
+    assert '_untrusted.wrap(_qgate.read_through("read_wiki", args, page, session_ctx))' in src
     assert 'convo.append({"role": "tool", "tool_call_id": tcid' in src
     assert '"content": _untrusted.wrap(result),' not in src       # the old direct call at the Anthropic site is gone

@@ -118,6 +118,7 @@ from agent_friday.services import taint as _taint_mod
 from agent_friday.services import reasoning_trace as _rtrace
 from agent_friday.services import untrusted_input as _untrusted
 from agent_friday.services import quarantine_gate as _qgate
+from agent_friday.services import turn_timing as _turn_timing
 from agent_friday.services.news_engine import (
     _fetch_news_items,
 )  # noqa: E501
@@ -3041,18 +3042,109 @@ def _tool_read_wiki(inp):
         return f"Read error: {e}"
 
 
-def _tool_search_wiki(inp):
-    """Keyword-search the wiki and return up to N hits with excerpts."""
+def _search_wiki_args(inp):
+    """(query, limit) of a search_wiki call, or (None, error text)."""
     inp = inp or {}
     query = (inp.get('query') or '').strip()
     if not query:
-        return "search_wiki error: 'query' is required."
+        return None, "search_wiki error: 'query' is required."
     try:
         limit = int(inp.get('limit') or 5)
     except (TypeError, ValueError):
         limit = 5
-    limit = max(1, min(20, limit))
+    return query, max(1, min(20, limit))
+
+
+def _search_wiki_pages(query, room):
+    """Up to `room` wiki page hits for `query`, and whether the time budget cut the search short.
+
+    The part of search_wiki that reads no state of the call (no origin, provider or turn): the
+    pages the knowledge graph's index names, then the walk. So it may start early, beside a
+    round's other reads (services/parallel_reads); the memory-card part never does. The walk
+    stops at its own budget on every seat (services/wiki_index_search, SCAN_BUDGET_S), or sooner
+    under a call's budget (a local seat's, services/tool_deadline.py)."""
+    from agent_friday.services import tool_deadline as _td
+    from agent_friday.services import wiki_index_search as _wis
+    _deadline = _td.deadline(_wis.SCAN_BUDGET_S)
     q_low = query.lower()
+    qwords = _wis.words(query)
+    hits = []
+    partial = False
+    if room <= 0:
+        return hits, partial
+    # One root: the serving wiki the knowledge graph indexes and read_wiki
+    # resolves against, so every hit's path opens with read_wiki as returned.
+    from agent_friday.services.knowledge_graph import wiki_graph as _wg
+    root, label = Path(_wg.WIKI_DIR), 'wiki'
+    seen = set()
+
+    def _hit(f, rel, from_index=False):
+        try:
+            content = wiki_read_text(f)
+        except Exception:
+            return
+        excerpt = _wis.excerpt_for(content, query, qwords)
+        if excerpt is None:
+            if not (from_index or q_low in f.stem.lower()):
+                return
+            excerpt = content[:400].strip()
+        hits.append({'root': label, 'path': rel, 'excerpt': excerpt})
+
+    # 1. The knowledge graph's index names the pages the query is about: read those first.
+    for rel in _wis.candidate_pages(query, limit=room):
+        if len(hits) >= room or _td.expired() or _time.monotonic() >= _deadline:
+            break
+        f = _wg.resolve_page(rel)
+        if f is None or not Path(f).is_file():
+            continue
+        try:
+            if _we_path_hidden(Path(f), root):   # never a page the walk would skip
+                continue
+        except Exception:
+            pass
+        seen.add(str(Path(f).resolve()))
+        _hit(Path(f), rel.replace('\\', '/'), from_index=True)
+    # 2. The walk, for what the index does not know.
+    if root.exists() and len(hits) < room:
+        for f in root.rglob('*'):
+            if len(hits) >= room:
+                break
+            if _td.expired() or _time.monotonic() >= _deadline:
+                partial = True
+                break
+            if not f.is_file() or f.suffix not in ('.md', '.txt'):
+                continue
+            if _we_path_hidden(f, root):   # .git, .obsidian, .draft.md: not pages
+                continue
+            if seen and str(f.resolve()) in seen:
+                continue
+            try:
+                rel = str(f.relative_to(root)).replace('\\', '/')
+            except ValueError:
+                rel = str(f)
+            _hit(f, rel)
+    return hits, partial
+
+
+def _search_wiki_early(inp):
+    """The early half of a search_wiki call (services/parallel_reads): its pages, at full room."""
+    query, limit = _search_wiki_args(inp)
+    if query is None:
+        return None
+    return _search_wiki_pages(query, limit)
+
+
+def _tool_search_wiki(inp):
+    """Keyword-search the wiki and return up to N hits with excerpts.
+
+    When the cloud loop started this call's page search early (services/parallel_reads), its
+    (hits, partial) is in parallel_reads.EARLY while _execute_tool runs this; the memory-card part
+    always runs here, in this call's own context."""
+    from agent_friday.services import parallel_reads as _par_reads_sw
+    _early_pages = _par_reads_sw.EARLY.get()
+    query, limit = _search_wiki_args(inp)
+    if query is None:
+        return limit
 
     results = []
     # The memory card's lines about the owner are searched first: the facts
@@ -3063,51 +3155,15 @@ def _tool_search_wiki(inp):
         results.extend(_cmt.search_card(query, limit=min(3, limit)))
     except Exception:
         pass
-    # A call under a time budget (a local seat's, services/tool_deadline.py)
-    # stops scanning when it runs out and returns the hits found so far.
-    from agent_friday.services import tool_deadline as _td
-    partial = False
-    # One root: the serving wiki the knowledge graph indexes and read_wiki
-    # resolves against, so every hit's path opens with read_wiki as returned.
-    from agent_friday.services.knowledge_graph import wiki_graph as _wg
-    for root, label in [(Path(_wg.WIKI_DIR), 'wiki')]:
-        if not root.exists():
-            continue
-        for f in root.rglob('*'):
-            if len(results) >= limit:
-                break
-            if _td.expired():
-                partial = True
-                break
-            if not f.is_file() or f.suffix not in ('.md', '.txt'):
-                continue
-            if _we_path_hidden(f, root):   # .git, .obsidian, .draft.md: not pages
-                continue
-            try:
-                content = wiki_read_text(f)
-            except Exception:
-                continue
-            name_match = q_low in f.stem.lower()
-            idx = content.lower().find(q_low)
-            if not name_match and idx < 0:
-                continue
-            if idx < 0:
-                excerpt = content[:400]
-            else:
-                start = max(0, idx - 120)
-                end = min(len(content), idx + 280)
-                excerpt = content[start:end]
-            try:
-                rel = str(f.relative_to(root)).replace('\\', '/')
-            except ValueError:
-                rel = str(f)
-            results.append({
-                'root': label,
-                'path': rel,
-                'excerpt': excerpt.strip(),
-            })
-        if len(results) >= limit:
-            break
+    room = limit - len(results)
+    if _early_pages is not None:
+        # The same walk at full room, in the same order: its first `room` hits are the ones this
+        # call would find, and it was cut short for them only if it stopped before `room`.
+        early_hits, early_partial = _early_pages
+        pages, partial = list(early_hits[:max(0, room)]), bool(early_partial and len(early_hits) < room)
+    else:
+        pages, partial = _search_wiki_pages(query, room)
+    results.extend(pages)
 
     note = ("The time budget ran out before the whole wiki was searched; these "
             "are the hits found so far. Narrow the query to search further."
@@ -15225,6 +15281,17 @@ def _dict_outcome(name, result):
     return None
 
 
+def _prefetch_prepare(name, tool_input, pii_lookup=None):
+    """The input `_execute_tool` will hand this tool's handler (schema-checked, placeholders
+    restored), for a read started early (services/parallel_reads); None when the call would not
+    reach its handler as it stands."""
+    _checked, _arg_error = _tool_args.check(
+        name, tool_input if tool_input is not None else {}, _schema_for_tool(name))
+    if _arg_error:
+        return None
+    return _restore_placeholders(_checked or {}, pii_lookup)
+
+
 @_web_task_scope
 @_bind_browser_dispatch
 @_live_laya.idempotent_tool     # the same Gemini Live call twice in a few seconds runs once
@@ -15242,7 +15309,13 @@ def _execute_tool(name, tool_input, pii_lookup=None, session_ctx=None, handler=N
     session_ctx: ring-2/3 policy evaluation + hook attribution (workspace/run).
     handler: for an executor whose tool is not in CLAUDE_TOOL_HANDLERS (the
     voice surface's own helpers). It runs through exactly the same chain;
-    there is no other way to invoke a tool handler.
+    there is no other way to invoke a tool handler that acts. The one
+    exception, for reads only: the cloud loop may start read_wiki,
+    knowledge_query and search_wiki's page search early (services/
+    parallel_reads); their result is used only through this chain, via
+    `handler=`, and a call a gate refuses never uses it. Held by
+    tests/unit/test_every_action_is_governed.py (executor scan) and
+    tests/unit/test_parallel_reads_internal_only.py (gate-internal tools only).
     """
     # Every return before the handler runs is Friday's own line about the call (a
     # refusal, a fix-it, a hold), not a tool's output: marked so the loops hand it
@@ -18258,6 +18331,54 @@ def _append_steer(convo: list, text: str) -> None:
     convo[i] = {**last, "content": list(content or []) + [block]}
 
 
+def _kg_fastpath_prefill(convo, session_ctx, model, pii_lookup, tool_trace, orb_id):
+    """The cloud loop's conversation with the page(s) the question names added (services/kg_fastpath).
+
+    Each page is read as the loop reads one for the model: the vault's zero-trust check for this
+    provider first (a refusal leaves the page out), then _execute_tool's whole chain, then the
+    untrusted-input envelope. Recorded in the tool trace and the activity ledger like any read.
+    Any failure returns the conversation unchanged."""
+    try:
+        from agent_friday.services import kg_fastpath as _kf
+        text = _kf.last_user_text(convo)
+        if not _kf.eligible(text, session_ctx):
+            return convo
+        provider = (session_ctx or {}).get("provider", "cloud")
+
+        def read(rel):
+            _t = _time.time()
+            args = {"path": rel}
+            ctx = session_ctx
+            _ctl = _get_vault_control() if VaultAccessControl else None
+            if _ctl is not None:
+                ok, detail, _tier = _ctl.check_action(
+                    provider, "read_wiki", json.dumps(args), model=model or "",
+                    access_log_path=str(FRIDAY_DIR / "vault" / "access-log.jsonl"),
+                    taint_key=_taint_mod.ledger_key(session_ctx),
+                    author_provider=_LOOP_PROVIDER.get() or provider, author_model=str(model or ""))
+                if not ok:
+                    return None
+                ctx = _cloud_send_ctx(session_ctx, detail)
+            result = _execute_tool("read_wiki", args, pii_lookup=pii_lookup, session_ctx=ctx)
+            if (not isinstance(result, str) or isinstance(result, _untrusted.FridaysWords)
+                    or result.startswith(("Wiki file not found", "Read error", "Path escapes"))):
+                return None
+            _ms = int((_time.time() - _t) * 1000)
+            tool_trace.append({"name": "read_wiki", "input": args, "result": clip(result, 2000), "prefetched": True})
+            _ledger_tool_call("read_wiki", result, _ms, orb_id, session_ctx)
+            # Cut BEFORE the envelope, so its close marker always survives.
+            page = str(result)[:_kf.MAX_CHARS_PER_PAGE]
+            return _untrusted.wrap(_qgate.read_through("read_wiki", args, page, session_ctx))
+
+        pages = _kf.prefetch(text, read)
+        if pages:
+            _log.info("kg fast path: %d page(s) read before round 1", len(pages))
+        return _kf.with_pages(convo, pages)
+    except Exception as e:  # noqa: BLE001  the turn runs exactly as before
+        _log.debug("kg fast path skipped: %s", e)
+        return convo
+
+
 def _call_claude_agent(*args, **kwargs):
     """Tool-using Claude loop (always a cloud provider). See _call_claude_agent_run."""
     _tok = _LOOP_PROVIDER.set("anthropic")
@@ -18513,6 +18634,11 @@ def _call_claude_agent_run(messages, system=None, model=None, max_tokens=16384, 
     _summary_budget.append(_budget)
 
     try:
+        # A question that names a wiki page's title gets that page before round 1 (services/
+        # kg_fastpath), read through the same gates as the model's own read_wiki call, so most
+        # knowledge questions are answered in one round instead of two or three.
+        if not resumed_tool_trace:
+            convo = _kg_fastpath_prefill(convo, session_ctx, model, pii_lookup, tool_trace, orb_id)
         iter_count = 0
         while _rounds_left is None or _rounds_left > 0:
             if _rounds_left is not None:
@@ -18673,27 +18799,40 @@ def _call_claude_agent_run(messages, system=None, model=None, max_tokens=16384, 
                 _stream_fn = getattr(client.messages, "stream", None)
                 if callable(_stream_fn):
                     from agent_friday.services.model_router import DELTA_SINK as _DS
+                    from agent_friday.services.model_router import announce_round as _round_says
                     _sink = _DS.get()
-                    with _stream_fn(**kwargs) as _stream:
-                        for _ev in _stream:
-                            if core.GLOBAL_STOP.is_set():
-                                # Stop everything (services/global_stop): leaving the
-                                # `with` closes the stream mid-reply.
-                                from agent_friday.services import global_stop as _gs_stream
-                                raise _gs_stream.EverythingStopped("the rest of this reply")
-                            if _sink is None or getattr(_ev, "type", None) != "content_block_delta":
-                                continue
-                            _delta = getattr(_ev, "delta", None)
-                            if getattr(_delta, "type", None) != "text_delta":
-                                continue
-                            _piece = getattr(_delta, "text", None)
-                            if not _piece:
-                                continue
-                            try:
-                                _sink(_piece)
-                            except Exception:
-                                pass
-                        resp = _stream.get_final_message()
+                    # A reader of the deltas learns where each round starts and the moment it
+                    # turns out to call a tool (model_router.ROUND_SINK; the phone relay).
+                    _round_says("start", iter_count)
+                    # "end" in a finally: a stream that raises mid-answer (a dropped connection, an
+                    # overload, Stop everything) still closes the round for the phone relay, so a
+                    # fallback model publishing deltas afterwards is never streamed as this answer.
+                    try:
+                        with _stream_fn(**kwargs) as _stream:
+                            for _ev in _stream:
+                                if core.GLOBAL_STOP.is_set():
+                                    # Stop everything (services/global_stop): leaving the
+                                    # `with` closes the stream mid-reply.
+                                    from agent_friday.services import global_stop as _gs_stream
+                                    raise _gs_stream.EverythingStopped("the rest of this reply")
+                                if (getattr(_ev, "type", None) == "content_block_start"
+                                        and getattr(getattr(_ev, "content_block", None), "type", None) == "tool_use"):
+                                    _round_says("tool_use", iter_count)
+                                if _sink is None or getattr(_ev, "type", None) != "content_block_delta":
+                                    continue
+                                _delta = getattr(_ev, "delta", None)
+                                if getattr(_delta, "type", None) != "text_delta":
+                                    continue
+                                _piece = getattr(_delta, "text", None)
+                                if not _piece:
+                                    continue
+                                try:
+                                    _sink(_piece)
+                                except Exception:
+                                    pass
+                            resp = _stream.get_final_message()
+                    finally:
+                        _round_says("end", iter_count)
                 else:
                     resp = client.messages.create(**kwargs)
             except Exception as _gexc:
@@ -18729,6 +18868,9 @@ def _call_claude_agent_run(messages, system=None, model=None, max_tokens=16384, 
             except Exception:
                 pass
             # B4: accumulate token counts for the activity-ledger record.
+            # One timing line per round (services/turn_timing): the model's time now, each tool's below.
+            _model_ms = int((_time.time() - _t0) * 1000)
+            _round_tools = []
             _iter_tok_in = _iter_tok_out = 0
             try:
                 _u = getattr(resp, "usage", None)
@@ -18787,6 +18929,7 @@ def _call_claude_agent_run(messages, system=None, model=None, max_tokens=16384, 
                     tool_uses.append(b)
 
             if resp.stop_reason != 'tool_use' or not tool_uses:
+                _turn_timing.log_round(iter_count, kwargs.get("model"), _model_ms, final=True)
                 _orb_safe(process_update, orb_id, status='completed', progress=1.0, label='Done')
                 # The turn finished. A checkpoint that outlives it is an
                 # invitation to replay work that is already done.
@@ -18874,6 +19017,15 @@ def _call_claude_agent_run(messages, system=None, model=None, max_tokens=16384, 
             # Execute tools and feed results back
             tool_results = []
             _tools_grew = False
+            # Two or more read-only lookups of this PC's wiki/graph start together (services/
+            # parallel_reads); each call below still passes every gate in order before its result is used.
+            from agent_friday.services import parallel_reads as _par_reads
+            # search_wiki starts only its page search early; its memory-card half, gated on this
+            # call's origin and provider, runs inside the real call (parallel_reads.EARLY).
+            _early = _par_reads.start(
+                tool_uses, CLAUDE_TOOL_HANDLERS, lambda _n, _i: _prefetch_prepare(_n, _i, pii_lookup),
+                split=({"search_wiki": _search_wiki_early}
+                       if CLAUDE_TOOL_HANDLERS.get("search_wiki") is _tool_search_wiki else None))
             for tu in tool_uses:
                 # No gate note from anything before this call (an earlier call, a
                 # helper's tool run on this thread) reaches this call's tool_call
@@ -18953,6 +19105,7 @@ def _call_claude_agent_run(messages, system=None, model=None, max_tokens=16384, 
                         _tool_ms = int((_time.time() - _t_tool) * 1000)
                         _orb_tool_trace(orb_id, tu.name, tu.input, _zt_result, _tool_ms)
                         _ledger_tool_call(tu.name, _zt_result, _tool_ms, orb_id, session_ctx)
+                        _round_tools.append((tu.name, _tool_ms))
                         from agent_friday.privacy.vault_access import refusal_text as _zt_text
                         tool_results.append({
                             "type": "tool_result",
@@ -18978,6 +19131,7 @@ def _call_claude_agent_run(messages, system=None, model=None, max_tokens=16384, 
                     _tool_ms = int((_time.time() - _t_tool) * 1000)
                     _orb_tool_trace(orb_id, tu.name, tu.input, _pq_held, _tool_ms)
                     _ledger_tool_call(tu.name, _pq_held, _tool_ms, orb_id, session_ctx)
+                    _round_tools.append((tu.name, _tool_ms))
                     tool_results.append({"type": "tool_result", "tool_use_id": tu.id,
                                          "content": _pq_held})
                     continue
@@ -19008,7 +19162,12 @@ def _call_claude_agent_run(messages, system=None, model=None, max_tokens=16384, 
                         _LAST_NEEDS_OWNER.set(None)
                         # the loop's own call: its gate note waits for its tool_call event (G10)
                         with _loop_tool_call():
-                            result = _execute_tool(tu.name, tu.input, pii_lookup=pii_lookup, session_ctx=_zt_ctx)
+                            _early_h = _early.handler_for(tu)
+                            if _early_h is not None:
+                                result = _execute_tool(tu.name, tu.input, pii_lookup=pii_lookup,
+                                                       session_ctx=_zt_ctx, handler=_early_h)
+                            else:
+                                result = _execute_tool(tu.name, tu.input, pii_lookup=pii_lookup, session_ctx=_zt_ctx)
                 finally:
                     _CURRENT_MODEL.reset(_mtok)
                 # Marked FINISHED on the success path only, deliberately not in a
@@ -19025,6 +19184,7 @@ def _call_claude_agent_run(messages, system=None, model=None, max_tokens=16384, 
                 _tool_ms = int((_time.time() - _t_tool) * 1000)
                 _orb_tool_trace(orb_id, tu.name, tu.input, result, _tool_ms)
                 _ledger_tool_call(tu.name, result, _tool_ms, orb_id, session_ctx)
+                _round_tools.append((tu.name, _tool_ms))
 
                 # A tool result carrying a base64 image becomes an actual vision
                 # block so the model can SEE it. Keyed on the PAYLOAD, not the
@@ -19049,6 +19209,7 @@ def _call_claude_agent_run(messages, system=None, model=None, max_tokens=16384, 
                     # result (services/untrusted_input). The trace and ledger above keep it raw.
                     "content": _untrusted.wrap(_qgate.read_through(tu.name, tu.input, result, session_ctx)),
                 })
+            _turn_timing.log_round(iter_count, kwargs.get("model"), _model_ms, _round_tools)
             convo.append({"role": "user", "content": tool_results})
             if _tool_changes:
                 _TC.ensure_surfaced(convo, _surfaced_names())

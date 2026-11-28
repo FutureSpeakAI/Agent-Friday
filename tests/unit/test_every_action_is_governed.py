@@ -171,7 +171,25 @@ REVIEWED_INDIRECT: dict = {
     ("services/setting_proposals.py", "tool"):
         "the settings tool's own route to one internal settings tool (switch_model, "
         "set_workspace_layout, show_my_day and the like), checked internal before it runs",
+    # The cloud loop's early reads. Only tools in both PARALLEL_READ_TOOLS and
+    # action_gate.INTERNAL_TOOLS start early (test_parallel_reads_internal_only);
+    # their results reach the model only through _execute_tool's own call.
+    ("services/parallel_reads.py", "start"):
+        "starts only gate-internal read tools early (test_parallel_reads_internal_only)",
+    ("services/parallel_reads.py", "handler"):
+        "the handler _execute_tool itself calls for an early read, inside the checkpoint",
 }
+
+#: Functions a handler may be handed to, because they run it only as
+#: `_execute_tool(..., handler=fn)`: (file, function called) -> why.
+REVIEWED_HANDOFF: dict = {
+    ("services/voice_engine.py", "_governed"):
+        "voice tools: _governed runs fn only as _execute_tool(tool, a, handler=fn, ...)",
+}
+
+#: Names that hold a table of tool handlers: the registry, and the table the
+#: cloud loop hands to parallel_reads.
+HANDLER_TABLES = {"CLAUDE_TOOL_HANDLERS", "handlers", "_handlers"}
 
 
 def _handler_ref(node, handler_names) -> bool:
@@ -182,12 +200,14 @@ def _handler_ref(node, handler_names) -> bool:
         return node.attr in handler_names
     if isinstance(node, ast.Subscript):
         v = node.value
-        return (v.id if isinstance(v, ast.Name) else getattr(v, "attr", "")) == "CLAUDE_TOOL_HANDLERS"
+        return (v.id if isinstance(v, ast.Name) else getattr(v, "attr", "")) in HANDLER_TABLES
+    if isinstance(node, ast.IfExp):
+        return _handler_ref(node.body, handler_names) or _handler_ref(node.orelse, handler_names)
     if isinstance(node, ast.Call):
         f = node.func
         if isinstance(f, ast.Attribute) and f.attr == "get":
             v = f.value
-            return (v.id if isinstance(v, ast.Name) else getattr(v, "attr", "")) == "CLAUDE_TOOL_HANDLERS"
+            return (v.id if isinstance(v, ast.Name) else getattr(v, "attr", "")) in HANDLER_TABLES
         if isinstance(f, ast.Name) and f.id == "getattr" and len(node.args) >= 2:
             name = node.args[1]
             if isinstance(name, ast.BinOp) and isinstance(name.op, ast.Add):
@@ -212,6 +232,13 @@ def scan(source: str, rel: str, handler_names: set) -> list:
         return next((n.name for n in reversed(stack)
                      if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))), "<module>")
 
+    def in_scope(name, stack):
+        """A handler alias made in this function or a function enclosing it."""
+        if name in file_aliases:
+            return True
+        scopes = [n.name for n in stack if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))]
+        return any(name in local_aliases.get(f, ()) for f in scopes)
+
     def visit(node, stack):
         if isinstance(node, (ast.Assign, ast.AnnAssign)) and node.value is not None \
                 and _handler_ref(node.value, handler_names):
@@ -224,10 +251,15 @@ def scan(source: str, rel: str, handler_names: set) -> list:
             where = enclosing(stack)
             called = fn.id if isinstance(fn, ast.Name) else fn.attr if isinstance(fn, ast.Attribute) else None
             # 0. calling through a name that holds a handler
-            if isinstance(fn, ast.Name) and where != "_execute_tool" and \
-                    (fn.id in file_aliases or fn.id in local_aliases.get(where, ())) and \
+            if isinstance(fn, ast.Name) and where != "_execute_tool" and in_scope(fn.id, stack) and \
                     (rel, where) not in REVIEWED_INDIRECT:
                 out.append((rel, node.lineno, f"calls a tool handler through '{fn.id}' in {where}()"))
+            # a handler handed to another call to run (an executor, a thread)
+            for arg in node.args:
+                if isinstance(arg, ast.Name) and where != "_execute_tool" and in_scope(arg.id, stack) \
+                        and called != "_execute_tool" and (rel, called) not in REVIEWED_HANDOFF \
+                        and (rel, where) not in REVIEWED_INDIRECT:
+                    out.append((rel, node.lineno, f"hands tool handler '{arg.id}' to a call in {where}()"))
             # getattr(module, "_tool_…")(…) called on the spot
             if isinstance(fn, ast.Call) and where != "_execute_tool" and \
                     isinstance(fn.func, ast.Name) and fn.func.id == "getattr" and \
@@ -243,7 +275,7 @@ def scan(source: str, rel: str, handler_names: set) -> list:
             target = inner.value if isinstance(inner, (ast.Subscript, ast.Attribute)) else None
             if isinstance(fn, (ast.Subscript, ast.Call)) and target is not None:
                 tname = target.id if isinstance(target, ast.Name) else getattr(target, "attr", "")
-                if tname == "CLAUDE_TOOL_HANDLERS" and where != "_execute_tool":
+                if tname in HANDLER_TABLES and where != "_execute_tool":
                     out.append((rel, node.lineno, f"invokes CLAUDE_TOOL_HANDLERS directly in {where}()"))
             # 3. a connector manager called directly
             if isinstance(fn, ast.Attribute) and fn.attr in ("call", "call_tool"):
@@ -309,8 +341,27 @@ def test_the_scanner_catches_a_handler_called_through_another_name():
     assert not [h for h in hits if "fine()" in h[2]], hits
 
 
+def test_the_scanner_catches_a_handler_table_run_early():
+    """The parallel_reads shape, unreviewed: a handler table passed in, a handler picked
+    from it (in a conditional), handed to an executor, or called from a closure."""
+    planted = (
+        "def start(uses, handlers, pool):\n"
+        "    for tu in uses:\n"
+        "        early = None if tu.split else handlers[tu.name]\n"
+        "        pool.submit(early, tu.input)\n"
+        "def wrap(self, name):\n"
+        "    real = self._handlers.get(name)\n"
+        "    def run(inp):\n"
+        "        return real(inp)\n"
+        "    return run\n")
+    hits = scan(planted, "services/planted.py", _handler_names())
+    assert [h[2] for h in hits] == ["hands tool handler 'early' to a call in start()",
+                                    "calls a tool handler through 'real' in run()"], hits
+
+
 def test_every_indirect_exemption_says_why():
-    for where, why in list(REVIEWED_INDIRECT.items()) + list(REVIEWED_DIRECT_MCP.items()):
+    for where, why in (list(REVIEWED_INDIRECT.items()) + list(REVIEWED_DIRECT_MCP.items())
+                       + list(REVIEWED_HANDOFF.items())):
         assert why and "todo" not in why.lower(), where
 
 

@@ -1479,6 +1479,9 @@ def chat_stream():
             tool_token = _mr.TOOL_SINK.set(lambda ev: q.put(("tool", ev)))
         except Exception:
             tool_token = None
+        # Where each model round starts and where it calls a tool (model_router.ROUND_SINK),
+        # so the phone relay can stream a round's answer and never a tool round's narration.
+        round_token = _mr.ROUND_SINK.set(lambda ev: q.put(("round", ev)))
         _crew_token = _crew_runtime.HOST_ORIGIN.set(_crew_origin)
         try:
             rv = chat()
@@ -1507,6 +1510,10 @@ def chat_stream():
                     _mr.TOOL_SINK.reset(tool_token)
                 except Exception:
                     pass
+            try:
+                _mr.ROUND_SINK.reset(round_token)
+            except Exception:
+                pass
             try:
                 _corr_cm.__exit__(None, None, None)
             except Exception:
@@ -1553,6 +1560,10 @@ def chat_stream():
             if kind == "tool":
                 # Live tool progress: what Friday is doing, while it does it.
                 yield "data: " + json.dumps({"tool": val}) + SEP
+                continue
+            if kind == "round":
+                # Round boundaries (the desktop page ignores this frame; the phone relay reads it).
+                yield "data: " + json.dumps({"round": val}) + SEP
                 continue
             if "error" in box:
                 yield "data: " + json.dumps({"error": box["error"]}) + SEP
@@ -2729,6 +2740,8 @@ def chat():
         _sess_ctx = {
             "_laya_pilot": _pilot,
             "authenticated": bool(session.get("authenticated")) or not bool(FRIDAY_PASSWORD),
+            # A person's chat turn, waiting on the answer (services/kg_fastpath reads it).
+            "interactive_chat": True,
             "provider": _provider,
             # The routed model, read by the governance receipt's `chosen_by`.
             "model": str(_route_info.get('model') or ''),
@@ -4214,6 +4227,7 @@ def chat_send():
         _sess_ctx = {
             "_laya_pilot": _pilot,
             "authenticated": bool(session.get("authenticated")) or not bool(FRIDAY_PASSWORD),
+            "interactive_chat": True,                   # a person's chat turn (services/kg_fastpath)
             "conversation_id": _conversation_id,
             "off_record_turn": _turn_off_record,        # household capture (NS-15.8-2)
         }
