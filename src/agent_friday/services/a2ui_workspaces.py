@@ -1,8 +1,10 @@
 """Workspaces as A2UI documents: the builtin documents Friday ships, the current view of a workspace, and how an
 owner's change (a signed proposal from a phone, or a press at the PC) becomes a new version.
 
-Contract draft 3, sections 1-2 and 4. A shipped workspace with no stored file is served from its builtin document,
-whose revision is `builtin-<sha256 of its canonical JSON>`; the first change stores the builtin document first and the
+Contract draft 3, sections 1-2 and 4. A shipped workspace with no stored file is served from its builtin document:
+the designed one in BUILTINS, or else one generated from its device block (`generated`), so every workspace the PC
+serves to a device has a view and none is left as the verb list. A builtin document's revision is
+`builtin-<sha256 of its canonical JSON>`; the first change stores the builtin document first and the
 change second, both reversible versions in services/a2ui_store. His customizations (accent, density, summary, note,
 hidden parts) are properties of the stored document. Every document here is authored `builtin` (V14) and carries no
 data of its own (V7): data comes only through declared bindings, resolved by services/a2ui_broker.
@@ -14,7 +16,8 @@ carried. The carried look is part of the builtin rev, so a phone holding the rev
 never merged. The first change stores the carried look as the earlier version; from then on the stored document is the
 record, and Studio changes no longer reach it.
 
-tests/unit/test_a2ui_conformance.py, test_tv_ws_view.py and test_a2ui_custom_workspaces.py hold the rules.
+tests/unit/test_a2ui_conformance.py, test_tv_ws_view.py, test_a2ui_custom_workspaces.py and
+test_a2ui_generated_workspaces.py hold the rules.
 """
 from __future__ import annotations
 
@@ -97,17 +100,72 @@ def _governance() -> list:
 
 
 BUILTINS = {"knowledge": _knowledge, "futurespeak": _futurespeak, "governance": _governance}
-#: The registry's names (static/workspace_registry.js).
+#: The registry's names (static/workspace_registry.js) of the designed documents.
 LABELS = {"knowledge": "Knowledge", "futurespeak": "Sites", "governance": "Governance"}
 #: Views drawn on this PC only: no device block serves them, and the desktop route answers this PC alone.
 #: tests/unit/test_governance_view.py: test_the_governance_view_is_never_served_to_a_device;
 #: tests/api/test_governance_view_route.py: test_the_governance_view_opens_on_this_pc_only.
 DESKTOP_ONLY = frozenset({"governance"})
+#: Rows a generated document shows per section; the shell's own browser (its nav_link) pages through the rest.
+ROWS_SHOWN = 20
+#: Generated table columns: (row key from the broker's ws.rows, the device-block role that fills it).
+_COLUMNS = (("title", "title"), ("detail", "line"), ("when", "when"), ("state", "state"))
+
+
+def _section_parts(ws: str, section: str, spec: dict, roles: dict) -> tuple:
+    """One section of a generated document: its components and its binding. A timeline section reads as a timeline,
+    every other one as a table of the columns its kind's roles fill."""
+    path = "/%s/%s" % (ws, section)
+    if spec.get("view") == "timeline":
+        rows = {"id": "rows_" + section, "component": "timeline", "events": {"@path": path}}
+    else:
+        rows = {"id": "rows_" + section, "component": "record_table", "rows": {"@path": path},
+                "columns": [col for col, role in _COLUMNS if roles.get(role)]}
+    rows["@accessibility"] = {"label": spec["label"]}
+    parts = [{"id": "block_" + section, "component": "status_block", "title": spec["label"],
+              "children": ["rows_" + section, "open_" + section]},
+             rows,
+             # the shell's own list, reader and search for the section, by internal id: never a URL (V8)
+             {"id": "open_" + section, "component": "nav_link", "label": "Browse " + spec["label"],
+              "destination": "%s.%s" % (ws, section)}]
+    binding = {"path": path, "query": "ws.rows", "params": {"ws": ws, "section": section, "limit": ROWS_SHOWN}}
+    return parts, binding
+
+
+def generated(ws: str):
+    """The document generated from ws's device block: a heading, then one block per section the PC serves, in the
+    block's order, each reading only that section through ws.rows. None when the PC serves ws no section. Raises
+    only when the workspace registry or manifest cannot be read."""
+    from agent_friday.tv_gateway import ws_content
+    served = ws_content.serving(ws)
+    if served is None:
+        return None
+    adapters, block = served
+    components, bindings, tops = [], {}, []
+    for section, spec in block["sections"].items():
+        if section in adapters:
+            parts, bindings[section] = _section_parts(ws, section, spec, block["kinds"][spec["kind"]]["roles"])
+            components += parts
+            tops.append(parts[0]["id"])
+    return _surface([{"id": "root", "component": "column", "children": ["title", *tops]},
+                     {"id": "title", "component": "text_block", "style": "heading", "text": label_of(ws)},
+                     *components], bindings)
+
+
+def label_of(ws: str) -> str:
+    from agent_friday.services import workspace_registry
+    return LABELS.get(ws) or workspace_registry.label(ws)
 
 
 def builtin(ws: str) -> list:
-    """A fresh copy of the builtin document. KeyError for a workspace with none."""
-    return copy.deepcopy(BUILTINS[ws]())
+    """A fresh copy of the builtin document: the designed one, else the generated one. KeyError for a workspace with
+    neither."""
+    if ws in BUILTINS:
+        return copy.deepcopy(BUILTINS[ws]())
+    doc = generated(ws)
+    if doc is None:
+        raise KeyError(ws)
+    return doc
 
 
 def subject(ws: str) -> str:
@@ -170,15 +228,22 @@ def check_document(ws: str, doc) -> list:
     return doc
 
 
-def _check_reads(doc: list, sections) -> None:
-    """Every binding is in the broker's vocabulary and reads a section the device block serves; otherwise the view
-    would be hidden after the write and every later proposal, restore included, would 404."""
+def _reads_only(doc: list, ws: str, sections) -> bool:
+    """True when every binding of doc reads ws itself, a section among `sections`. Raises BrokerRefused for a binding
+    outside the broker's vocabulary."""
+    from agent_friday.services import a2ui_broker
+    return sections is not None and all(w == ws and s in set(sections) for w, s in a2ui_broker.reads(doc))
+
+
+def _check_reads(doc: list, ws: str, sections) -> None:
+    """Every binding is in the broker's vocabulary and reads a section of ws the device block serves; otherwise the
+    view would be hidden after the write and every later proposal, restore included, would 404."""
     from agent_friday.services import a2ui_broker
     try:
-        read = a2ui_broker.sections_read(doc)
+        ok = _reads_only(doc, ws, sections)
     except a2ui_broker.BrokerRefused as e:
         raise store.ViewRefused("bindings", str(e)) from e
-    if sections is None or not read <= set(sections):
+    if not ok:
         raise store.ViewRefused("bindings", "this workspace does not serve what that document reads")
 
 
@@ -222,11 +287,12 @@ def builtin_rev(ws: str) -> str:
 
 
 def serves(ws: str, declared_sections) -> bool:
-    """True when ws has a view and every section its bindings read is among the device block's declared sections."""
+    """True when ws has a view and its bindings read only ws's own sections, each among the device block's declared
+    ones."""
     from agent_friday.services import a2ui_broker
     try:
         view = current(ws)
-        return view is not None and a2ui_broker.sections_read(view["doc"]) <= set(declared_sections)
+        return view is not None and _reads_only(view["doc"], ws, declared_sections)
     except (ValueError, store.ViewCorrupt, a2ui_broker.BrokerRefused):
         return False
 
@@ -235,14 +301,15 @@ def current(ws: str) -> dict | None:
     """{view, label, rev, doc, customization, versions, stored} or None. Raises store.ViewCorrupt for a damaged file."""
     stored = store.load(ws) if store._VIEW_ID.fullmatch(ws or "") else None
     if stored is not None:
-        return {"view": ws, "label": stored.get("label") or LABELS.get(ws, ws), "rev": stored["rev"],
+        return {"view": ws, "label": stored.get("label") or label_of(ws), "rev": stored["rev"],
                 "doc": stored["doc"], "customization": stored["customization"],
                 "versions": len(stored["versions"]), "stored": True}
-    if ws not in BUILTINS:
+    try:
+        doc = builtin(ws)
+    except KeyError:
         return None
-    doc = builtin(ws)
     look = carried_look(ws, doc)
-    return {"view": ws, "label": LABELS.get(ws, ws), "rev": _rev_of(doc, look), "doc": doc,
+    return {"view": ws, "label": label_of(ws), "rev": _rev_of(doc, look), "doc": doc,
             "customization": look, "versions": 0, "stored": False}
 
 
@@ -283,7 +350,7 @@ def apply_change(ws: str, change, *, base_rev: str, by: str, sections=None) -> d
                       None)
         if target is not None:
             check_document(ws, target["doc"])
-            _check_reads(target["doc"], sections)
+            _check_reads(target["doc"], ws, sections)
         got = store.restore(ws, str(change["restore"]), base_rev=base_rev, by=by, ctx=doc_ctx(ws))
     return {"rev": got["rev"], "version": got["versions"]}
 
@@ -293,7 +360,7 @@ def _document(ws: str, view: dict, doc, label: str, base_rev: str, by: str, sect
     as the earlier version, in the same write. His customization stays; hidden ids the new document no longer has are
     dropped and named."""
     check_document(ws, doc)
-    _check_reads(doc, sections)
+    _check_reads(doc, ws, sections)
     ids = store._component_ids(doc)
     if not view["stored"] and base_rev != view["rev"]:
         raise store.ViewStale(view["rev"])
@@ -302,7 +369,7 @@ def _document(ws: str, view: dict, doc, label: str, base_rev: str, by: str, sect
 
     def build(previous):
         if previous is None:
-            previous = {"id": ws, "label": LABELS.get(ws, ws), "subject": subject(ws), "authorship": "builtin",
+            previous = {"id": ws, "label": label_of(ws), "subject": subject(ws), "authorship": "builtin",
                         "doc": view["doc"], "customization": dict(view["customization"]), "versions": [],
                         "updated_by": "builtin", "updated": None}
         versions = list(previous["versions"]) + [store._snapshot(previous, store.KIND_CHANGE)]
@@ -316,17 +383,18 @@ def _document(ws: str, view: dict, doc, label: str, base_rev: str, by: str, sect
 def _reset(ws: str, view: dict, base_rev: str, by: str) -> dict:
     """Back to the builtin document and its carried Studio look, rebuilt from code, as a new version (so the version
     cap can never put the builtin out of reach). With nothing stored it changes nothing and answers the builtin rev."""
-    if ws not in BUILTINS:
-        raise store.ViewRefused("version", "this view has no builtin to go back to")
+    try:
+        doc = check_document(ws, builtin(ws))
+    except KeyError:
+        raise store.ViewRefused("version", "this view has no builtin to go back to") from None
     if not view["stored"]:
         if base_rev != view["rev"]:
             raise store.ViewStale(view["rev"])
         return {"rev": view["rev"], "version": 0}
-    doc = check_document(ws, builtin(ws))
 
     def build(previous):
         versions = list(previous["versions"]) + [store._snapshot(previous, store.KIND_CHANGE)]
-        return {**previous, "label": LABELS.get(ws, ws), "authorship": "builtin", "model_authored": False,
+        return {**previous, "label": label_of(ws), "authorship": "builtin", "model_authored": False,
                 "approved_by": by, "doc": doc, "customization": carried_look(ws, doc),
                 "versions": versions[-store.MAX_VERSIONS:], "updated_by": by}
     got = store._commit(ws, build, base_rev)
@@ -342,7 +410,7 @@ def _first_change(ws: str, doc: list, carried: dict, patch, by: str) -> dict:
     look = {**carried, **store._typed_look(patch, doc)}
 
     def build(previous):
-        base = {"id": ws, "label": LABELS.get(ws, ws), "subject": subject(ws), "authorship": "builtin", "doc": doc,
+        base = {"id": ws, "label": label_of(ws), "subject": subject(ws), "authorship": "builtin", "doc": doc,
                 "customization": dict(carried), "versions": [], "updated_by": "builtin", "updated": None}
         return {**base, "customization": look, "versions": [store._snapshot(base, store.KIND_CHANGE)], "updated_by": by}
     got = store._commit(ws, build, store.NEW_REVISION)

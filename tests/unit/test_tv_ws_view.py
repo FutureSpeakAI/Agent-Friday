@@ -96,7 +96,7 @@ def test_a_view_needs_an_owner_device_with_the_read_right(client):
 
 def test_a_workspace_with_no_document_is_404_never_an_empty_view(client):
     dev = Enrolled(client)
-    for ws in ("calendar", "no-such", "..", "KNOWLEDGE"):
+    for ws in ("health", "no-such", "..", "KNOWLEDGE"):      # health has no device block
         assert dev.get("/tv/v1/workspaces/%s/view" % ws).status_code == 404, ws
 
 
@@ -138,7 +138,8 @@ def test_the_workspace_list_marks_the_a2ui_ones(client):
     dev = Enrolled(client)
     rows = dev.get("/tv/v1/workspaces").get_json()["workspaces"]
     a2ui = {w["id"] for w in rows if w.get("renderer") == "a2ui"}
-    assert a2ui == {"knowledge", "futurespeak"}, "the workspaces with a builtin document and a device block"
+    # designed documents (knowledge, futurespeak) and generated ones for every other served workspace
+    assert a2ui == {"knowledge", "futurespeak", "calendar", "code", "crew", "news"}
     assert all(w.get("renderer") == "legacy" for w in rows if w["id"] not in a2ui)
 
 

@@ -6,9 +6,12 @@ broker holds the rest:
 
 * the query and every parameter must be in the closed VOCABULARY below, typed; anything else refuses the WHOLE
   document (rule V7) before anything is read. The vocabulary grows one reviewed query at a time (D-C);
-* queries read through the same in-process adapters the device content routes use (tv_gateway/ws_knowledge,
-  ws_futurespeak), or the governance receipt store (services/governance_receipts), never a host path, and return
-  plain rows;
+* queries read through the same in-process adapters the device content routes use (tv_gateway/ws_content.ADAPTERS),
+  or the governance receipt store (services/governance_receipts), never a host path, and return plain rows. `ws.rows`
+  is the generic one: any section an adapter serves, as four capped strings (title, detail, when, state) and nothing
+  else of the row;
+* every query names the workspace and section it reads (`reads`), so a view can be held to its own workspace's
+  declared sections;
 * a row holding a URL is dropped and counted, so one odd page title can't blank the whole view; the renderer then
   re-checks every bound value anyway (V8/V11);
 * the answer is keyed by the binding path (what a2ui_render.render takes as `data`), with `as_of` and `ttl_s`.
@@ -26,6 +29,11 @@ from agent_friday.services import a2ui_profile as prof
 TTL_S = 30
 SECTIONS_MAX = 40
 PROJECTS_MAX = 40
+ROWS_MAX = 40
+TITLE_MAX = 120
+DETAIL_MAX = 160
+WHEN_MAX = 40
+STATE_MAX = 30
 
 
 class BrokerRefused(ValueError):
@@ -93,6 +101,33 @@ def _projects(params: dict, run: _Run) -> list:
             for r in run.rows(ws_futurespeak)][:PROJECTS_MAX]
 
 
+def _served_adapter(params: dict):
+    """The content adapter serving params' workspace section, or None."""
+    from agent_friday.tv_gateway import ws_content
+    return ws_content.ADAPTERS.get(params["ws"], {}).get(params["section"])
+
+
+def _text(value, cap: int) -> str:
+    """A plain one-line string of at most cap characters; anything that is not a string is empty."""
+    if not isinstance(value, str):
+        return ""
+    return "".join(c for c in value if c.isprintable())[:cap]
+
+
+def _rows(params: dict, run: _Run) -> list:
+    """Any served section's rows as {title, detail, when, state}: only those four, each a capped plain string. The
+    adapter's other fields (ref, sensitivity, anything a future adapter adds) never reach the document."""
+    return [{"title": _text(r.get("title"), TITLE_MAX), "detail": _text(r.get("line"), DETAIL_MAX),
+             "when": _text(r.get("when"), WHEN_MAX), "state": _text(r.get("state"), STATE_MAX)}
+            for r in run.rows(_served_adapter(params))[:params["limit"]]]
+
+
+def _name(value) -> bool:
+    """A workspace or section id: lower-case ASCII letters, digits and underscores."""
+    return (isinstance(value, str) and 0 < len(value) <= 40 and value.isascii()
+            and all(c.islower() or c.isdigit() or c == "_" for c in value))
+
+
 def _governance_store():
     from agent_friday.services import governance_receipts
     governance_receipts.refresh()
@@ -118,24 +153,35 @@ VOCABULARY: dict = {
     "knowledge.sections": ({}, _sections),
     "knowledge.recent": ({"limit": _int_param(1, 20)}, _recent),
     "futurespeak.projects": ({}, _projects),
+    "ws.rows": ({"ws": _name, "section": _name, "limit": _int_param(1, ROWS_MAX)}, _rows),
     "governance.recent": ({"limit": _int_param(1, 50)}, _receipts_recent),
     "governance.models": ({}, _receipts_models),
 }
 
-#: query -> the device-block section its rows come from. A view is served only where every section its bindings read
-#: is declared (test_a2ui_broker: test_every_query_names_the_section_it_reads).
+#: query -> what it reads, as (workspace, device-block section), from its checked params. A view is served only where
+#: it reads its own workspace and every section is declared (test_a2ui_broker: test_every_query_names_the_section_it_reads).
 READS: dict = {
-    "knowledge.sections": "pages",
-    "knowledge.recent": "pages",
-    "futurespeak.projects": "projects",
-    "governance.recent": "receipts",
-    "governance.models": "receipts",
+    "knowledge.sections": lambda params: ("knowledge", "pages"),
+    "knowledge.recent": lambda params: ("knowledge", "pages"),
+    "futurespeak.projects": lambda params: ("futurespeak", "projects"),
+    "ws.rows": lambda params: (params["ws"], params["section"]),
+    "governance.recent": lambda params: ("governance", "receipts"),
+    "governance.models": lambda params: ("governance", "receipts"),
 }
+#: query -> params it must be sent (the rest have defaults).
+REQUIRED: dict = {"ws.rows": {"ws", "section", "limit"}}
+#: query -> a check of its params together, after each one passed its own.
+TOGETHER: dict = {"ws.rows": lambda params: _served_adapter(params) is not None}
+
+
+def reads(doc) -> frozenset:
+    """The (workspace, section) pairs a document's declared bindings read. Raises BrokerRefused like check_bindings."""
+    return frozenset(READS[query](params) for _path, query, params in check_bindings(doc))
 
 
 def sections_read(doc) -> frozenset:
-    """The device-block sections a document's declared bindings read. Raises BrokerRefused like check_bindings."""
-    return frozenset(READS[query] for _path, query, _params in check_bindings(doc))
+    """The device-block sections a document's declared bindings read, whatever workspace. Raises BrokerRefused."""
+    return frozenset(section for _ws, section in reads(doc))
 
 
 def check_bindings(doc) -> list:
@@ -160,9 +206,13 @@ def check_bindings(doc) -> list:
         allowed, _ = VOCABULARY[query]
         if not isinstance(params, dict) or set(params) - set(allowed):
             raise BrokerRefused("query %s takes no such parameter" % query)
+        if missing := REQUIRED.get(query, set()) - set(params):
+            raise BrokerRefused("query %s needs %s" % (query, ", ".join(sorted(missing))))
         for key, value in params.items():
             if not allowed[key](value):
                 raise BrokerRefused("query %s: parameter %s is out of range" % (query, key))
+        if not TOGETHER.get(query, lambda p: True)(params):
+            raise BrokerRefused("query %s: nothing is served for those parameters" % query)
         out.append((path, query, params))
     return out
 

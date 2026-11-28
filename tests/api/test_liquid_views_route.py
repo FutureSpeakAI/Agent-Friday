@@ -48,7 +48,7 @@ def test_his_customization_from_the_phone_is_what_the_desktop_draws(client):
 
 
 def test_a_workspace_with_no_document_is_404(client):
-    assert client.get("/api/liquid/views/calendar/rendered").status_code == 404
+    assert client.get("/api/liquid/views/health/rendered").status_code == 404
     assert client.get("/api/liquid/views/..%2Fsecrets/rendered").status_code == 404
 
 
