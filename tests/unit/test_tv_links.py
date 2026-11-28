@@ -139,8 +139,10 @@ def test_an_answer_with_no_marker_carries_an_empty_list(client, wire):
 def test_each_assistant_message_of_a_chat_carries_its_links(client, desk):
     desk.msgs["c1"] = [{"id": "m1", "role": "user", "content": "[wiki:Typed by me]"},
                        {"id": "m2", "role": "assistant", "content": "See [lib:4#2]."},
-                       {"id": "m3", "role": "assistant", "text": "Nothing to open."}]
+                       {"id": "m3", "role": "assistant", "text": "Nothing to open."},
+                       {"id": "m4", "role": "friday", "text": "Her stored form: [wiki:Solar roof]."}]
     got = get(client, paired(), "/tv/v1/chats/c1/messages").get_json()["messages"]
     assert "links" not in got[0]
     assert [row["uri"] for row in got[1]["links"]] == ["friday://lib/4#2"]
     assert got[2]["links"] == []
+    assert [row["kind"] for row in got[3]["links"]] == ["wiki"]
