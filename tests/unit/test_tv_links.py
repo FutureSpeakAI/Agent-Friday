@@ -63,6 +63,18 @@ def test_an_unverified_marker_is_never_a_link():
     "file:///C:/Windows",
     "https://exa mple.org/",                     # a space
     "https://example.org/\x07",                  # a control character
+    "HTTPS://example.org/x",                    # the provenance check rewrites only a lower-case https citation
+    "Https://example.org/x",
+    "https://example.org/a b",             # a no-break space: provenance stops at it, so it was never checked
+    "https://example.org/a b",
+    "https://127.0.0。1/",                  # an ideographic full stop folds to "." in IDNA: an address
+    "https://a.printer。local/",            # ...or a local name
+    "https://router．lan/",
+    "https://evil.com\\.example.org/",          # a browser reads the backslash as "/" and opens evil.com
+    "https://0x7f.1/",                          # a browser opens these as 127.0.0.1
+    "https://0x7f.0.0.1/",
+    "https://example.123/",                     # a numeric last label
+    "https://exa_mple.org/",                    # not a DNS label
 ])
 def test_a_web_address_that_could_mislead_or_reach_inside_the_house_is_never_a_link(url):
     assert links.found("[web:%s]" % url) == []
@@ -72,6 +84,22 @@ def test_a_look_alike_host_is_shown_in_ascii():
     (link,) = links.found("[web:https://аpple.com/]")       # the first letter is Cyrillic
     assert link.host == "xn--pple-43d.com" and link.label == link.host
     assert link.uri == "https://xn--pple-43d.com/"                         # what opens is the host that was shown
+
+
+def test_the_address_opened_is_ascii_and_keeps_its_port():
+    (link,) = links.found("[web:https://exämple.org:8443/café?q=ü#fü]")
+    assert link.uri == "https://xn--exmple-cua.org:8443/caf%C3%A9?q=%C3%BC#f%C3%BC" and link.host == "xn--exmple-cua.org"
+
+
+def test_an_unclosed_marker_never_makes_the_scan_slow():
+    import time
+    started = time.monotonic()
+    assert links.found("[web:" * 200_000) == []
+    assert time.monotonic() - started < 1.0
+
+
+def test_library_numbers_are_ascii_digits_only():
+    assert links.found("[lib:٤#٢]") == []
 
 
 def test_a_repeated_marker_is_one_link_and_the_list_is_capped():

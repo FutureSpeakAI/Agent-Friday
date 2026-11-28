@@ -4,9 +4,12 @@ A reply's text keeps its markers (``[web:URL]``, ``[lib:3#7]``, ``[wiki:Solar ro
 ``found(text)`` returns one ``Link`` per distinct marker that may become a tap target, in order of first appearance,
 at most ``MAX_LINKS``. A device draws a marker as a link ONLY when it is in this list, and opens ``uri``:
 
-* ``web``: the ``https`` address rebuilt with its host in ASCII, opened after the device shows that ``host``. The chat route has already rewritten every web
-  citation no tool touched this turn to ``[unverified-web:...]`` (services/response_provenance.py); that form, plain
-  ``http``, an address with a user name, an IP literal, a local name or a control character is never a link here.
+* ``web``: the address rebuilt in ASCII (host in punycode, path and query percent-encoded), opened after the device shows
+  that ``host``. Only a body of the exact shape the chat route's provenance check reads (services/response_provenance.py:
+  a lower-case ``https://`` and no whitespace of any kind) is considered, so a citation that check could not see is
+  never a link; ``[unverified-web:...]`` never is either. The host must be plain DNS labels after IDNA folding, with a
+  dot and a last label that is not a number; no user name, IP address, local name, backslash, control or invisible
+  character.
 * ``lib``: ``friday://lib/<doc>#<block>``. The chat route has already made a citation this turn's search did not
   return ``[unverified-lib:...]``, which is never a link here.
 * ``wiki``: ``friday://wiki/<page name, percent-encoded>``; the device looks the name up when it is tapped.
@@ -33,9 +36,12 @@ SCHEME = "friday://"
 _LOCAL_SUFFIXES = (".local", ".localhost", ".internal", ".lan", ".home", ".arpa")
 _CONTROL = re.compile(r"[\x00-\x20\x7f-\x9f]")
 _CONTROL_IN_NAME = re.compile(r"[\x00-\x1f\x7f-\x9f]")
-_MARKER = re.compile(r"\[(web|lib|wiki|memory|conversation):([^\]\n]{1,%d})\]" % MAX_URL)
-_LIB = re.compile(r"^(\d{1,9})#(\d{1,9})$")
-_DIGITS_AND_DOTS = re.compile(r"^[\d.]+$")
+_OPEN = re.compile(r"\[(web|lib|wiki|memory|conversation):")
+_LIB = re.compile(r"^([0-9]{1,9})#([0-9]{1,9})$")
+_WEB_BODY = re.compile(r"https://[^\]\s\\]+")
+_LABEL = r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?"
+_DNS_HOST = re.compile(r"^%s(?:\.%s)+$" % (_LABEL, _LABEL))
+_URL_SAFE = "/%:@!$&'()*+,;=-._~"
 
 
 class Kind(str, Enum):
@@ -70,28 +76,24 @@ def _is_ip(host: str) -> bool:
 
 
 def web_target(url: str) -> Optional[tuple[str, str]]:
-    """(the address to open, the host to show before leaving Friday), or None when ``url`` must not be a link. Both
-    use the host in ASCII (punycode), so a look-alike name reads as itself and what opens is what was shown."""
-    if len(url) > MAX_URL or _CONTROL.search(url) or _hidden_format(url):
+    """(the address to open, the host to show before leaving Friday), or None when ``url`` must not be a link. Every
+    host rule is checked on the host as it will be opened: after IDNA, which folds look-alike dots into "."."""
+    if len(url) > MAX_URL or not _WEB_BODY.fullmatch(url) or _CONTROL.search(url) or _hidden_format(url):
         return None
     try:
         parts = urlsplit(url)
         port = parts.port                            # raises on a port that is not a number in range
-    except ValueError:
+        host = (parts.hostname or "").rstrip(".").encode("idna").decode("ascii").lower()
+    except (ValueError, UnicodeError):
         return None
-    host = (parts.hostname or "").rstrip(".")
-    if parts.scheme != "https" or not host or parts.username is not None or parts.password is not None:
+    if parts.username is not None or parts.password is not None or not _DNS_HOST.match(host):
         return None
-    if _is_ip(host) or _DIGITS_AND_DOTS.match(host):
+    last = host.rsplit(".", 1)[-1]
+    if last.isdigit() or last.startswith("0x") or _is_ip(host) or host.endswith(_LOCAL_SUFFIXES):
         return None
-    if "." not in host or host == "localhost" or host.endswith(_LOCAL_SUFFIXES):
-        return None
-    try:
-        ascii_host = host.encode("idna").decode("ascii").lower()
-    except UnicodeError:
-        return None
-    netloc = ascii_host if port is None else "%s:%d" % (ascii_host, port)
-    return urlunsplit(("https", netloc, parts.path, parts.query, parts.fragment)), ascii_host
+    netloc = host if port is None else "%s:%d" % (host, port)
+    return urlunsplit(("https", netloc, quote(parts.path, safe=_URL_SAFE), quote(parts.query, safe=_URL_SAFE + "?"),
+                       quote(parts.fragment, safe=_URL_SAFE + "?"))), host
 
 
 def _hidden_format(text: str) -> bool:
@@ -123,16 +125,38 @@ def _link(n: int, kind_word: str, body: str, marker: str) -> Optional[Link]:
     return Link(n, Kind.SEARCH, marker, SCHEME + "search/" + quote(words, safe=""), "Past conversation · " + words)
 
 
+def _markers(text: str):
+    """(kind word, body, whole marker) for each ``[kind:body]`` with a body of 1 to MAX_URL characters on one line. The
+    next "]" and the next newline are remembered between markers, so an unclosed marker costs no rescan."""
+    pos, close, newline = 0, -1, -1
+    while True:
+        m = _OPEN.search(text, pos)
+        if m is None:
+            return
+        start = m.end()
+        if close < start:
+            close = text.find("]", start)
+            if close < 0:
+                return
+        if newline < start:
+            newline = text.find("\n", start)
+            newline = newline if newline >= 0 else len(text)
+        if close == start or close - start > MAX_URL or newline < close:
+            pos = m.start() + 1
+            continue
+        yield m.group(1), text[start:close], text[m.start():close + 1]
+        pos = close + 1
+
+
 def found(text: str) -> list[Link]:
     """The tap targets in ``text``: one per distinct allowed marker, numbered from 1 in order, at most MAX_LINKS."""
     links: list[Link] = []
     seen: set[str] = set()
-    for m in _MARKER.finditer(text or ""):
-        marker = m.group(0)
+    for kind_word, body, marker in _markers(text or ""):
         if marker in seen:
             continue
         seen.add(marker)
-        link = _link(len(links) + 1, m.group(1), m.group(2), marker)
+        link = _link(len(links) + 1, kind_word, body, marker)
         if link is not None:
             links.append(link)
             if len(links) == MAX_LINKS:
