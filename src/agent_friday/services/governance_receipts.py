@@ -11,13 +11,14 @@ reached; so no row is skipped however busy the PC was while the view was closed,
 index from the ledger (test_a_busy_ledger_is_indexed_whole_across_syncs, test_rebuild_refills_the_index_from_the_ledger).
 
 Rules (tests/unit/test_governance_receipts.py):
-* the plain line is built from the fixed words in `_LINES` plus a model or tool name that is name-shaped; no other
+* the plain line is built from the fixed words in `_LINES` plus the shown model or tool name (`_display`); no other
   field of a row ever reaches it (test_no_free_text_from_any_activity_field_ever_reaches_the_line);
 * where a model ran comes from the seat the caller recorded, then the provider, and is otherwise "not recorded",
   never guessed (test_where_a_model_ran_is_never_guessed_when_the_provider_was_not_recorded,
   test_a_local_seat_is_on_this_pc_whatever_dialect_it_spoke);
-* a model or tool name that looks like a path or an address is not a name and never reaches the line
-  (test_a_path_or_address_is_never_taken_for_a_name);
+* a recorded model name is never erased: it is shown in a form the view cannot drop, and the models table counts
+  every model receipt (test_every_name_a_receipt_keeps_survives_the_view); a path shows only its file name and an
+  address is never shown (test_a_path_or_address_is_never_taken_for_a_name);
 * every activity kind has a line, so a new kind without one fails that same test.
 
 Every receipt read here is the owner's (`audience` "owner"); the governance view is never served to a device
@@ -53,7 +54,6 @@ LOCAL_SEATS = frozenset({"local", "llama-cpp-local", "ollama-local"})
 #: None means the default under the Friday folder; tests point it at a temporary file.
 DB_PATH: Optional[Path] = None
 
-_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:/@+-]{0,79}")
 _ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:+-]{0,79}")
 
 #: activity kind -> (family, line with {model}/{tool} only). The only words a line is made of.
@@ -92,26 +92,46 @@ class Receipt:
 _COLUMNS = tuple(f.name for f in fields(Receipt))
 
 
-#: A drive path, a rooted or home path, a backslash, or an address: never a name.
-_PATHISH = re.compile(r"^[A-Za-z]:[/\\]|^[/~]|@|\\")
+#: A drive path, a rooted or home path, or a backslash: a file the model was loaded from, shown by its file name.
+_PATHISH = re.compile(r"^[A-Za-z]:[/\\]|^[/~]|\\")
+_RECORDED_MAX = 200          # the activity ledger's own cap on a text field
+SHOWN_MAX = 80
+#: A recorded name that cannot be shown without showing an address.
+NAME_NOT_SHOWN = "name not shown"
+#: What the models table says for model work whose name was not recorded.
+NAME_NOT_RECORDED = "name not recorded"
 
 
-def _name(v) -> Optional[str]:
-    """A model or tool name, or None: one-line name-shaped text that is not a path or an address."""
-    return v if isinstance(v, str) and _NAME.fullmatch(v) and not _PATHISH.search(v) else None
+def _recorded(v) -> Optional[str]:
+    """A recorded model or tool id: one line of text, at most the ledger's cap; None when nothing was recorded."""
+    if not isinstance(v, str) or not v.strip() or len(v) > _RECORDED_MAX:
+        return None
+    return None if any(ord(c) < 32 or 0x7f <= ord(c) < 0xa0 for c in v) else v.strip()
 
 
-def _shown(name: Optional[str]) -> Optional[str]:
-    """The name as the view shows it: leading segments the A2UI profile would read as an address (a hub host such
-    as `hf.co/`) are dropped, so a local model is never filtered out of the view as a link; None when nothing of it
-    is left. Judged by the profile's own `has_url`, the rule the broker drops rows by
-    (test_every_name_a_receipt_keeps_survives_the_view)."""
+def _display(name: Optional[str]) -> Optional[str]:
+    """A recorded id as the view shows it, never erased: a path by its file name (never the folders, which can name
+    a person); an id the view keeps as it is, unchanged; otherwise (one the A2UI profile would read as a link, such
+    as a hub id, or one too long) every `:tag` as ` (tag)` and every `/` spaced, at most SHOWN_MAX characters; an id
+    that is or holds an address is NAME_NOT_SHOWN. The result never trips the
+    profile's own has_url, the rule the broker drops rows by (test_every_name_a_receipt_keeps_survives_the_view,
+    test_a_path_or_address_is_never_taken_for_a_name)."""
     from agent_friday.services import a2ui_profile
-    while name and a2ui_profile.has_url(name):
-        if "/" not in name:
-            return None
-        name = name.split("/", 1)[1]
-    return name or None
+    if name is None:
+        return None
+    if _PATHISH.search(name):
+        name = re.split(r"[/\\]", name)[-1] or NAME_NOT_SHOWN
+    if "@" in name:
+        return NAME_NOT_SHOWN
+    if len(name) <= SHOWN_MAX and not a2ui_profile.has_url(name):
+        return name
+    head, *tags = name.split(":")
+    shown = " / ".join(p for p in head.split("/") if p) + "".join(" (%s)" % t for t in tags if t)
+    if len(shown) > SHOWN_MAX:
+        shown = shown[:SHOWN_MAX - 1].rstrip() + "…"
+    if not shown.strip() or a2ui_profile.has_url(shown):
+        return NAME_NOT_SHOWN
+    return shown
 
 
 def _id(v) -> Optional[str]:
@@ -149,9 +169,9 @@ def from_activity(row) -> Optional[Receipt]:
         return None
     kind = row["kind"]
     family, line = _LINES[kind]
-    recorded = _name(row.get("model"))
-    model = _shown(recorded)
-    tool = _shown(_name(row.get("tool")))
+    recorded = _recorded(row.get("model"))
+    model = _display(recorded)
+    tool = _display(_recorded(row.get("tool")))
     where = _where(row, recorded) if kind == "model_invocation" else None
     outcome = None
     line = line.format(model=model or "A model", tool=tool or "a tool")
@@ -244,11 +264,12 @@ def recent(*, limit: int = 50, family: Optional[str] = None, words: Optional[str
 
 
 def models() -> list[dict]:
-    """Each model that served the owner, where it ran in words, and how many turns: most turns first."""
+    """Each model that served the owner, where it ran in words, and how many turns, most first. Every model receipt
+    is counted: one whose name was not recorded is under NAME_NOT_RECORDED."""
     with _db() as con:
-        got = con.execute("SELECT model, where_ran, COUNT(*) AS n FROM receipts WHERE family = 'model' AND audience = ? "
-                          "AND model IS NOT NULL GROUP BY model, where_ran ORDER BY n DESC, model",
-                          (AUDIENCE_OWNER,)).fetchall()
+        got = con.execute("SELECT COALESCE(model, ?) AS m, where_ran, COUNT(*) AS n FROM receipts "
+                          "WHERE family = 'model' AND audience = ? GROUP BY m, where_ran ORDER BY n DESC, m",
+                          (NAME_NOT_RECORDED, AUDIENCE_OWNER)).fetchall()
     return [{"model": m, "where": WHERE_WORDS.get(w, WHERE_WORDS[None]), "turns": n} for m, w, n in got]
 
 

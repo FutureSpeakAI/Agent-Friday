@@ -88,21 +88,29 @@ def test_a_receipt_row_holding_a_url_is_dropped_and_counted(monkeypatch):
 
 
 NAMES = ["hf.co/sample-org/Sample-12B-QAT:Q4_K_M", "registry.example.test/library/sample:8b", "sample-org/sample-7b",
-         "sample-local:7b", "sample-4.1", "sample.model-v2", "www.sample.test/x", "hf.co"]
+         "sample-local:7b", "sample-4.1", "sample.model-v2", "www.sample.test/x", "hf.co",
+         "hf.co/sample-org/Sample-32B-Instruct-abliterated-uncensored-i1-GGUF-with-a-long-name:Q4_K_M",
+         "hf.co/sample-org/Sample-12B-Data:Q4_K_M", "sample-file:7b", "hf.co/org/Sample2.5-7B/Instruct:Q4",
+         "hf.co/org/Sample2.5-7B/Other:Q4", "C:/models/sample.gguf", "someone@example.test", None, "",
+         "https://example.test/model", "data:text/plain,x", "x" * 199]
 
 
 def test_every_name_a_receipt_keeps_survives_the_view():
-    """The broker drops any row the profile reads as an address (V8). A model id from a hub (hf.co/...) is a local
-    model, not a link: whatever name a receipt keeps reaches the view, and every model with a name is in both tables."""
+    """The broker drops any row the profile reads as an address (V8). No recorded model name is erased or dropped:
+    every model receipt reaches the recent table, the models table counts every one of them, and two different ids
+    stay two rows."""
     rows = [gr.from_activity({"kind": "model_invocation", "ts": 1_800_000_000.0 + i, "seq": i, "model": n,
                               "provider": "llama_cpp", "seat": "local"}) for i, n in enumerate(NAMES)]
     gr.put(rows)
     got = broker.resolve(aws.builtin("governance"), sensitivity="owner")
     assert got["dropped"] == 0
-    named = {r.model for r in rows if r.model}
-    assert "Sample-12B-QAT:Q4_K_M" in {m.split("/")[-1] for m in named}
-    assert {m["model"] for m in got["data"]["governance"]["models"]} == named
     assert len(got["data"]["governance"]["recent"]) == len(NAMES)
+    models = got["data"]["governance"]["models"]
+    assert sum(m["turns"] for m in models) == len(NAMES)
+    shown = [r.model for r in rows]
+    assert "hf.co / sample-org / Sample-12B-QAT (Q4_K_M)" in shown
+    assert shown[NAMES.index("hf.co/org/Sample2.5-7B/Instruct:Q4")] != shown[NAMES.index("hf.co/org/Sample2.5-7B/Other:Q4")]
+    assert {m["model"] for m in models} >= {gr.NAME_NOT_RECORDED, gr.NAME_NOT_SHOWN, "sample.gguf"}
     assert all(r.where == gr.ON_THIS_PC for r in rows)
 
 
