@@ -1,0 +1,20 @@
+{
+  "_comment": "Fine-tuned LoRA adapters Friday may install as their own seats (services/adapter_seats). Each entry pins the adapter's sha256: only that exact file installs. source is where the file is found, relative to Friday's home; the app takes no path from a request. base_from names the store record whose weights and projector the seat reuses; that record is never modified, so it stays the one-step rollback.",
+  "adapters": [
+    {
+      "model_id": "gemma4:e2b-fridayweaver-2.0-r1",
+      "label": "FridayWeaver-2.0-r1",
+      "base_from": "gemma4:e2b-fridayweaver-1.0",
+      "adapter_file": "fridayweaver-2.0-r1-lora.gguf",
+      "source": "bench/bakeoff-2026-11-18/fw2/fw2r1-lora.gguf",
+      "sha256": "3b678889c13b3edfcf8f7d8161fdfa9618782d3edc003c634d91c8f05a9de1f6",
+      "bytes": 12543968,
+      "origin": {
+        "note": "FridayWeaver-2.0 run 1: same Q8_0 Gemma 4 E2B base as FridayWeaver-1.0, new LoRA (r8/alpha16, gate_proj+up_proj) trained to choose among a shortlist. Converted to GGUF by Friday-Models export/lora_to_gguf.py (2e5f6ca).",
+        "training_run": "Friday-Models train/runs/E2B/20261125-122322",
+        "bakeoff": "clean 208 items, strict: 48.6% with the 12-tool shortlist vs FW1 43.8% (McNemar p 0.021); TTFT p50 0.50 s",
+        "approved": "Stephen via Dispatch, 2026-11-26"
+      }
+    }
+  ]
+}
