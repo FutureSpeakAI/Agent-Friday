@@ -22,7 +22,7 @@ def _views(tmp_path, monkeypatch):
     monkeypatch.setattr(store, "VIEWS_DIR", tmp_path / "liquid" / "views")
     monkeypatch.setattr(gr, "DB_PATH", tmp_path / "receipts.db")
     monkeypatch.setattr(gr, "_is_local", lambda provider, model: True)
-    monkeypatch.setattr(gr, "sync_from_activity", lambda limit=gr.SYNC_ROWS: 0)
+    monkeypatch.setattr(gr, "sync_from_activity", lambda: 0)
     gr.reset()
     gr.put([gr.from_activity({"kind": "model_invocation", "ts": 1_800_000_000.0, "seq": 1,
                               "model": "sample-local:7b", "provider": "llama_cpp"})])

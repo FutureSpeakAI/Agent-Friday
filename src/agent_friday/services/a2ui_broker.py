@@ -7,7 +7,8 @@ broker holds the rest:
 * the query and every parameter must be in the closed VOCABULARY below, typed; anything else refuses the WHOLE
   document (rule V7) before anything is read. The vocabulary grows one reviewed query at a time (D-C);
 * queries read through the same in-process adapters the device content routes use (tv_gateway/ws_knowledge,
-  ws_futurespeak), never a host path, and return plain rows;
+  ws_futurespeak), or the governance receipt store (services/governance_receipts), never a host path, and return
+  plain rows;
 * a row holding a URL is dropped and counted, so one odd page title can't blank the whole view; the renderer then
   re-checks every bound value anyway (V8/V11);
 * the answer is keyed by the binding path (what a2ui_render.render takes as `data`), with `as_of` and `ttl_s`.

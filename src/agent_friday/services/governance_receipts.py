@@ -2,14 +2,22 @@
 
 A source row is parsed into one typed `Receipt` where it enters (`from_activity`) or refused (None). The store is an
 index, not the record: the signed action ledger stays the record, and every receipt here names its origin and its
-place there (`receipt_id` is `<origin>:<source>:<id>`), so the store can be rebuilt from the ledger at any time.
-Each receipt is kept once: `put` is insert-or-ignore on `receipt_id`, so a re-sync or a retried batch stores nothing.
+place there (`receipt_id` is `<origin>:<source>:<id>`). Each receipt is kept once: `put` is insert-or-ignore on
+`receipt_id`, so a re-sync or a retried batch stores nothing.
+
+Sync keeps a cursor over the ledger's activity seqs: every seq in [bottom, top] is indexed. Each sync reads the rows
+above `top` (newest first, stopping at the first known one) and one page below `bottom`, until the ledger's start is
+reached; so no row is skipped however busy the PC was while the view was closed, and `rebuild()` refills the whole
+index from the ledger (test_a_busy_ledger_is_indexed_whole_across_syncs, test_rebuild_refills_the_index_from_the_ledger).
 
 Rules (tests/unit/test_governance_receipts.py):
 * the plain line is built from the fixed words in `_LINES` plus a model or tool name that is name-shaped; no other
   field of a row ever reaches it (test_no_free_text_from_any_activity_field_ever_reaches_the_line);
-* where a model ran is said only when the provider was recorded, never guessed
-  (test_where_a_model_ran_is_never_guessed_when_the_provider_was_not_recorded);
+* where a model ran comes from the seat the caller recorded, then the provider, and is otherwise "not recorded",
+  never guessed (test_where_a_model_ran_is_never_guessed_when_the_provider_was_not_recorded,
+  test_a_local_seat_is_on_this_pc_whatever_dialect_it_spoke);
+* a model or tool name that looks like a path or an address is not a name and never reaches the line
+  (test_a_path_or_address_is_never_taken_for_a_name);
 * every activity kind has a line, so a new kind without one fails that same test.
 
 Every receipt read here is the owner's (`audience` "owner"); the governance view is never served to a device
@@ -37,8 +45,10 @@ OUTCOMES = ("done", "failed")
 AUDIENCE_OWNER = "owner"
 
 READ_MAX = 200
-SYNC_ROWS = 500
+SYNC_PAGE = 500
 SYNC_MIN_S = 15.0
+#: Seats the caller records for work done on this PC, and for work sent out (services/answer_truth.is_local_seat).
+LOCAL_SEATS = frozenset({"local", "llama-cpp-local", "ollama-local"})
 
 #: None means the default under the Friday folder; tests point it at a temporary file.
 DB_PATH: Optional[Path] = None
@@ -82,8 +92,13 @@ class Receipt:
 _COLUMNS = tuple(f.name for f in fields(Receipt))
 
 
+#: A drive path, a rooted or home path, a backslash, or an address: never a name.
+_PATHISH = re.compile(r"^[A-Za-z]:[/\\]|^[/~]|@|\\")
+
+
 def _name(v) -> Optional[str]:
-    return v if isinstance(v, str) and _NAME.fullmatch(v) else None
+    """A model or tool name, or None: one-line name-shaped text that is not a path or an address."""
+    return v if isinstance(v, str) and _NAME.fullmatch(v) and not _PATHISH.search(v) else None
 
 
 def _id(v) -> Optional[str]:
@@ -96,6 +111,11 @@ def _is_local(provider: str, model: str) -> bool:
 
 
 def _where(row: dict, model: Optional[str]) -> Optional[str]:
+    """On this PC when the caller recorded a local seat (the provider is only the call's dialect: a local
+    llama-server seat speaks "openai"); otherwise from the provider; None when neither was recorded."""
+    seat = row.get("seat")
+    if isinstance(seat, str) and seat.strip().lower() in LOCAL_SEATS:
+        return ON_THIS_PC
     provider = row.get("provider")
     if not isinstance(provider, str) or not provider.strip():
         return None
@@ -164,6 +184,7 @@ def _connect() -> sqlite3.Connection:
                 "at REAL NOT NULL, family TEXT NOT NULL, kind TEXT NOT NULL, line TEXT NOT NULL, model TEXT, "
                 "where_ran TEXT, outcome TEXT, trace_id TEXT, task_id TEXT, turn_id TEXT, audience TEXT NOT NULL)")
     con.execute("CREATE INDEX IF NOT EXISTS receipts_at ON receipts (at DESC)")
+    con.execute("CREATE TABLE IF NOT EXISTS cursor (name TEXT PRIMARY KEY, value INTEGER NOT NULL)")
     return con
 
 
@@ -217,10 +238,73 @@ def models() -> list[dict]:
     return [{"model": m, "where": WHERE_WORDS.get(w, WHERE_WORDS[None]), "turns": n} for m, w, n in got]
 
 
-def sync_from_activity(limit: int = SYNC_ROWS) -> int:
-    """Index the newest activity rows; returns how many receipts were new."""
-    from agent_friday.services import activity_ledger
-    return put(r for r in map(from_activity, activity_ledger.read(limit=limit)) if r is not None)
+def _activity(*, above: Optional[int] = None, below: Optional[int] = None, limit: Optional[int] = None) -> list[dict]:
+    """Activity rows (the row with its ledger `seq`), newest first, with above < seq < below. Reading stops at the
+    first row at or under `above`, so a sync of new rows reads only what is newer than the index."""
+    from agent_friday.services import action_ledger
+    passed: list = []
+
+    def want(e: dict) -> bool:
+        seq = e.get("seq")
+        if not isinstance(seq, int):
+            return False
+        if above is not None and seq <= above:
+            passed.append(seq)
+            return False
+        return below is None or seq < below
+
+    out = []
+    for e in action_ledger.entries(["activity"], newest_first=True, limit=limit, where=want, stop=lambda: bool(passed)):
+        if isinstance(e.get("rec"), dict):
+            out.append({**e["rec"], "seq": e.get("seq")})
+    return out
+
+
+def _cursor(con) -> dict:
+    return dict(con.execute("SELECT name, value FROM cursor").fetchall())
+
+
+def sync_from_activity() -> int:
+    """Index the activity rows newer than the index, then one older page until the ledger's start; returns how many
+    receipts were new. The cursor moves in the same transaction as the receipts it covers."""
+    with _db() as con:
+        cur = _cursor(con)
+    top, bottom, done = cur.get("top"), cur.get("bottom"), bool(cur.get("done"))
+    if top is None:
+        rows = _activity(limit=SYNC_PAGE)
+        seqs = [r["seq"] for r in rows]
+        top, bottom, done = (max(seqs), min(seqs), len(rows) < SYNC_PAGE) if seqs else (-1, 0, True)
+        older: list = []
+    else:
+        rows = _activity(above=top)
+        top = max([top] + [r["seq"] for r in rows])
+        older = [] if done else _activity(below=bottom, limit=SYNC_PAGE)
+        if not done:
+            bottom = min([bottom] + [r["seq"] for r in older])
+            done = len(older) < SYNC_PAGE
+    receipts = [r for r in map(from_activity, rows + older) if r is not None]
+    with _db() as con:
+        before = con.total_changes
+        con.executemany("INSERT OR IGNORE INTO receipts (%s) VALUES (%s)" % (_SQL_COLUMNS, ",".join("?" * len(_COLUMNS))),
+                        [astuple(r) for r in receipts])
+        new = con.total_changes - before
+        con.executemany("INSERT OR REPLACE INTO cursor (name, value) VALUES (?, ?)",
+                        [("top", top), ("bottom", bottom), ("done", int(done))])
+    return new
+
+
+def rebuild(max_syncs: int = 10_000) -> int:
+    """Empty the index and refill it from the ledger; returns how many receipts it holds after."""
+    with _db() as con:
+        con.execute("DELETE FROM receipts")
+        con.execute("DELETE FROM cursor")
+    for _ in range(max_syncs):
+        sync_from_activity()
+        with _db() as con:
+            if _cursor(con).get("done"):
+                break
+    with _db() as con:
+        return con.execute("SELECT COUNT(*) FROM receipts").fetchone()[0]
 
 
 def refresh() -> None:

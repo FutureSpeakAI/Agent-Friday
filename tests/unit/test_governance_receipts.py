@@ -102,13 +102,52 @@ def test_a_receipt_reads_back_the_same_as_it_went_in():
     assert gr.recent() == [r]
 
 
-def test_sync_reads_the_activity_ledger_and_a_second_sync_stores_nothing(monkeypatch):
-    rows = [_model(2), {"kind": "tool_call", "ts": 1.0, "seq": 1, "tool": "search_files", "ok": True},
-            {"kind": "bogus", "ts": 1.0, "seq": 0}]
-    monkeypatch.setattr(activity_ledger, "read", lambda limit=200, **kw: [dict(r) for r in rows][:limit])
-    assert gr.sync_from_activity() == 2
+def _record_models(n, model):
+    for _ in range(n):
+        assert activity_ledger.record("model_invocation", model=model, provider="llama_cpp", seat="local")
+
+
+def test_sync_reads_the_activity_ledger_and_a_second_sync_stores_nothing():
+    _record_models(2, "sample-local:7b")
+    assert activity_ledger.record("tool_call", tool="search_files", ok=True)
+    assert gr.sync_from_activity() == 3
     assert gr.sync_from_activity() == 0
-    assert len(gr.recent()) == 2
+    assert [r.line for r in gr.recent()][0] == "Used search_files"
+
+
+def test_a_busy_ledger_is_indexed_whole_across_syncs(monkeypatch):
+    """More rows than one page arrived while nobody looked: every one is indexed, none skipped, none twice."""
+    monkeypatch.setattr(gr, "SYNC_PAGE", 4)
+    _record_models(6, "sample-a")
+    _record_models(5, "sample-b")
+    assert gr.sync_from_activity() == 4                 # the newest page first
+    _record_models(2, "sample-a")                       # and more arrive between syncs
+    while gr.sync_from_activity():
+        pass
+    assert {m["model"]: m["turns"] for m in gr.models()} == {"sample-a": 8, "sample-b": 5}
+    assert gr.sync_from_activity() == 0
+
+
+def test_rebuild_refills_the_index_from_the_ledger(monkeypatch):
+    monkeypatch.setattr(gr, "SYNC_PAGE", 3)
+    _record_models(7, "sample-a")
+    gr.put([gr.from_activity(_model(10_000))])         # a row the ledger does not hold
+    assert gr.rebuild() == 7
+    assert {m["model"]: m["turns"] for m in gr.models()} == {"sample-a": 7}
+
+
+def test_a_local_seat_is_on_this_pc_whatever_dialect_it_spoke():
+    r = gr.from_activity({**_model(11, provider="openai"), "seat": "local"})
+    assert (r.where, r.line) == (gr.ON_THIS_PC, "sample-local:7b answered on this PC")
+
+
+@pytest.mark.parametrize("name", ["C:/Users/someone/models/x.gguf", "C:\\models\\x.gguf", "/home/someone/x.gguf",
+                                  "~/models/x", "someone@example.test"])
+def test_a_path_or_address_is_never_taken_for_a_name(name):
+    for row in (_model(12, model=name), {"kind": "tool_call", "ts": 1.0, "seq": 12, "tool": name, "ok": True}):
+        r = gr.from_activity(row)
+        assert name not in r.line and r.model is None
+    assert gr.from_activity(_model(13, model="hf.co/org/model:Q4")).model == "hf.co/org/model:Q4"
 
 
 def test_reads_filter_by_family_and_words_and_are_bounded():

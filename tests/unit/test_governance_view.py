@@ -22,7 +22,7 @@ from agent_friday.services import governance_receipts as gr
 def _store(tmp_path, monkeypatch):
     monkeypatch.setattr(gr, "DB_PATH", tmp_path / "receipts.db")
     monkeypatch.setattr(gr, "_is_local", lambda provider, model: provider == "llama_cpp")
-    monkeypatch.setattr(gr, "sync_from_activity", lambda limit=gr.SYNC_ROWS: 0)
+    monkeypatch.setattr(gr, "sync_from_activity", lambda: 0)
     gr.reset()
 
 

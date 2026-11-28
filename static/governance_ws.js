@@ -51,13 +51,16 @@
     useEffect(() => {
       ensureStyle();
       let alive = true;
+      // The route's own plain sentence when it could not answer (403, 422, 503); the shared draw step otherwise.
+      const say = text => { view.current.textContent = text; setAsOf(''); };
       const draw = () => load()
         .then(p => {
           if (!alive || !view.current) return;
+          if (p && p.error) return say(p.error);
           window.FridayA2ui.mount(view.current, p);
           setAsOf(p && p.ok && p.as_of ? p.as_of : '');
         })
-        .catch(() => { if (alive && view.current) window.FridayA2ui.mount(view.current, null); });
+        .catch(() => { if (alive && view.current) say('Friday could not read Governance right now.'); });
       draw();
       const t = setInterval(draw, REFRESH_MS);
       return () => { alive = false; clearInterval(t); };
