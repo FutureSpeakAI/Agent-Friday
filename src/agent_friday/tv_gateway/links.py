@@ -20,7 +20,6 @@ supplies a ``uri``: it is built here from a marker's checked parts. Each rule is
 """
 from __future__ import annotations
 
-import ipaddress
 import re
 import unicodedata
 from dataclasses import dataclass
@@ -42,6 +41,7 @@ _WEB_BODY = re.compile(r"https://[^\]\s\\]+")
 _LABEL = r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?"
 _DNS_HOST = re.compile(r"^%s(?:\.%s)+$" % (_LABEL, _LABEL))
 _URL_SAFE = "/%:@!$&'()*+,;=-._~"
+_IDNA_DEVIATIONS = frozenset("\u00df\u03c2")
 
 
 class Kind(str, Enum):
@@ -67,29 +67,26 @@ class Link:
         return out
 
 
-def _is_ip(host: str) -> bool:
-    try:
-        ipaddress.ip_address(host)
-    except ValueError:
-        return False
-    return True
-
-
 def web_target(url: str) -> Optional[tuple[str, str]]:
     """(the address to open, the host to show before leaving Friday), or None when ``url`` must not be a link. Every
-    host rule is checked on the host as it will be opened: after IDNA, which folds look-alike dots into "."."""
+    host rule is checked on the host as it will be opened: after IDNA, which folds look-alike dots into ".". A host
+    with a letter IDNA2003 and browsers spell differently (ß, ς) is refused: the site opened could differ from the one
+    the provenance check saw."""
     if len(url) > MAX_URL or not _WEB_BODY.fullmatch(url) or _CONTROL.search(url) or _hidden_format(url):
         return None
     try:
         parts = urlsplit(url)
         port = parts.port                            # raises on a port that is not a number in range
-        host = (parts.hostname or "").rstrip(".").encode("idna").decode("ascii").lower()
+        raw_host = (parts.hostname or "").rstrip(".")
+        host = raw_host.encode("idna").decode("ascii").lower()
     except (ValueError, UnicodeError):
+        return None
+    if _IDNA_DEVIATIONS & set(raw_host):
         return None
     if parts.username is not None or parts.password is not None or not _DNS_HOST.match(host):
         return None
     last = host.rsplit(".", 1)[-1]
-    if last.isdigit() or last.startswith("0x") or _is_ip(host) or host.endswith(_LOCAL_SUFFIXES):
+    if last.isdigit() or last.startswith("0x") or host.endswith(_LOCAL_SUFFIXES):
         return None
     netloc = host if port is None else "%s:%d" % (host, port)
     return urlunsplit(("https", netloc, quote(parts.path, safe=_URL_SAFE), quote(parts.query, safe=_URL_SAFE + "?"),

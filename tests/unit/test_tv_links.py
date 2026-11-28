@@ -73,6 +73,9 @@ def test_an_unverified_marker_is_never_a_link():
     "https://evil.com\\.example.org/",          # a browser reads the backslash as "/" and opens evil.com
     "https://0x7f.1/",                          # a browser opens these as 127.0.0.1
     "https://0x7f.0.0.1/",
+    "https://0x7f.0x1/",                        # every label hex: only the 0x rule stops this one
+    "https://faß.de/",                     # IDNA2003 opens fass.de, a browser xn--fa-hia.de: not the site checked
+    "https://σος.gr/",
     "https://example.123/",                     # a numeric last label
     "https://exa_mple.org/",                    # not a DNS label
 ])
@@ -95,6 +98,7 @@ def test_an_unclosed_marker_never_makes_the_scan_slow():
     import time
     started = time.monotonic()
     assert links.found("[web:" * 200_000) == []
+    assert links.found("[web:" * 200_000 + "]") == []       # one far "]": found once, not once per marker
     assert time.monotonic() - started < 1.0
 
 
