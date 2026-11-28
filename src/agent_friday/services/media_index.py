@@ -1125,7 +1125,7 @@ def query(view: str = "all", q: str = "", kind: Optional[str] = None, project: O
           privacy: Optional[str] = None, unsigned: bool = False, status: Optional[str] = None,
           sort: str = "next", limit: int = 200, offset: int = 0,
           since: Optional[float] = None, until: Optional[float] = None,
-          favorite: bool = False, tag: Optional[str] = None) -> Dict[str, Any]:
+          favorite: bool = False, tag: Optional[str] = None, made_by: Optional[str] = None) -> Dict[str, Any]:
     with _LOCK:
         con = _connect()
         try:
@@ -1202,6 +1202,8 @@ def query(view: str = "all", q: str = "", kind: Optional[str] = None, project: O
         out = [c for c in out if c["status"] == status]
     if favorite:
         out = [c for c in out if c.get("favorite")]
+    if made_by == "friday":
+        out = [c for c in out if made_by_friday(c["maker"])]
     if tag:
         tl = tag.strip().lower()
         out = [c for c in out if tl in [t.lower() for t in (c.get("tags") or [])]]
@@ -1244,6 +1246,14 @@ class _Ov:
 
     def __getitem__(self, k: str) -> Any:
         return self._d.get(k)
+
+
+def made_by_friday(maker: str) -> bool:
+    """True when a card's maker names Friday or one of her engines ("Friday · this PC", a model name, "Office engine · this PC",
+    "Composer · this PC"), never the owner ("You", "You · this PC") and never unknown (blank). The phone's Library shelf
+    "Made by Friday" asks with made_by=friday. tests/unit/test_media_made_by_friday.py holds it."""
+    who = (maker or "").split("·", 1)[0].strip()
+    return bool(who) and who.casefold() != "you"
 
 
 def _kind_group(kind: str) -> str:
